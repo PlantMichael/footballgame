@@ -1,0 +1,31 @@
+Football game.
+
+
+This game will be a 2D roguelike where you assume a football team, and play match after match climbing a bracket until a championship. The game will be standard
+American football, and will play matches automatically. Every match will be 4-5 drives, in which you will score touchdowns. The player's team will be the standard 11 player offence, 1 center, 1 quarterback, 4 tackles, and 5 flex positions, which can be running backs, wide receivers, or tight ends. When entering a match, you will select your lineup, items, and plays from a playbook. Let me go over finer details.
+
+Players:
+
+
+Every player will have 5 stats and 1 special ability. Stats can range from 1-15. Here are the stats:
+
+Strength: Strength determines how a player can handle contact. In situations like a defender trying to cover a player, he will make contact every 3 seconds. The higher difference between the defenders strength and the offense player, the higher chance the defender can push him over (up to 25% per contact). A higher strength means players are more immovable. Tackles typically have a higher strength than normal.
+
+Agility: Run speed of a player.
+
+Dexterity: How well a player can catch the ball. A higher dexterity means the player will catch the ball more. A max stat of 15 will mean the player will catch the ball 93% of the time.
+
+Stamina: A stat that determines the endurance of a player. When plays use their max speed, their endurance falls. This is a hidden stat not shown to the player. 
+
+Intelligence: Determines the player's decision making, and how well they can follow a route. 
+
+The special ability: Every player will have a special ability making them unique. Example: "Gain +3 speed if there's 2 other wide receivers."
+
+item: Every player can hold one item. 
+
+
+In between games: During games, you will earn football bucks for special occasions, like touchdowns, good catches, etc. You can spend these bucks on buying new plays for the playbook, draft new players, and buy items to give players. You can then equip players and items in between games. 
+
+
+Gameplay: The drive will start, and you can replace your roster and choose your play for the snap. When you select a play, it will show lines for the play on the field, highlighting where your players will run. 
+
