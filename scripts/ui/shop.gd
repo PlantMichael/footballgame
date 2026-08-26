@@ -154,6 +154,9 @@ func _players_column() -> Control:
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 4)
 		card.add_child(v)
+		if p.quality > 0:
+			v.add_child(UIKit.label(ShopPlayerDB.quality_name(p.quality).to_upper(),
+				12, _quality_color(p.quality)))
 		v.add_child(UIKit.player_card(p, false))
 
 		var buy := UIKit.button("SIGNED" if sold else "Sign  $%d" % cost, 14)
@@ -165,6 +168,16 @@ func _players_column() -> Control:
 	return parts[0]
 
 
+## Rarity color for the hardcoded draft board, low to high.
+func _quality_color(q: int) -> Color:
+	match q:
+		ShopPlayerDB.QUALITY_ROOKIE: return UIKit.MUTED
+		ShopPlayerDB.QUALITY_SOPHOMORE: return UIKit.TEXT
+		ShopPlayerDB.QUALITY_VETERAN: return UIKit.GOOD
+		ShopPlayerDB.QUALITY_ALL_STAR: return UIKit.ACCENT
+	return UIKit.TEXT
+
+
 func _buy_player(index: int, p: PlayerData, cost: int) -> void:
 	if not GameState.spend_bucks(cost):
 		notice = "Not enough football bucks."
@@ -172,6 +185,7 @@ func _buy_player(index: int, p: PlayerData, cost: int) -> void:
 		return
 	GameState.add_player(p.duplicate_player())
 	GameState.mark_sold("player", str(index))
+	GameState.bought_shop_players[p.pname] = true
 	notice = "%s signed. Set him in the lineup." % p.pname
 	_rebuild()
 
@@ -223,5 +237,6 @@ func _buy_item(index: int, id: String, cost: int) -> void:
 		return
 	GameState.inventory.append(id)
 	GameState.mark_sold("item", str(index))
+	GameState.bought_items[id] = true
 	notice = "%s added to the bag. Equip it on the lineup screen." % ItemDB.item_name(id)
 	_rebuild()

@@ -22,6 +22,7 @@ var bar_host: MarginContainer
 var side_panel: PanelContainer
 var card: PanelContainer
 var log_label: Label
+var cam_btn: Button
 
 var _sb: Dictionary = {}
 var _last_phase: int = -1
@@ -43,11 +44,12 @@ func _ready() -> void:
 
 func _start_match() -> void:
 	var opp := GameState.current_opponent()
+	var quality := GameState.current_match_quality()
 	sim = MatchSim.new()
 	sim.setup(
 		GameState.starters(),
-		Generator.make_defense(GameState.rng, float(opp.get("quality", 3.0))),
-		float(opp.get("quality", 3.0)),
+		Generator.make_defense(GameState.rng, quality),
+		quality,
 		String(opp.get("name", "Opponent")),
 		int(opp.get("drives", 4))
 	)
@@ -111,6 +113,25 @@ func _build_top_bar() -> void:
 	row.add_child(spacer)
 
 	_add_sb(row, "earned", "Earned", UIKit.ACCENT)
+
+	cam_btn = UIKit.button("", 13)
+	cam_btn.custom_minimum_size = Vector2(190, 0)
+	cam_btn.pressed.connect(func(): field.toggle_camera_lock())
+	row.add_child(cam_btn)
+	_update_cam_btn()
+
+	if GameState.dev_mode:
+		# Equipping an item is only possible from the lineup screen (the
+		# in-match sub panel only swaps which player is in a slot), so a
+		# quick link there is the only way dev mode's item stash is actually
+		# reachable rather than just sitting unused in the inventory.
+		var lineup_btn := UIKit.button("  Lineup  ", 13)
+		lineup_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lineup.tscn"))
+		row.add_child(lineup_btn)
+
+		var exit_dev := UIKit.button("  Exit dev mode  ", 13)
+		exit_dev.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+		row.add_child(exit_dev)
 
 
 func _add_sb(row: HBoxContainer, key: String, title: String, col: Color) -> void:
@@ -206,10 +227,21 @@ func _process(delta: float) -> void:
 func _update_top_bar() -> void:
 	_set_sb("us", str(sim.score_us))
 	_set_sb("them", str(sim.score_them))
-	_set_sb("drive", "%d / %d" % [sim.drive_num, sim.total_drives])
+	if GameState.dev_mode:
+		_set_sb("drive", "%d" % sim.drive_num)
+	else:
+		_set_sb("drive", "%d / %d" % [sim.drive_num, sim.total_drives])
 	_set_sb("down", sim.down_text())
 	_set_sb("spot", sim.yard_line_text(sim.los))
 	_set_sb("earned", "$%d" % bucks_earned)
+	_update_cam_btn()
+
+
+## Kept in sync every frame since the "L" key can flip the lock without
+## going through this button at all.
+func _update_cam_btn() -> void:
+	var locked: bool = field.get("camera_locked")
+	cam_btn.text = "Camera: Following ball (L)" if locked else "Camera: Free - WASD/drag (L)"
 
 
 func _set_sb(key: String, value: String) -> void:
@@ -268,10 +300,27 @@ func _playcall_bar() -> Control:
 		% [sim.down_text(), sim.yard_line_text(sim.los)], 12, UIKit.MUTED))
 	v.add_child(head)
 
+	if GameState.dev_mode:
+		v.add_child(_dev_defense_slider())
+
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 8)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(body)
+
+	# A horizontal scroller, not a plain row: dev mode's active_plays can hold
+	# every play in the book at once, which is wider than the screen.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(row)
+	scroll.add_child(row)
 
 	for id in GameState.active_plays:
 		row.add_child(_play_card(id))
@@ -280,8 +329,39 @@ func _playcall_bar() -> Control:
 	snap.custom_minimum_size = Vector2(0, 38)
 	snap.disabled = selected_play == ""
 	snap.pressed.connect(_on_snap)
-	row.add_child(_wrap_snap(snap))
+	body.add_child(_wrap_snap(snap))
 	return v
+
+
+## Dev-mode-only: lets the defense's overall quality be dialed up or down
+## live, in between plays, without waiting for a new drive. Rebuilding the
+## defense re-reads sim.opponent_quality each time this bar redraws (i.e.
+## every presnap), so the slider always starts wherever it was last left.
+func _dev_defense_slider() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.add_child(UIKit.label("DEV: Defender power", 13, UIKit.ACCENT))
+
+	var slider := HSlider.new()
+	slider.min_value = 1.0
+	slider.max_value = 15.0
+	slider.step = 0.5
+	slider.value = sim.opponent_quality
+	slider.custom_minimum_size = Vector2(240, 0)
+	row.add_child(slider)
+
+	var val_label := UIKit.label("%.1f" % sim.opponent_quality, 13, UIKit.TEXT)
+	val_label.custom_minimum_size = Vector2(36, 0)
+	row.add_child(val_label)
+
+	slider.value_changed.connect(func(v: float):
+		sim.regenerate_defense(GameState.rng, v)
+		val_label.text = "%.1f" % v
+		# The old defenders just got replaced with fresh SimPlayer instances;
+		# drop any card/sub panel in case it was pointing at one of them.
+		_dismiss_overlays())
+
+	return row
 
 
 func _wrap_snap(snap: Button) -> Control:
@@ -610,15 +690,12 @@ func _open_subs(slot: String) -> void:
 	for i in GameState.roster.size():
 		if GameState.is_starting(i):
 			continue
+		if not GameState.fits_slot(i, slot):
+			continue
 		candidates.append(i)
-	# Natural fits first, then everyone else.
 	candidates.sort_custom(func(a, b):
 		var pa: PlayerData = GameState.roster[a]
 		var pb: PlayerData = GameState.roster[b]
-		var fa := 1 if pa.natural_slot_kind() == kind else 0
-		var fb := 1 if pb.natural_slot_kind() == kind else 0
-		if fa != fb:
-			return fa > fb
 		return pa.overall() > pb.overall())
 
 	if candidates.is_empty():

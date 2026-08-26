@@ -305,8 +305,12 @@ static func play_name(id: String) -> String:
 	return get_play(id).get("name", "?")
 
 
+## Flat price for every purchasable play - the per-play "cost" data field is
+## no longer used for pricing (it's still there, just ignored).
+const SHOP_PLAY_COST := 200
+
 static func play_cost(id: String) -> int:
-	return int(get_play(id).get("cost", 150))
+	return SHOP_PLAY_COST
 
 
 static func all_ids() -> Array:
@@ -314,17 +318,17 @@ static func all_ids() -> Array:
 	return _plays.keys()
 
 
-static func starter_ids() -> Array:
-	return ["quick_outs", "slant_flood", "curl_and_out", "hb_dive"]
-
-
-static func buyable_ids() -> Array:
-	var starters := starter_ids()
-	var out := []
-	for id in all_ids():
-		if not starters.has(id):
-			out.append(id)
-	return out
+## `count` random plays to start a run with, so it isn't the same 4 every
+## time. Uses `rng` (not Array.shuffle, which reads Godot's own global random
+## state) so this stays reproducible when GameState.new_run is given a seed.
+static func random_starter_ids(rng: RandomNumberGenerator, count: int = 4) -> Array:
+	var ids := all_ids()
+	for i in range(ids.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp = ids[i]
+		ids[i] = ids[j]
+		ids[j] = tmp
+	return ids.slice(0, mini(count, ids.size()))
 
 
 static func is_run(id: String) -> bool:

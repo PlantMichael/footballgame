@@ -1,0 +1,62 @@
+A prompt for today's session. Here's some core changes:
+
+
+
+1. When starting a run, you will be able to select between 5 quarterbacks. Each quarterback will have a special ability and specific stats. I have not thought of said abilities yet, but we can implement this and keep their ability null. 
+
+2. I want buyable players to be hard coded. They will have set names, and qualities, very similar to roguelike items like the binding of Isaac. Also, let there only be 4 players be buyable in between matches. They will vary in quality, but higher qualities will have a less weight so they dont appear as often. It wont be large, ill put their weight number after the names in the following list.
+
+Player qualities from lowest to highest:
+1. Rookie (Weight 1)
+2. Sophomore (Weight 1)
+3. Veteran (Weight 0.8)
+4. All star (Weight 0.5)
+
+We can put all the players in a json listing their qualities like:
+
+player name="Amillion buggs",
+role="WR", (wide receiver)
+quality="4", (all star)
+strength="5",
+agility="6",
+dexterity="6",
+stamina="5",
+intelligence="7",
+ability=" Dash forward 5 yards at the start of every play.",
+body="small", (i will have different size body assets later on)
+
+The players given at the start of the game can have random names and lack abilities. 
+
+3. Last night, I was able to equip a tackle player in a receiving roll. Tackles should only be allowed in the center 4 spots, centers should only be allowed in center. Qb's only allowed its position. And the last couple are flex spots that allow rbs, wr, and tes.
+
+4. When players are tackled, their bodies elongate and it looks weird. keep their bodies the same and just make them rotate to fall over when tackled. 
+
+5. After that's here's some starter players to implement. Make their stats increase with their rarity (Rookies are 2-4, All stars are 7-11 etc.)
+
+Amillion Buggs
+WR
+All star
+Ability: Dash forward 5 yards at the start of every play
+
+Rock Stonehead
+TE 
+Veteran
+Ability: Cant miss catches. Speed is capped out at 4.
+
+Johnny Cardio
+WR
+Rookie
+Ability: Gain +3 speed if there's 2 other WR in the play
+
+Gregarious Dingleton 
+WR
+Sophomore
+Ability: Gets up 80% quicker when knocked down
+
+
+
+5. Make the numbers of players follow the NFL guidelines. (qbs 0-19, defensive backs 0-49, rbs, full backs tes, hbacks, wrs 0-49 and 80-89, linebackers 0-59, 90-99. defensive linemen 50-79 and 90-99. offensive linemen 50-79)
+
+6. Recievers are running out of bounds and catching the ball and it counts. Make sure nobody runs out of bounds unless they are about to be tackled and catches when they're out of bounds shouldn't count. 
+
+7. the prices for players are far too low. I could afford all 4 and a play after one game. One all star should be most of your money. 

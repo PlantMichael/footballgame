@@ -14,7 +14,7 @@ func _ready() -> void:
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(t)
 
-	var s := UIKit.label("Five rounds. One trophy. Lose once and the run is over.", 18, UIKit.MUTED)
+	var s := UIKit.label("Five rounds. One trophy. 3 losses and the season is over.", 18, UIKit.MUTED)
 	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(s)
 
@@ -35,6 +35,11 @@ func _ready() -> void:
 	quit.pressed.connect(func(): get_tree().quit())
 	row.add_child(quit)
 
+	var dev := UIKit.button("  Dev mode  ", 14)
+	dev.custom_minimum_size = Vector2(140, 34)
+	dev.pressed.connect(_on_dev_mode)
+	center.add_child(dev)
+
 	center.add_child(UIKit.vsep(40))
 
 	var help := UIKit.label(
@@ -46,5 +51,11 @@ func _ready() -> void:
 
 
 func _on_new_run() -> void:
-	GameState.new_run()
-	get_tree().change_scene_to_file("res://scenes/hub.tscn")
+	get_tree().change_scene_to_file("res://scenes/qb_select.tscn")
+
+
+## Endless scrimmage with everything unlocked, skipping the QB pick and hub
+## entirely - straight into the field for tuning and ability testing.
+func _on_dev_mode() -> void:
+	GameState.start_dev_mode()
+	get_tree().change_scene_to_file("res://scenes/match.tscn")

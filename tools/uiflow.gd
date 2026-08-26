@@ -128,13 +128,15 @@ func _try_substitution(scene: Node, sim: MatchSim) -> void:
 		_fail("overlays did not dismiss")
 	var bench := -1
 	for i in GameState.roster.size():
-		if not GameState.is_starting(i):
+		if not GameState.is_starting(i) and GameState.fits_slot(i, "F4"):
 			bench = i
 			break
 	if bench < 0:
 		return
 	var before: PlayerData = GameState.player_at("F4")
-	GameState.set_slot("F4", bench)
+	if not GameState.set_slot("F4", bench):
+		_fail("set_slot rejected a bench player that fits F4")
+		return
 	var after: PlayerData = GameState.player_at("F4")
 	if after == before:
 		_fail("substitution did not change the F4 starter")

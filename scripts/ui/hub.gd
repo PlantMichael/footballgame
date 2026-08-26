@@ -58,17 +58,21 @@ func _bracket_panel() -> Control:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
 
+		# A round only ever counts as won once round_index has moved past it -
+		# a loss just spends a life and sends you right back at the same
+		# round, so mid-run its result field can say "L" while it's still
+		# the one you're about to try again.
 		var status := "  "
 		var col := UIKit.MUTED
-		if b["result"] == "W":
+		if i < GameState.round_index:
 			status = "W "
 			col = UIKit.GOOD
+		elif i == GameState.round_index and GameState.run_active:
+			status = "> "
+			col = UIKit.ACCENT
 		elif b["result"] == "L":
 			status = "L "
 			col = UIKit.BAD
-		elif i == GameState.round_index:
-			status = "> "
-			col = UIKit.ACCENT
 
 		row.add_child(UIKit.label(status, 15, col))
 		var name_label := UIKit.label(b["round"], 15, col)
@@ -80,6 +84,11 @@ func _bracket_panel() -> Control:
 		row.add_child(sp)
 		row.add_child(UIKit.label("%d drives" % b["drives"], 12, UIKit.MUTED))
 		v.add_child(row)
+
+	var lives_left := GameState.MAX_LOSSES - GameState.losses
+	v.add_child(UIKit.label("%d loss%s left before the season is over" % [
+		lives_left, "" if lives_left == 1 else "es"
+	], 13, UIKit.MUTED if lives_left > 1 else UIKit.BAD))
 
 	v.add_child(UIKit.vsep(10))
 	v.add_child(UIKit.rule())
@@ -114,7 +123,7 @@ func _matchup_panel() -> Control:
 	v.add_child(UIKit.label("NEXT UP", 18, UIKit.ACCENT))
 	v.add_child(UIKit.label(opp["name"], 34))
 	v.add_child(UIKit.label("%s  -  %d drives  -  difficulty %s" % [
-		opp["round"], opp["drives"], _difficulty_stars(opp["quality"])
+		opp["round"], opp["drives"], _difficulty_stars(GameState.current_match_quality())
 	], 15, UIKit.MUTED))
 
 	v.add_child(UIKit.vsep(6))

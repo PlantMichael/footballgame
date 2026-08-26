@@ -143,10 +143,53 @@ static func stat_row(p: PlayerData, size: int = 13) -> HBoxContainer:
 	return box
 
 
+## Body sprite for `p`, or null if its `body` id doesn't resolve to one of
+## the extracted assets/players/<view>/body_0N.png files (e.g. hardcoded
+## QBDB entries that haven't had a body picked yet).
+static func body_texture(p: PlayerData, view: String = "front") -> Texture2D:
+	var n := int(p.body)
+	if n < 1 or n > 9:
+		return null
+	var path := "res://assets/players/%s/body_%02d.png" % [view, n]
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path)
+
+
+## Small boxed portrait for `p`, or null if it has no body art yet - callers
+## should skip adding it rather than show an empty box.
+static func player_portrait(p: PlayerData, size: int = 56) -> Control:
+	var tex := body_texture(p, "front")
+	if tex == null:
+		return null
+	var box := Panel.new()
+	box.custom_minimum_size = Vector2(size, size)
+	box.add_theme_stylebox_override("panel", stylebox(PANEL_HI, 8, 1))
+	var t := TextureRect.new()
+	t.texture = tex
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	t.set_anchors_preset(Control.PRESET_FULL_RECT)
+	t.offset_left = 4
+	t.offset_top = 4
+	t.offset_right = -4
+	t.offset_bottom = -4
+	box.add_child(t)
+	return box
+
+
 ## Full player card used by the lineup and shop screens.
-static func player_card(p: PlayerData, show_item: bool = true) -> VBoxContainer:
+static func player_card(p: PlayerData, show_item: bool = true) -> HBoxContainer:
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", 10)
+	var portrait := player_portrait(p, 56)
+	if portrait:
+		outer.add_child(portrait)
+
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(v)
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
@@ -173,7 +216,7 @@ static func player_card(p: PlayerData, show_item: bool = true) -> VBoxContainer:
 		il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		v.add_child(il)
 
-	return v
+	return outer
 
 
 static func scroll(child: Control) -> ScrollContainer:

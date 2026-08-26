@@ -19,14 +19,18 @@ func _build() -> void:
 	add_child(center)
 
 	var champion := won and GameState.is_run_over()
+	var out_of_lives := not won and not GameState.run_active
 
 	var headline := "YOU WIN"
 	var col := UIKit.GOOD
 	if champion:
 		headline = "CHAMPIONS"
 		col = UIKit.ACCENT
-	elif not won:
+	elif out_of_lives:
 		headline = "SEASON OVER"
+		col = UIKit.BAD
+	elif not won:
+		headline = "TOUGH LOSS"
 		col = UIKit.BAD
 
 	var h := UIKit.label(headline, 58, col)
@@ -46,6 +50,14 @@ func _build() -> void:
 	earned.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(earned)
 
+	if not champion and not out_of_lives:
+		var lives_left := GameState.MAX_LOSSES - GameState.losses
+		var lives := UIKit.label("%d loss%s left before the season is over" % [
+			lives_left, "" if lives_left == 1 else "es"
+		], 14, UIKit.MUTED)
+		lives.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		center.add_child(lives)
+
 	center.add_child(UIKit.vsep(24))
 
 	var row := HBoxContainer.new()
@@ -63,12 +75,23 @@ func _build() -> void:
 		shop.custom_minimum_size = Vector2(0, 50)
 		shop.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/shop.tscn"))
 		row.add_child(shop)
+	elif not champion and not out_of_lives:
+		# Lost, but still have a life left: retry the same round rather than
+		# ending the run. GameState.round_index didn't move, so the hub and
+		# shop both still point at the same opponent as before.
+		var retry := UIKit.primary_button("  TRY THE %s AGAIN  " % GameState.round_label().to_upper(), 20)
+		retry.custom_minimum_size = Vector2(0, 50)
+		retry.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
+		row.add_child(retry)
+
+		var shop2 := UIKit.button("  Straight to the shop  ", 17)
+		shop2.custom_minimum_size = Vector2(0, 50)
+		shop2.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/shop.tscn"))
+		row.add_child(shop2)
 	else:
 		var again := UIKit.primary_button("  START A NEW RUN  ", 20)
 		again.custom_minimum_size = Vector2(0, 50)
-		again.pressed.connect(func():
-			GameState.new_run()
-			get_tree().change_scene_to_file("res://scenes/hub.tscn"))
+		again.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/qb_select.tscn"))
 		row.add_child(again)
 
 		var menu := UIKit.button("  Main menu  ", 17)

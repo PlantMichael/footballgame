@@ -21,6 +21,14 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 @export var ability_id: String = ""
 @export var item_id: String = ""
 
+## Rarity tier for hardcoded shop players (1 Rookie - 4 All Star). 0 means
+## this player was procedurally generated and has no fixed tier.
+@export var quality: int = 0
+## Body sprite id, e.g. "6" for assets/players/{front,back,left}/body_06.png.
+## Fixed per position for procedurally generated players (see
+## Generator.BODY_BY_POS); set by hand per entry for shop players.
+@export var body: String = "medium"
+
 
 func pos_name() -> String:
 	return POS_NAMES[pos]
@@ -83,4 +91,6 @@ func duplicate_player() -> PlayerData:
 	p.intelligence = intelligence
 	p.ability_id = ability_id
 	p.item_id = item_id
+	p.quality = quality
+	p.body = body
 	return p

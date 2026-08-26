@@ -1,0 +1,19 @@
+Agenda for 8/20/26.
+
+
+1. Right now, i want the UI to change. Let's try this. The play book will be on the right side of the screen, with a scroll wheel, and if you have more than 4 plays, they will be sorted into folders. Next, there will be nothing on the bottom unless you select a player. When selecting a player in between plays, itll show their stats next to the them, highlight a square under them and at the bottom, show players you can sub them with. The sub players menu at the bottom will be like the current playbook but show player cards instead. 
+
+2. The game should allow you to move the camera around with wasd and zoom in. Right clicking and dragging should move the camera too. For gameplay, implement a toggle lock camera so you can enable and disable the camera being locked to the ball.
+
+3. Next, i want more pop ups like the stat changes, if a player fails the catch, it could have a quick fumble pop up next to them. 
+
+4. I want to implement each role having signature mechanics as follows:
+
+QB	Risk / accuracy / decision making
+RB	Momentum / breaking tackles / agility
+WR	Route progression / separation / big plays
+TE	Switching between blocking & receiving
+Tackle	Blocking / protection / anchoring
+Center	Buffing and coordinating the line
+
+5. After this, implement all the new players i added. Make stats for them based on their tier and ability. If you want to make any changes to players with the aforementioned philosophy, let me know. 

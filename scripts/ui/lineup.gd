@@ -185,7 +185,9 @@ func _roster_row(idx: int) -> Control:
 	side.add_theme_constant_override("separation", 4)
 	h.add_child(side)
 
-	var place := UIKit.button("Put at %s" % _slot_label(selected_slot), 13)
+	var fits := GameState.fits_slot(idx, selected_slot)
+	var place := UIKit.button("Put at %s" % _slot_label(selected_slot) if fits else "Wrong position", 13)
+	place.disabled = not fits
 	place.pressed.connect(func():
 		GameState.set_slot(selected_slot, idx)
 		_rebuild())

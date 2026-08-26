@@ -44,6 +44,59 @@ const POS_WEIGHTS := {
 
 const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
 
+## Body sprite id (matches assets/players/{front,back,left}/body_0N.png) for
+## procedurally generated players. Every position uses one fixed body type;
+## shop players are exempt - their body is set by hand in shop_players.json.
+const BODY_BY_POS := {
+	PlayerData.Pos.QB: "5",
+	PlayerData.Pos.C: "6",
+	PlayerData.Pos.T: "2",
+	PlayerData.Pos.RB: "5",
+	PlayerData.Pos.WR: "9",
+	PlayerData.Pos.TE: "1",
+}
+
+## NFL-style jersey number bands, inclusive. A position can have more than
+## one legal band (e.g. a wide receiver can wear 1-49 or 80-89).
+const NUMBER_BANDS := {
+	PlayerData.Pos.QB: [[0, 19]],
+	PlayerData.Pos.C: [[50, 79]],
+	PlayerData.Pos.T: [[50, 79]],
+	PlayerData.Pos.RB: [[0, 49], [80, 89]],
+	PlayerData.Pos.WR: [[0, 49], [80, 89]],
+	PlayerData.Pos.TE: [[0, 49], [80, 89]],
+}
+
+## Same idea for defense, keyed by role rather than PlayerData.Pos - the
+## defensive generator reuses Pos purely to bias stats, not to mean the
+## real position, so numbering has to key off the role string instead.
+const DEFENSE_NUMBER_BANDS := {
+	"DL": [[50, 79], [90, 99]],
+	"LB": [[0, 59], [90, 99]],
+	"DB": [[0, 49]],
+}
+
+
+static func random_number(rng: RandomNumberGenerator, pos: PlayerData.Pos) -> int:
+	return _pick_from_bands(rng, NUMBER_BANDS.get(pos, [[1, 99]]))
+
+
+static func random_defense_number(rng: RandomNumberGenerator, role: String) -> int:
+	return _pick_from_bands(rng, DEFENSE_NUMBER_BANDS.get(role, [[1, 99]]))
+
+
+static func _pick_from_bands(rng: RandomNumberGenerator, bands: Array) -> int:
+	var total := 0
+	for b in bands:
+		total += int(b[1]) - int(b[0]) + 1
+	var roll := rng.randi_range(0, total - 1)
+	for b in bands:
+		var span := int(b[1]) - int(b[0]) + 1
+		if roll < span:
+			return int(b[0]) + roll
+		roll -= span
+	return 1
+
 
 static func random_name(rng: RandomNumberGenerator) -> String:
 	return "%s %s" % [
@@ -67,7 +120,8 @@ static func make_player(rng: RandomNumberGenerator, pos: PlayerData.Pos, quality
 	var p := PlayerData.new()
 	p.pos = pos
 	p.pname = random_name(rng)
-	p.number = rng.randi_range(1, 99)
+	p.number = random_number(rng, pos)
+	p.body = BODY_BY_POS.get(pos, p.body)
 
 	var weights: Dictionary = POS_WEIGHTS[pos]
 	for key in STAT_KEYS:
@@ -83,18 +137,25 @@ static func make_player(rng: RandomNumberGenerator, pos: PlayerData.Pos, quality
 
 static func _pick_ability(rng: RandomNumberGenerator, pos: PlayerData.Pos) -> String:
 	# Bias toward abilities that make sense for the position, but allow anything.
+	# Pools lean into each position's signature mechanic (see design agenda):
+	# QB = risk/accuracy/decision-making, RB = momentum/breaking tackles/agility,
+	# WR = route progression/separation/big plays, TE = switching blocking &
+	# receiving, T = blocking/protection/anchoring, C = buffing/coordinating
+	# the line.
 	var pool: Array = []
 	match pos:
 		PlayerData.Pos.QB:
-			pool = ["gunslinger", "field_general", "film_study", "clutch_gene", "second_wind", "route_technician"]
-		PlayerData.Pos.C, PlayerData.Pos.T:
-			pool = ["immovable", "iron_anchor", "blindside_wall", "workhorse", "clutch_gene", "chain_mover"]
+			pool = ["gunslinger", "field_general", "pressure_reader", "clutch_gene", "film_study", "trusted_target_wr", "trusted_target_te"]
+		PlayerData.Pos.C:
+			pool = ["line_captain", "qb_whisperer", "power_scheme", "field_command", "spacing_coach", "immovable", "iron_anchor"]
+		PlayerData.Pos.T:
+			pool = ["immovable", "iron_anchor", "blindside_wall", "workhorse", "chain_mover", "lockdown_block"]
 		PlayerData.Pos.RB:
-			pool = ["bulldozer", "escape_artist", "scat_back", "workhorse", "goal_line_back", "chain_mover"]
+			pool = ["bulldozer", "escape_artist", "scat_back", "goal_line_back", "chain_mover", "instant_burst", "power_surge", "phantom_step", "misdirection", "down_and_distance"]
 		PlayerData.Pos.WR:
-			pool = ["corps_of_three", "sure_hands", "deep_threat", "contested_king", "spread_specialist", "route_technician", "possession_man"]
+			pool = ["corps_of_three", "sure_hands", "deep_threat", "contested_king", "spread_specialist", "route_technician", "possession_man", "ghost_route"]
 		PlayerData.Pos.TE:
-			pool = ["red_zone_beast", "sure_hands", "contested_king", "film_study", "possession_man", "immovable"]
+			pool = ["red_zone_beast", "sure_hands", "contested_king", "film_study", "possession_man", "immovable", "cloaked_route", "guardian_angel", "lockdown_block"]
 	if rng.randf() < 0.15:
 		var all_ids: Array = AbilityDB.all_ids()
 		return all_ids[rng.randi_range(0, all_ids.size() - 1)]
@@ -129,11 +190,30 @@ static func starting_roster(rng: RandomNumberGenerator, quality: float = ROOKIE_
 	return roster
 
 
+## Same shape as starting_roster (1 QB, 1 C, 5 T, 4 WR, 2 RB, 2 TE) but
+## without the rookie clamp, abilities included - `quality` actually lands
+## instead of always getting overwritten down to 2-4. Used by dev mode to
+## build a maxed-out roster for testing.
+static func full_roster(rng: RandomNumberGenerator, quality: float, spread: float = 1.0) -> Array[PlayerData]:
+	var roster: Array[PlayerData] = []
+	var counts := {
+		PlayerData.Pos.QB: 2, PlayerData.Pos.C: 1, PlayerData.Pos.T: 5,
+		PlayerData.Pos.WR: 4, PlayerData.Pos.RB: 2, PlayerData.Pos.TE: 2,
+	}
+	for pos in counts:
+		for i in int(counts[pos]):
+			roster.append(make_player(rng, pos, quality, spread, true))
+	_dedupe_numbers(roster, rng)
+	return roster
+
+
 static func _dedupe_numbers(roster: Array[PlayerData], rng: RandomNumberGenerator) -> void:
 	var used := {}
 	for p in roster:
-		while used.has(p.number):
-			p.number = rng.randi_range(1, 99)
+		var guard := 0
+		while used.has(p.number) and guard < 200:
+			p.number = random_number(rng, p.pos)
+			guard += 1
 		used[p.number] = true
 
 
@@ -153,7 +233,7 @@ static func make_defense(rng: RandomNumberGenerator, strength_rating: float) -> 
 static func _make_defender(rng: RandomNumberGenerator, role: String, quality: float) -> PlayerData:
 	var p := PlayerData.new()
 	p.pname = random_name(rng)
-	p.number = rng.randi_range(1, 99)
+	p.number = random_defense_number(rng, role)
 	var weights: Dictionary
 	match role:
 		"DL":
@@ -169,32 +249,19 @@ static func _make_defender(rng: RandomNumberGenerator, role: String, quality: fl
 		var w := float(weights[key])
 		var value := quality * (0.55 + 0.45 * w) + rng.randfn(0.0, maxf(0.5, quality * 0.16))
 		p.add_stat(key, int(round(clampf(value, 1.0, 15.0))) - p.stat(key))
+	p.body = BODY_BY_POS.get(p.pos, p.body)
 	return p
 
 
-## Draft board offered in the shop.
-static func draft_class(rng: RandomNumberGenerator, count: int, quality: float) -> Array[PlayerData]:
-	var out: Array[PlayerData] = []
-	for i in count:
-		# Flex bodies show up more often than centers and quarterbacks.
-		var roll := rng.randf()
-		var pos: PlayerData.Pos
-		if roll < 0.10:
-			pos = PlayerData.Pos.QB
-		elif roll < 0.18:
-			pos = PlayerData.Pos.C
-		elif roll < 0.40:
-			pos = PlayerData.Pos.T
-		elif roll < 0.58:
-			pos = PlayerData.Pos.RB
-		elif roll < 0.82:
-			pos = PlayerData.Pos.WR
-		else:
-			pos = PlayerData.Pos.TE
-		out.append(make_player(rng, pos, quality + rng.randf_range(-1.0, 2.0)))
-	return out
-
+## Roguelike-style pricing: driven mostly by rarity tier, so a single All
+## Star costs most of what one win pays out, with a smaller nudge from the
+## player's own stat line so two players of the same tier aren't identical.
+const TIER_BASE_PRICE := {0: 60, 1: 80, 2: 160, 3: 300, 4: 500}
+const TIER_OVERALL_MULT := 10
 
 static func player_price(p: PlayerData) -> int:
+	if p.quality > 0:
+		var base: int = TIER_BASE_PRICE.get(p.quality, 300)
+		return int(clampi(base + p.overall() * TIER_OVERALL_MULT, base, 900))
 	var ovr := p.overall()
 	return int(clampi(60 + ovr * ovr * 2, 80, 600))

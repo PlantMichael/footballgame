@@ -43,6 +43,18 @@ var tackle_cd: float = 0.0      # seconds until this defender may attempt anothe
 var reaction: float = 0.0       # delay before reacting to a live ball carrier
 var free_timer: float = 0.0     # just shed a block; briefly cannot be picked up again
 var disrupted: float = 0.0      # receiver knocked off the route
+var dodge_used: bool = false    # ability_id "phantom_step": once-per-play tackle dodge
+
+## Stat gains awarded mid-play (an ability firing at a throw, a handoff, a
+## dodge, etc.), one entry per point so the renderer can pop them up one at
+## a time instead of a single combined number. A "-" prefix means a loss.
+## MatchSim queues these; the renderer (field_view.gd) drains and animates
+## them, then they're gone - nothing else reads this array.
+var pending_stat_gains: Array[String] = []
+
+## Plain-text event popups (e.g. "DROP" on a failed catch) - same queue/drain
+## idea as pending_stat_gains but for one-off flavor text with no stat key.
+var pending_events: Array[String] = []
 
 ## --- Purely visual state, advanced by the renderer -------------------------
 ## Distance-based walk cycle phase, so the bob matches actual movement.
@@ -83,10 +95,19 @@ func drain(delta: float, effort: float) -> void:
 	energy = maxf(0.0, energy - rate * delta)
 
 
-func catch_chance_base() -> float:
-	# Anchored on two points from the design: 3 DEX catches 55%, 15 DEX
-	# catches 93%. Everything in between is a straight line.
-	return 0.455 + float(stat("dexterity")) * 0.031667
+## Catch chance is primarily a function of how far downfield the ball
+## traveled (air yards - the throw's depth past the line of scrimmage, not
+## the raw straight-line QB-to-target distance, which is dominated by how
+## wide the receiver is split rather than by risk) - short throws are close
+## to automatic for anyone, deep shots are risky even for a good receiver -
+## with Dexterity as a secondary modifier on top rather than the whole
+## story. A league-average (8 DEX) receiver catches ~93% at the line of
+## scrimmage and ~48% on a 25-yard bomb; Dexterity then shifts that by
+## roughly +-10 points at the extremes (1 and 15 DEX).
+func catch_chance_base(air_yards: float) -> float:
+	var by_distance := clampf(0.93 - air_yards * 0.014, 0.35, 0.93)
+	var dex_mod := (float(stat("dexterity")) - 8.0) * 0.015
+	return by_distance + dex_mod
 
 
 func move_toward_point(target: Vector2, delta: float, effort: float = 1.0) -> void:
