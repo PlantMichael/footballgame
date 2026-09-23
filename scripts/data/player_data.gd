@@ -21,6 +21,10 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 @export var ability_id: String = ""
 @export var item_id: String = ""
 
+## Difficulty-scaled defender special power (see AuraDB, GameState.aura_chance).
+## Only ever set on generated opposing defenders, never on the player's roster.
+@export var aura_id: String = ""
+
 ## Rarity tier for hardcoded shop players (1 Rookie - 4 All Star). 0 means
 ## this player was procedurally generated and has no fixed tier.
 @export var quality: int = 0
@@ -91,6 +95,7 @@ func duplicate_player() -> PlayerData:
 	p.intelligence = intelligence
 	p.ability_id = ability_id
 	p.item_id = item_id
+	p.aura_id = aura_id
 	p.quality = quality
 	p.body = body
 	return p

@@ -1,0 +1,32 @@
+I want to make some big changes to how runs work. Similar to other roguelikes, there will be paths you take to win a bowl during runs. AS of right now, there will be 6 bowls you can win. Superbowl, Pro bowl, Toilet bowl, Alligator Bowl, G. Leech Bowl, and the Olympic Bowl. After a match, you will be given a choice of paths to take to each bowl. For each starting qb, they will have bowl completion marks similar to Isaac characters. 
+
+
+Another change is i want defenders to have modifiers dependent on how deep you are in a run. For every match deep you are in a run, the difficulty will increase as we have established. The higher the difficulty, the chances one of the defenders has an aura. Similar to Isaac, diablo, and mewgenics, these enemies have special abilities. The colored enemies are as follows:
+
+
+Green aura: Speedfreak - Speeds up the longer the play goes on
+
+Blue aura: Big Blocker - Tackles players easier
+
+red aura: Strong man - Will always overpower the player hes challenging. How fast he overpowers him will depend on their difference in strength
+
+Purple Aura: Mind reader - Will find what player is open with a similar algorithm to the qb, and go after them
+
+yellow aura: Butter Fingers - Will lower the dex of any opposing player within 5 yards of him
+
+With these changes, i dont want the defense to change. Right now, when you draw routes, the defense changes with them. Just like the real game, i want defense to stay the same as  you draw routes. This way, it allows playing around these buffed defenders if there are any. 
+
+
+Part 2
+
+
+I want to add these players
+
+Mr. Worldwide - All Star wr
+Ability: This player counts as a rb, te, and wr
+
+Gustavo Choker - Sophomore wr
+Ability: Have + 3 to all stats while not playing in a Bowl game.
+
+Manuel Fern - Veteran RB
+Ability: Cannot be thrown the ball and cannot run routes. Picks the highest strength non-lineman defender and tackles him. 

@@ -1,0 +1,12 @@
+Agenda for 8/30/2026
+
+
+1. I want to add a new gameplay mechanic. Before the snap, you will be able to select your offensive players (except center and t's). When selected, there is a significantly higher chance of the qb throwing to them. If any of the selected players absolutely cannot get open, the qb will throw to a player that is. There will be select all button which selects all the availible. 
+
+2. Some of the heads dont line up with the bodies. Inspect each body and make an object including the head that lines up with the body. 
+
+3. Every scoring drive, i want their to be a per game upgrade, where it gives you 3 possible upgrades to give to one of your players just for that game. Classic roguelike style. Example, +2 Agility, +2 Dex, etc. WE can list these upgrades in a json much like the players. 
+
+4. List player abilities when substituting.
+
+5. Play book menu is broken, they all are squished to the left at all times, even if i only have 4. 

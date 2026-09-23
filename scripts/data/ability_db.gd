@@ -55,11 +55,21 @@ extends RefCounted
 ##   cloak_seconds()        -> float, default 0.0. His man defender ignores him entirely for
 ##                            this many seconds after the snap before starting to cover him.
 ##                            MatchSim._man_logic.
+##   counts_as_positions()  -> Array[PlayerData.Pos], default []. Non-empty replaces this
+##                            player's position for every personnel-count/team-buff/
+##                            out-of-position check this play - MatchSim._effective_positions
+##                            (used by _snap_context, _apply_team_buffs, _out_of_position_penalty).
+##   dedicated_blocker()    -> bool, default false. Always blocks regardless of what's drawn
+##                            for him (never runs a route or takes a handoff, so the QB never
+##                            considers him a target), locked for the whole play onto the
+##                            single highest-Strength non-lineman defender rather than
+##                            whichever rusher the normal per-frame assignment would give him.
+##                            MatchSim._align_offense / _assign_blocks / _pick_dedicated_target.
 ##
 ## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
-## score_diff, is_run_play, is_blitzed. `ctx` for catch: nearest_defender_dist,
-## would_be_first_down, target_is_deep. `role` for contact is "carry",
-## "block", or "cover".
+## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
+## nearest_defender_dist, would_be_first_down, target_is_deep. `role` for
+## contact is "carry", "block", or "cover".
 
 const ABILITIES := {
 	"corps_of_three": {
@@ -286,6 +296,21 @@ const ABILITIES := {
 		"desc": "The 2 defenders nearest him at the snap take a flat -2 Strength for the play, taunted into keying on him instead of squaring up the real tackle.",
 		"taunts_defenders": Callable(AbilityDB, "_taunts_defenders_decoy"),
 	},
+	"positionless": {
+		"name": "Positionless",
+		"desc": "Counts as an RB, TE, and WR at once for every personnel-based effect on the field.",
+		"counts_as_positions": Callable(AbilityDB, "_counts_as_positions_positionless"),
+	},
+	"bowl_jitters": {
+		"name": "Bowl Jitters",
+		"desc": "+3 to every stat - except in a bowl game, where the moment gets to him.",
+		"snap": Callable(AbilityDB, "_snap_bowl_jitters"),
+	},
+	"enforcer": {
+		"name": "Enforcer",
+		"desc": "Never runs a route or takes a handoff. Locks onto the strongest non-lineman defender all game and blocks him alone.",
+		"dedicated_blocker": Callable(AbilityDB, "_dedicated_blocker_enforcer"),
+	},
 }
 
 
@@ -429,6 +454,18 @@ static func taunts_defenders(id: String) -> bool:
 ## him entirely. 0.0 means no cloak.
 static func cloak_seconds(id: String) -> float:
 	return _dispatch(id, "cloak_seconds", [], 0.0)
+
+
+## Positions this player counts as instead of his real one, for every
+## personnel-based check this play. [] means just use his real position.
+static func counts_as_positions(id: String) -> Array:
+	return _dispatch(id, "counts_as_positions", [], [])
+
+
+## True if this player always blocks - never a route/handoff target -
+## locked for the whole play onto the strongest non-lineman defender.
+static func dedicated_blocker(id: String) -> bool:
+	return _dispatch(id, "dedicated_blocker", [], false)
 
 
 # ============================================================================
@@ -662,4 +699,18 @@ static func _cloak_seconds_cloaked_route() -> float:
 
 
 static func _taunts_defenders_decoy() -> bool:
+	return true
+
+
+static func _counts_as_positions_positionless() -> Array:
+	return [PlayerData.Pos.RB, PlayerData.Pos.TE, PlayerData.Pos.WR]
+
+
+static func _snap_bowl_jitters(_p: PlayerData, ctx: Dictionary) -> Dictionary:
+	if bool(ctx.get("is_bowl_game", false)):
+		return {}
+	return {"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 3}
+
+
+static func _dedicated_blocker_enforcer() -> bool:
 	return true

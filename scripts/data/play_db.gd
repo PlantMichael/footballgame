@@ -1,7 +1,11 @@
 class_name PlayDB
 extends RefCounted
 
-## The playbook.
+## The old playbook, kept as reference material rather than as a game system:
+## plays are no longer bought, owned, or called. The Route Book screen browses
+## these, and RouteBook.example_routes loads one onto the coach's chalkboard
+## as a starting point he can then redraw. The sim still runs them directly
+## for the batch balance harnesses in tools/.
 ##
 ## Geometry convention (all values in YARDS, local to the formation):
 ##   align: Vector2(x, y) where x is depth relative to the line of scrimmage
@@ -305,30 +309,9 @@ static func play_name(id: String) -> String:
 	return get_play(id).get("name", "?")
 
 
-## Flat price for every purchasable play - the per-play "cost" data field is
-## no longer used for pricing (it's still there, just ignored).
-const SHOP_PLAY_COST := 200
-
-static func play_cost(id: String) -> int:
-	return SHOP_PLAY_COST
-
-
 static func all_ids() -> Array:
 	_build()
 	return _plays.keys()
-
-
-## `count` random plays to start a run with, so it isn't the same 4 every
-## time. Uses `rng` (not Array.shuffle, which reads Godot's own global random
-## state) so this stays reproducible when GameState.new_run is given a seed.
-static func random_starter_ids(rng: RandomNumberGenerator, count: int = 4) -> Array:
-	var ids := all_ids()
-	for i in range(ids.size() - 1, 0, -1):
-		var j := rng.randi_range(0, i)
-		var tmp = ids[i]
-		ids[i] = ids[j]
-		ids[j] = tmp
-	return ids.slice(0, mini(count, ids.size()))
 
 
 static func is_run(id: String) -> bool:

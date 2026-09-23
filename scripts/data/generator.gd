@@ -218,7 +218,10 @@ static func _dedupe_numbers(roster: Array[PlayerData], rng: RandomNumberGenerato
 
 
 ## An opponent defense. `strength_rating` is the average defensive stat.
-static func make_defense(rng: RandomNumberGenerator, strength_rating: float) -> Array[PlayerData]:
+## `aura_chance` (see GameState.aura_chance) is the odds that ONE random
+## defender on this unit spawns with a colored aura (AuraDB) - never more
+## than one per match.
+static func make_defense(rng: RandomNumberGenerator, strength_rating: float, aura_chance: float = 0.0) -> Array[PlayerData]:
 	var d: Array[PlayerData] = []
 	# 4 linemen, 3 linebackers, 4 defensive backs.
 	for i in 4:
@@ -227,6 +230,9 @@ static func make_defense(rng: RandomNumberGenerator, strength_rating: float) -> 
 		d.append(_make_defender(rng, "LB", strength_rating))
 	for i in 4:
 		d.append(_make_defender(rng, "DB", strength_rating))
+	if rng.randf() < aura_chance:
+		var auras: Array = AuraDB.all_ids()
+		d[rng.randi_range(0, d.size() - 1)].aura_id = auras[rng.randi_range(0, auras.size() - 1)]
 	return d
 
 

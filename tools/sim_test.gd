@@ -14,6 +14,13 @@ const ROSTER_GROWTH := 0.55
 const DT := 1.0 / 60.0
 
 
+## The balance harnesses still drive the sim off scripted PlayDB plays
+## (MatchSim.set_play) rather than hand-drawn routes, so their tuning
+## baselines stay comparable across the switch to the chalkboard. The
+## playbook is no longer part of GameState, so the pool lives here.
+const PLAY_POOL := ["quick_outs", "slant_flood", "curl_and_out", "hb_dive", "four_verticals"]
+
+
 func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
 	print("=== GRIDIRON RUN :: SIM HARNESS ===")
@@ -45,17 +52,12 @@ func _run_round(round_index: int) -> void:
 		# step behind the bracket rather than staying at week-one quality.
 		GameState.roster.assign(Generator.starting_roster(GameState.rng, ROSTER_BASE + round_index * ROSTER_GROWTH))
 		GameState.auto_fill_lineup()
-		# Give the roster a plausible mid-run playbook.
-		for id in PlayDB.all_ids():
-			if not GameState.playbook.has(id):
-				GameState.playbook.append(id)
-		GameState.active_plays = ["quick_outs", "slant_flood", "curl_and_out", "hb_dive", "four_verticals"]
 		_play_match(round_index, totals)
 
 	var n := float(MATCHES_PER_ROUND)
 	var plays := maxf(float(totals["plays"]), 1.0)
 	var attempts := maxf(float(totals["passes"]), 1.0)
-	print("\n[%s]  quality %.1f" % [GameState.ROUND_NAMES[round_index], float(GameState.bracket[round_index]["quality"])])
+	print("\n[%s]  quality %.1f" % [GameState.bracket[round_index].get("round", "Bowl"), float(GameState.bracket[round_index]["quality"])])
 	print("  win rate        %.0f%%" % (100.0 * totals["wins"] / n))
 	print("  avg score       %.1f - %.1f" % [totals["pts_us"] / n, totals["pts_them"] / n])
 	print("  yards per play  %.2f   (%d plays)" % [totals["yards"] / plays, totals["plays"]])
@@ -129,7 +131,7 @@ func _play_match(round_index: int, totals: Dictionary) -> void:
 
 ## A simple auto-coach so the harness exercises realistic play mixes.
 func _call_play(sim: MatchSim) -> String:
-	var pool: Array = GameState.active_plays
+	var pool: Array = PLAY_POOL
 	if sim.to_go <= 3.0 and sim.down >= 3:
 		for id in pool:
 			if PlayDB.is_run(id):

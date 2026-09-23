@@ -21,10 +21,18 @@ func _build() -> void:
 	var champion := won and GameState.is_run_over()
 	var out_of_lives := not won and not GameState.run_active
 
+	if champion:
+		MetaState.award_mark(GameState.qb_id, GameState.chosen_bowl)
+		var badge := UIKit.bowl_badge(GameState.chosen_bowl, 140)
+		if badge != null:
+			var center_badge := CenterContainer.new()
+			center_badge.add_child(badge)
+			center.add_child(center_badge)
+
 	var headline := "YOU WIN"
 	var col := UIKit.GOOD
 	if champion:
-		headline = "CHAMPIONS"
+		headline = "%s CHAMPIONS" % BowlDB.bowl_name(GameState.chosen_bowl).to_upper()
 		col = UIKit.ACCENT
 	elif out_of_lives:
 		headline = "SEASON OVER"
@@ -45,7 +53,8 @@ func _build() -> void:
 	center.add_child(score)
 
 	var earned := UIKit.label("Earned $%d football bucks%s" % [
-		int(r.get("bucks", 0)), "  (includes the $150 win bonus)" if won else ""
+		int(r.get("bucks", 0)),
+		"  (includes the $%d win bonus)" % int(r.get("win_bonus", 150)) if won else ""
 	], 16, UIKit.ACCENT)
 	earned.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(earned)
@@ -66,9 +75,17 @@ func _build() -> void:
 	center.add_child(row)
 
 	if won and not champion:
-		var next := UIKit.primary_button("  ON TO THE %s  " % GameState.round_label().to_upper(), 20)
+		var dest := "res://scenes/hub.tscn"
+		var label := "  ON TO THE %s  " % GameState.round_label().to_upper()
+		if GameState.needs_branch_choice():
+			dest = "res://scenes/path_choice.tscn"
+			label = "  CHOOSE YOUR PATH  "
+		elif GameState.needs_bowl_choice():
+			dest = "res://scenes/bowl_choice.tscn"
+			label = "  CHOOSE YOUR BOWL  "
+		var next := UIKit.primary_button(label, 20)
 		next.custom_minimum_size = Vector2(0, 50)
-		next.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
+		next.pressed.connect(func(): get_tree().change_scene_to_file(dest))
 		row.add_child(next)
 
 		var shop := UIKit.button("  Straight to the shop  ", 17)

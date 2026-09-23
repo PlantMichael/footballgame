@@ -1,6 +1,6 @@
 extends Control
 
-## Between-rounds hub: shows the bracket and routes to lineup, playbook,
+## Between-rounds hub: shows the bracket and routes to lineup, route book,
 ## shop, and the next match.
 
 
@@ -75,6 +75,11 @@ func _bracket_panel() -> Control:
 			col = UIKit.BAD
 
 		row.add_child(UIKit.label(status, 15, col))
+		var bowl_id := String(b.get("bowl_id", ""))
+		if bowl_id != "":
+			var badge := UIKit.bowl_badge(bowl_id, 22)
+			if badge != null:
+				row.add_child(badge)
 		var name_label := UIKit.label(b["round"], 15, col)
 		name_label.custom_minimum_size = Vector2(120, 0)
 		row.add_child(name_label)
@@ -99,7 +104,8 @@ func _bracket_panel() -> Control:
 		if GameState.player_at(slot) != null:
 			starters_count += 1
 	v.add_child(UIKit.label("%d players signed, %d/11 starters set" % [GameState.roster.size(), starters_count], 14))
-	v.add_child(UIKit.label("%d plays in the book, %d selected for the match" % [GameState.playbook.size(), GameState.active_plays.size()], 14))
+	var drawn: int = GameState.drawn_routes.size()
+	v.add_child(UIKit.label("%d of 5 routes chalked up (the rest run free)" % drawn, 14))
 	v.add_child(UIKit.label("%d items in the bag" % GameState.inventory.size(), 14))
 
 	var sp2 := Control.new()
@@ -120,8 +126,19 @@ func _matchup_panel() -> Control:
 		v.add_child(UIKit.label("You won it all.", 24, UIKit.ACCENT))
 		return p
 
-	v.add_child(UIKit.label("NEXT UP", 18, UIKit.ACCENT))
-	v.add_child(UIKit.label(opp["name"], 34))
+	var bowl_id := String(opp.get("bowl_id", ""))
+	var next_up_row := HBoxContainer.new()
+	next_up_row.add_theme_constant_override("separation", 10)
+	if bowl_id != "":
+		var badge := UIKit.bowl_badge(bowl_id, 40)
+		if badge != null:
+			next_up_row.add_child(badge)
+	var next_up_col := VBoxContainer.new()
+	next_up_col.add_theme_constant_override("separation", 0)
+	next_up_col.add_child(UIKit.label("NEXT UP", 18, UIKit.ACCENT))
+	next_up_col.add_child(UIKit.label(opp["name"], 34))
+	next_up_row.add_child(next_up_col)
+	v.add_child(next_up_row)
 	v.add_child(UIKit.label("%s  -  %d drives  -  difficulty %s" % [
 		opp["round"], opp["drives"], _difficulty_stars(GameState.current_match_quality())
 	], 15, UIKit.MUTED))
@@ -132,8 +149,6 @@ func _matchup_panel() -> Control:
 	var warn := ""
 	if not GameState.lineup_is_valid():
 		warn = "Your lineup is incomplete."
-	elif GameState.active_plays.is_empty():
-		warn = "Select at least one play before kickoff."
 	if warn != "":
 		v.add_child(UIKit.label(warn, 15, UIKit.BAD))
 
@@ -144,8 +159,8 @@ func _matchup_panel() -> Control:
 	v.add_child(grid)
 
 	grid.add_child(_nav_button("Lineup", "Set your 11 starters and hand out items.", "res://scenes/lineup.tscn"))
-	grid.add_child(_nav_button("Playbook", "Choose the %d plays you can call." % GameState.PLAY_SLOTS, "res://scenes/playbook.tscn"))
-	grid.add_child(_nav_button("Shop", "Spend football bucks on plays, players, and items.", "res://scenes/shop.tscn"))
+	grid.add_child(_nav_button("Route Book", "Learn the classic concepts you can chalk up.", "res://scenes/playbook.tscn"))
+	grid.add_child(_nav_button("Shop", "Spend football bucks on players and items.", "res://scenes/shop.tscn"))
 
 	v.add_child(UIKit.vsep(4))
 	v.add_child(_starters_summary())
@@ -154,10 +169,22 @@ func _matchup_panel() -> Control:
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(sp)
 
-	var kick := UIKit.primary_button("KICKOFF", 22)
-	kick.disabled = not GameState.lineup_is_valid() or GameState.active_plays.is_empty()
-	kick.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/match.tscn"))
-	v.add_child(kick)
+	# A coach who skipped straight to the shop after winning might not have
+	# picked a branch/bowl yet - block kickoff until that's settled instead of
+	# playing the next round with an unresolved path.
+	if GameState.needs_branch_choice():
+		var to_path := UIKit.primary_button("CHOOSE YOUR PATH", 22)
+		to_path.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/path_choice.tscn"))
+		v.add_child(to_path)
+	elif GameState.needs_bowl_choice():
+		var to_bowl := UIKit.primary_button("CHOOSE YOUR BOWL", 22)
+		to_bowl.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/bowl_choice.tscn"))
+		v.add_child(to_bowl)
+	else:
+		var kick := UIKit.primary_button("KICKOFF", 22)
+		kick.disabled = not GameState.lineup_is_valid()
+		kick.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/match.tscn"))
+		v.add_child(kick)
 	return p
 
 

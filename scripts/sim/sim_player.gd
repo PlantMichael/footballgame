@@ -34,6 +34,11 @@ var zone_point: Vector2 = Vector2.ZERO
 var energy: float = 1.0         # 1.0 fresh -> 0.0 gassed (hidden from the UI)
 var fatigue_floor: float = 0.65
 
+## Seconds this play has been live. Only used by the Speedfreak aura (see
+## speed() below) - reset per play in MatchSim._align_defense, incremented in
+## MatchSim._step_defense.
+var aura_timer: float = 0.0
+
 var has_ball: bool = false
 var engaged: bool = false       # blocker currently controlling a rusher
 var shed_cooldown: float = 0.0  # blocker cannot re-engage while > 0
@@ -82,6 +87,8 @@ func speed() -> float:
 	var mult: float = lerpf(fatigue_floor, 1.0, clampf(energy, 0.0, 1.0))
 	if disrupted > 0.0:
 		mult *= 0.55
+	if data != null and data.aura_id == AuraDB.SPEEDFREAK:
+		mult *= 1.0 + clampf(aura_timer * AuraDB.SPEEDFREAK_RAMP, 0.0, AuraDB.SPEEDFREAK_MAX_MULT)
 	return max_speed() * mult
 
 

@@ -1,8 +1,12 @@
 extends Control
 
-## Spend football bucks between rounds: plays, draft picks, and items.
+## Spend football bucks between rounds: draft picks and items. One row of
+## big cards at a time - players by default, items behind the "Items ->"
+## toggle in the bottom-right corner - rather than a permanent side-by-side
+## split, so each card has room to breathe.
 
 var notice: String = ""
+var _view: String = "players"   # "players" or "items"
 
 
 func _ready() -> void:
@@ -31,151 +35,134 @@ func _build() -> void:
 	root.add_theme_constant_override("separation", 12)
 	margin.add_child(root)
 
-	root.add_child(UIKit.header("Shop", "Stock refreshes each round"))
-	root.add_child(UIKit.rule())
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	root.add_child(top)
+
+	var title_box := UIKit.panel(UIKit.PANEL_HI)
+	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title_label := UIKit.label("SHOP" if _view == "players" else "ITEMS", 24, UIKit.ACCENT)
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_box.add_child(title_label)
+	top.add_child(title_box)
+
+	var bucks_box := UIKit.panel(UIKit.PANEL_HI)
+	var bucks_label := UIKit.label("$%d" % GameState.bucks, 20, UIKit.ACCENT)
+	bucks_box.add_child(bucks_label)
+	top.add_child(bucks_box)
+
+	var refresh := UIKit.button("Refresh  ($%d)" % GameState.REROLL_COST, 15)
+	refresh.disabled = GameState.bucks < GameState.REROLL_COST
+	refresh.pressed.connect(func():
+		if GameState.reroll_shop():
+			notice = ""
+		_rebuild())
+	top.add_child(refresh)
 
 	if notice != "":
 		root.add_child(UIKit.label(notice, 15, UIKit.BAD))
 
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", 16)
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(body)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(UIKit.scroll(row))
 
-	body.add_child(_plays_column())
-	body.add_child(_players_column())
-	body.add_child(_items_column())
+	if _view == "players":
+		for c in _player_cards():
+			row.add_child(c)
+	else:
+		for c in _item_cards():
+			row.add_child(c)
+		root.add_child(_bag_summary())
 
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 10)
 	root.add_child(bottom)
 
-	var reroll := UIKit.button("Reroll stock  ($%d)" % GameState.REROLL_COST)
-	reroll.disabled = GameState.bucks < GameState.REROLL_COST
-	reroll.pressed.connect(func():
-		if GameState.reroll_shop():
-			notice = ""
-		_rebuild())
-	bottom.add_child(reroll)
+	var back := UIKit.button("  <- Back  ", 17)
+	back.custom_minimum_size = Vector2(0, 42)
+	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
+	bottom.add_child(back)
 
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bottom.add_child(sp)
 
-	var back := UIKit.primary_button("Back to hub", 17)
-	back.custom_minimum_size = Vector2(200, 42)
-	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
-	bottom.add_child(back)
+	var toggle := UIKit.primary_button("  Players ->  " if _view == "items" else "  Items ->  ", 17)
+	toggle.custom_minimum_size = Vector2(0, 42)
+	toggle.pressed.connect(func():
+		_view = "items" if _view == "players" else "players"
+		_rebuild())
+	bottom.add_child(toggle)
 
 
-func _column(title: String) -> Array:
-	var p := UIKit.panel()
-	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	p.add_child(v)
-	v.add_child(UIKit.label(title, 18, UIKit.ACCENT))
-	v.add_child(UIKit.rule())
-	var inner := VBoxContainer.new()
-	inner.add_theme_constant_override("separation", 8)
-	v.add_child(UIKit.scroll(inner))
-	return [p, inner]
-
-
-func _plays_column() -> Control:
-	var parts := _column("PLAYS")
-	var inner: VBoxContainer = parts[1]
-
-	var stock: Array = GameState.shop_stock.get("plays", [])
-	if stock.is_empty():
-		inner.add_child(UIKit.label("Sold out of new plays.", 14, UIKit.MUTED))
-
-	for id in stock:
-		var pl := PlayDB.get_play(id)
-		var cost := PlayDB.play_cost(id)
-		var sold := GameState.is_sold("play", id) or GameState.playbook.has(id)
-
-		var card := UIKit.panel(UIKit.PANEL_HI)
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 4)
-		card.add_child(v)
-
-		var head := HBoxContainer.new()
-		head.add_child(UIKit.label(pl.get("name", id), 16))
-		var sp := Control.new()
-		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		head.add_child(sp)
-		head.add_child(UIKit.label(String(pl.get("kind", "pass")).to_upper(), 12, UIKit.MUTED))
-		v.add_child(head)
-
-		var d := UIKit.label(pl.get("desc", ""), 12, UIKit.MUTED)
-		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		v.add_child(d)
-
-		var diagram := PlayDiagram.new()
-		diagram.play_id = id
-		diagram.compact = true
-		diagram.custom_minimum_size = Vector2(0, 130)
-		v.add_child(diagram)
-
-		var buy := UIKit.button("SOLD" if sold else "Buy  $%d" % cost, 14)
-		buy.disabled = sold or GameState.bucks < cost
-		buy.pressed.connect(func(): _buy_play(id, cost))
-		v.add_child(buy)
-		inner.add_child(card)
-
-	return parts[0]
-
-
-func _buy_play(id: String, cost: int) -> void:
-	if not GameState.spend_bucks(cost):
-		notice = "Not enough football bucks."
-		_rebuild()
-		return
-	GameState.playbook.append(id)
-	GameState.mark_sold("play", id)
-	if GameState.active_plays.size() < GameState.PLAY_SLOTS:
-		GameState.active_plays.append(id)
-	notice = "Added %s to the playbook." % PlayDB.play_name(id)
-	_rebuild()
-
-
-func _players_column() -> Control:
-	var parts := _column("DRAFT BOARD")
-	var inner: VBoxContainer = parts[1]
-
+## Big, vertical draft-board cards: portrait on top, name/ability/desc below,
+## sign button at the bottom - one per shop.gd's "players" stock slot.
+func _player_cards() -> Array:
+	var out: Array = []
 	var stock: Array = GameState.shop_stock.get("players", [])
 	for i in stock.size():
 		var p: PlayerData = stock[i]
 		var cost := Generator.player_price(p)
 		var sold := GameState.is_sold("player", str(i))
 
-		var card := UIKit.panel(UIKit.PANEL_HI)
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", UIKit.stylebox(UIKit.PANEL_HI, 8, 3, _quality_color(p.quality)))
+		card.custom_minimum_size = Vector2(190, 0)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 4)
+		v.add_theme_constant_override("separation", 6)
 		card.add_child(v)
+
 		if p.quality > 0:
-			v.add_child(UIKit.label(ShopPlayerDB.quality_name(p.quality).to_upper(),
-				12, _quality_color(p.quality)))
-		v.add_child(UIKit.player_card(p, false))
+			var tier := UIKit.label(ShopPlayerDB.quality_name(p.quality).to_upper(), 12, _quality_color(p.quality))
+			tier.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			v.add_child(tier)
+
+		var portrait := UIKit.player_portrait(p, 110)
+		if portrait:
+			var center := CenterContainer.new()
+			center.add_child(portrait)
+			v.add_child(center)
+
+		var name_label := UIKit.label(p.pname, 16, UIKit.TEXT)
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(name_label)
+		var pos_label := UIKit.label("#%d  %s  OVR %d" % [p.number, p.pos_name(), p.overall()], 12, UIKit.MUTED)
+		pos_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(pos_label)
+
+		v.add_child(UIKit.rule())
+		var ability := UIKit.label("Ability: %s" % AbilityDB.ability_name(p.ability_id), 13, UIKit.TEXT)
+		ability.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(ability)
+		var desc := UIKit.label(AbilityDB.ability_desc(p.ability_id), 11, UIKit.MUTED)
+		desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(desc)
+
+		var sp := Control.new()
+		sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		v.add_child(sp)
 
 		var buy := UIKit.button("SIGNED" if sold else "Sign  $%d" % cost, 14)
 		buy.disabled = sold or GameState.bucks < cost
 		buy.pressed.connect(func(): _buy_player(i, p, cost))
 		v.add_child(buy)
-		inner.add_child(card)
 
-	return parts[0]
+		out.append(card)
+	return out
 
 
-## Rarity color for the hardcoded draft board, low to high.
+## Rarity color for the hardcoded draft board, low to high - also used as
+## each card's outline so the tier reads at a glance.
 func _quality_color(q: int) -> Color:
 	match q:
-		ShopPlayerDB.QUALITY_ROOKIE: return UIKit.MUTED
-		ShopPlayerDB.QUALITY_SOPHOMORE: return UIKit.TEXT
-		ShopPlayerDB.QUALITY_VETERAN: return UIKit.GOOD
+		ShopPlayerDB.QUALITY_ROOKIE: return Color("8a8f96")
+		ShopPlayerDB.QUALITY_SOPHOMORE: return Color("5aa9e6")
+		ShopPlayerDB.QUALITY_VETERAN: return Color("a06cd5")
 		ShopPlayerDB.QUALITY_ALL_STAR: return UIKit.ACCENT
-	return UIKit.TEXT
+	return UIKit.MUTED
 
 
 func _buy_player(index: int, p: PlayerData, cost: int) -> void:
@@ -190,10 +177,9 @@ func _buy_player(index: int, p: PlayerData, cost: int) -> void:
 	_rebuild()
 
 
-func _items_column() -> Control:
-	var parts := _column("ITEMS")
-	var inner: VBoxContainer = parts[1]
-
+## Same big-card shape as _player_cards, for the item stock.
+func _item_cards() -> Array:
+	var out: Array = []
 	var stock: Array = GameState.shop_stock.get("items", [])
 	for i in stock.size():
 		var id: String = stock[i]
@@ -201,33 +187,50 @@ func _items_column() -> Control:
 		var sold := GameState.is_sold("item", str(i))
 
 		var card := UIKit.panel(UIKit.PANEL_HI)
+		card.custom_minimum_size = Vector2(190, 0)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 4)
+		v.add_theme_constant_override("separation", 6)
 		card.add_child(v)
-		v.add_child(UIKit.label(ItemDB.item_name(id), 16))
+
+		var name_label := UIKit.label(ItemDB.item_name(id), 16, UIKit.TEXT)
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(name_label)
+		v.add_child(UIKit.rule())
 		var d := UIKit.label(ItemDB.item_desc(id), 12, UIKit.MUTED)
 		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		v.add_child(d)
+
+		var sp := Control.new()
+		sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		v.add_child(sp)
 
 		var buy := UIKit.button("BOUGHT" if sold else "Buy  $%d" % cost, 14)
 		buy.disabled = sold or GameState.bucks < cost
 		buy.pressed.connect(func(): _buy_item(i, id, cost))
 		v.add_child(buy)
-		inner.add_child(card)
 
-	inner.add_child(UIKit.vsep(8))
-	inner.add_child(UIKit.rule())
-	inner.add_child(UIKit.label("IN THE BAG", 14, UIKit.ACCENT))
+		out.append(card)
+	return out
+
+
+func _bag_summary() -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	v.add_child(UIKit.rule())
+	v.add_child(UIKit.label("IN THE BAG", 14, UIKit.ACCENT))
 	if GameState.inventory.is_empty():
-		inner.add_child(UIKit.label("Nothing unequipped.", 12, UIKit.MUTED))
+		v.add_child(UIKit.label("Nothing unequipped.", 12, UIKit.MUTED))
 	else:
 		var counts := {}
 		for item_id in GameState.inventory:
 			counts[item_id] = int(counts.get(item_id, 0)) + 1
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 14)
 		for item_id in counts:
-			inner.add_child(UIKit.label("%s x%d" % [ItemDB.item_name(item_id), counts[item_id]], 12, UIKit.TEXT))
-
-	return parts[0]
+			row.add_child(UIKit.label("%s x%d" % [ItemDB.item_name(item_id), counts[item_id]], 12, UIKit.TEXT))
+		v.add_child(row)
+	return v
 
 
 func _buy_item(index: int, id: String, cost: int) -> void:

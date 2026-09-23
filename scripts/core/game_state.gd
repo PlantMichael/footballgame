@@ -1,13 +1,17 @@
 extends Node
 
 ## Autoload. Owns everything that persists across a run: roster, lineup,
-## playbook, inventory, football bucks, and bracket progress.
+## drawn routes, inventory, football bucks, and bracket progress.
 
 signal bucks_changed(new_total: int)
 signal roster_changed()
 
 const SLOT_ORDER := ["QB", "C", "T0", "T1", "T2", "T3", "F0", "F1", "F2", "F3", "F4"]
-const ROUND_NAMES := ["Wild Card", "Divisional", "Conference", "Semifinal", "CHAMPIONSHIP"]
+## The 4 build-up rounds. The 5th and final bracket entry is the bowl game
+## itself - its name comes from BowlDB once the coach picks a branch and then
+## a bowl (see needs_branch_choice/needs_bowl_choice/choose_branch/choose_bowl),
+## not from this list. DRIVES_PER_MATCH still has a slot for it at index 4.
+const ROUND_NAMES := ["Wild Card", "Divisional", "Conference", "Semifinal"]
 const DRIVES_PER_MATCH := [4, 4, 5, 5, 5]
 
 ## Rosters start in the 2-4 stat band, so the whole difficulty scale sits low
@@ -34,16 +38,30 @@ var team_name: String = "Your Team"
 var bucks: int = 0
 var roster: Array[PlayerData] = []
 var lineup: Dictionary = {}             # slot name -> roster index
-var playbook: Array[String] = []        # play ids
 var inventory: Array[String] = []       # unequipped item ids
 var round_index: int = 0
 var bracket: Array = []                 # Array[Dictionary] opponent info
 var run_active: bool = false
 var last_result: Dictionary = {}        # filled in by the match scene
 
-## Selected plays for the upcoming match, capped at PLAY_SLOTS.
-const PLAY_SLOTS := 5
-var active_plays: Array[String] = []
+## Which QBDB entry is leading this run (-1 if a fully-generated QB, no fixed
+## pick). Stashed here rather than only applied transiently so a bowl win can
+## credit the completion mark to the right QB - see MetaState.award_mark.
+var qb_id: int = -1
+
+## The roguelike path to one of the 6 bowls (BowlDB). Chosen in two steps:
+## a branch after round 0, then a specific bowl within that branch after
+## round 1 - see needs_branch_choice/needs_bowl_choice below.
+var chosen_branch: String = ""
+var chosen_bowl: String = ""
+
+## The chalk. Flex slot name ("F0".."F4") -> Array of Vector2 waypoints,
+## relative to that player's alignment (see RouteBook). A slot missing from
+## here is one the coach never drew: MatchSim gives him a random stock route
+## instead, rerolled every snap. Routes persist between snaps and between
+## matches for the whole run, so a concept you like stays on the board until
+## you wipe it.
+var drawn_routes: Dictionary = {}
 
 ## An endless scrimmage with every player, item, and play unlocked and no
 ## bracket/economy pressure - for tuning and ability testing. See
@@ -52,6 +70,10 @@ var active_plays: Array[String] = []
 var dev_mode: bool = false
 const DEV_ROSTER_QUALITY := 13.0
 const DEV_DEFENSE_QUALITY := 8.0
+## Flat, high odds in dev mode so every one of the 5 defender auras is
+## actually reachable for testing without grinding a real run deep. See
+## aura_chance below.
+const DEV_AURA_CHANCE := 0.35
 ## A drive count high enough that "last drive" logic (match.gd, MatchSim)
 ## never actually triggers in a real testing session - simplest way to get
 ## "infinite drives" without a separate flag threaded through both.
@@ -71,12 +93,13 @@ func new_run(seed_value: int = 0, qb_id: int = -1) -> void:
 		rng.randomize()
 
 	dev_mode = false
+	self.qb_id = qb_id
 	team_name = Generator.team_name(rng)
 	bucks = 150
 	roster.assign(Generator.starting_roster(rng))
 	if qb_id >= 0:
 		_apply_chosen_qb(qb_id)
-	playbook.assign(PlayDB.random_starter_ids(rng))
+	drawn_routes.clear()
 	inventory.assign(["stickum_gloves", "lead_vest"])
 	bought_shop_players.clear()
 	bought_items.clear()
@@ -88,7 +111,6 @@ func new_run(seed_value: int = 0, qb_id: int = -1) -> void:
 	last_result = {}
 	_build_bracket()
 	auto_fill_lineup()
-	auto_fill_plays()
 	roster_changed.emit()
 	bucks_changed.emit(bucks)
 
@@ -106,8 +128,7 @@ func start_dev_mode() -> void:
 	for p in ShopPlayerDB.all_players(rng):
 		roster.append(p)
 		_ensure_unique_number(p)
-	playbook.assign(PlayDB.all_ids())
-	active_plays.assign(PlayDB.all_ids())
+	drawn_routes.clear()
 	inventory.assign(ItemDB.all_ids())
 	round_index = 0
 	losses = 0
@@ -136,6 +157,8 @@ func _apply_chosen_qb(qb_id: int) -> void:
 
 func _build_bracket() -> void:
 	bracket.clear()
+	chosen_branch = ""
+	chosen_bowl = ""
 	for i in ROUND_NAMES.size():
 		# Opponent quality climbs from a soft opener to a real title team.
 		# The ramp is deliberately gentler than the shop's draft ramp: the sim
@@ -149,6 +172,17 @@ func _build_bracket() -> void:
 			"drives": DRIVES_PER_MATCH[i],
 			"result": "",
 		})
+	# The bowl game itself: which one is decided later via choose_branch/
+	# choose_bowl, so this starts as a placeholder and gets filled in.
+	var bowl_index := ROUND_NAMES.size()
+	bracket.append({
+		"name": Generator.team_name(rng),
+		"round": "The Bowl",
+		"quality": ROUND_ONE_QUALITY + float(bowl_index) * QUALITY_PER_ROUND,
+		"drives": DRIVES_PER_MATCH[bowl_index],
+		"result": "",
+		"bowl_id": "",
+	})
 
 
 func current_opponent() -> Dictionary:
@@ -165,6 +199,50 @@ func current_match_quality() -> float:
 
 func is_run_over() -> bool:
 	return round_index >= bracket.size()
+
+
+## Odds that a single defender on the opposing unit spawns with a colored
+## aura (AuraDB) this match - climbs with how deep into the run you are.
+## Dev mode gets a flat, high odds instead so every aura is actually
+## reachable without grinding a real run deep.
+const AURA_CHANCE_BASE := 0.05
+const AURA_CHANCE_PER_MATCH := 0.045
+const AURA_CHANCE_MAX := 0.65
+
+func aura_chance() -> float:
+	if dev_mode:
+		return DEV_AURA_CHANCE
+	return clampf(AURA_CHANCE_BASE + float(matches_played) * AURA_CHANCE_PER_MATCH, 0.0, AURA_CHANCE_MAX)
+
+
+# --- Bowl path choices -------------------------------------------------------
+
+## True once round 0 (Wild Card) is won and the coach still needs to pick a
+## branch (see BowlDB.BRANCHES) toward one of the 6 bowls.
+func needs_branch_choice() -> bool:
+	return not dev_mode and run_active and round_index == 1 and chosen_branch == ""
+
+
+## True once round 1 (Divisional) is won, a branch is picked, and the coach
+## still needs to pick which of that branch's 2 bowls to play for.
+func needs_bowl_choice() -> bool:
+	return not dev_mode and run_active and round_index == 2 and chosen_branch != "" and chosen_bowl == ""
+
+
+func choose_branch(id: String) -> void:
+	if not BowlDB.BRANCHES.has(id):
+		return
+	chosen_branch = id
+
+
+func choose_bowl(id: String) -> void:
+	if chosen_branch == "" or not BowlDB.bowls_in_branch(chosen_branch).has(id):
+		return
+	chosen_bowl = id
+	var idx := bracket.size() - 1
+	bracket[idx]["round"] = BowlDB.bowl_name(id)
+	bracket[idx]["bowl_id"] = id
+	bracket[idx]["quality"] = float(bracket[idx]["quality"]) * BowlDB.quality_mult(id)
 
 
 func add_bucks(amount: int) -> void:
@@ -222,17 +300,45 @@ func fits_slot(idx: int, slot: String) -> bool:
 func set_slot(slot: String, idx: int) -> bool:
 	if not fits_slot(idx, slot):
 		return false
+
+	# Who is losing this slot, and are they actually being benched rather
+	# than just swapping into the incoming player's old spot?
+	var displaced := -1
+	if lineup.has(slot) and lineup[slot] != idx:
+		displaced = lineup[slot]
+	var swapped := false
+
 	# A player can only be in one slot; swap if they are already elsewhere.
 	for other in lineup.keys():
 		if other != slot and lineup[other] == idx:
 			if lineup.has(slot):
 				lineup[other] = lineup[slot]
+				swapped = true
 			else:
 				lineup.erase(other)
 			break
 	lineup[slot] = idx
+
+	# A generated rookie who has just been benched by a signed player is cut
+	# outright rather than left cluttering the bench - he was only ever a
+	# placeholder until you could afford somebody real. Only applies when he
+	# is genuinely displaced: a straight swap moves him to another slot, and
+	# one default replacing another is just a lineup change.
+	if not swapped and displaced >= 0 and _is_default(displaced) and not _is_default(idx):
+		cut_player(displaced)
+		return true
+
 	roster_changed.emit()
 	return true
+
+
+## A procedurally generated starter, as opposed to somebody signed from the
+## shop. PlayerData.quality is 0 for generated players and 1-4 for the
+## hardcoded shop roster.
+func _is_default(idx: int) -> bool:
+	if idx < 0 or idx >= roster.size():
+		return false
+	return roster[idx].quality == 0
 
 
 func auto_fill_lineup() -> void:
@@ -273,24 +379,28 @@ func starters() -> Array[PlayerData]:
 	return out
 
 
-# --- Playbook ---------------------------------------------------------------
+# --- Drawn routes -----------------------------------------------------------
 
-func auto_fill_plays() -> void:
-	active_plays.clear()
-	for id in playbook:
-		if active_plays.size() >= PLAY_SLOTS:
-			break
-		active_plays.append(id)
+func route_for(slot: String) -> Array:
+	return drawn_routes.get(slot, [])
 
 
-func toggle_active_play(id: String) -> bool:
-	if active_plays.has(id):
-		active_plays.erase(id)
-		return true
-	if active_plays.size() >= PLAY_SLOTS:
-		return false
-	active_plays.append(id)
-	return true
+func has_route(slot: String) -> bool:
+	return drawn_routes.has(slot) and not drawn_routes[slot].is_empty()
+
+
+## `route` is waypoints relative to the alignment spot, already truncated to
+## RouteBook.BUDGET_YARDS by whoever drew it. An empty route clears the slot
+## back to "auto".
+func set_route(slot: String, route: Array) -> void:
+	if route.is_empty():
+		drawn_routes.erase(slot)
+	else:
+		drawn_routes[slot] = route
+
+
+func clear_routes() -> void:
+	drawn_routes.clear()
 
 
 # --- Items ------------------------------------------------------------------
@@ -372,6 +482,8 @@ func finish_match(won: bool) -> void:
 func round_label() -> String:
 	if round_index < ROUND_NAMES.size():
 		return ROUND_NAMES[round_index]
+	if round_index < bracket.size():
+		return String(bracket[round_index].get("round", "The Bowl"))
 	return "Champions"
 
 
@@ -383,9 +495,9 @@ var shop_stock: Dictionary = {}
 
 ## Permanent-for-the-run record of what's already been bought, so a rerolled
 ## or next-match shop never re-offers it. Keyed differently per category:
-## plays already have `playbook` for this (an id membership check), but shop
-## players have no stable id besides their name, and items are consumable/
-## re-stackable via `inventory` so buying one doesn't remove it from there.
+## shop players have no stable id besides their name, and items are
+## consumable/re-stackable via `inventory` so buying one doesn't remove it
+## from there.
 var bought_shop_players: Dictionary = {}    # player name -> true
 var bought_items: Dictionary = {}           # item id -> true
 
@@ -408,12 +520,6 @@ func reroll_shop() -> bool:
 
 
 func _roll_shop() -> void:
-	var play_pool: Array = []
-	for id in PlayDB.all_ids():
-		if not playbook.has(id):
-			play_pool.append(id)
-	play_pool.shuffle()
-
 	var item_pool: Array = []
 	for id in ItemDB.all_ids():
 		if not bought_items.has(id):
@@ -422,7 +528,6 @@ func _roll_shop() -> void:
 
 	shop_stock = {
 		"matches": matches_played,
-		"plays": play_pool.slice(0, mini(3, play_pool.size())),
 		"players": ShopPlayerDB.roll_stock(rng, 4, bought_shop_players),
 		"items": item_pool.slice(0, 4),
 		"sold": {},

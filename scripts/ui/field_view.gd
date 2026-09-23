@@ -10,6 +10,12 @@ extends Control
 signal player_clicked(sp: SimPlayer)
 signal field_clicked()
 
+## Emitted when the coach finishes a chalk stroke on a flex player. `route`
+## is waypoints in yards RELATIVE to that player's alignment, already
+## simplified and truncated to the budget - i.e. ready to hand straight to
+## GameState.set_route.
+signal route_drawn(slot: String, route: Array)
+
 const YD := MatchSim.FIELD_LEN
 const YW := MatchSim.FIELD_W
 
@@ -28,10 +34,55 @@ const ZOOM_MIN := 0.6
 const ZOOM_MAX := 2.5
 const ZOOM_STEP := 0.1
 
+## Out of bounds. Lighter than UIKit.TURF so the sidelines read as grass
+## rather than as a void, while the darker playing surface still stands out.
+const SIDELINE_GRASS := Color("356f47")
+
+## Player rendering. `r` is the base player radius in pixels, derived from the
+## zoom; everything else about a body is expressed as a multiple of it.
+const PLAYER_R := 0.72          # yards of radius per player, times _scale
+const PLAYER_R_MIN := 12.0
+
+## Bodies are normalised to equal AREA rather than fitted inside a box. The
+## source sprites are framed very inconsistently - front-view aspect ratios
+## run from 0.57 to 1.39 - so box-fitting drew the wide ones as squat blobs
+## and the narrow ones as tall slivers at noticeably different visual sizes.
+## Matching area instead makes every body take up about the same amount of
+## screen, whatever its framing. The value is the side of that area square,
+## in units of `r`.
+const BODY_AREA := 1.95
+
+## The team-colour disc behind each player. The FILL is near-invisible, per
+## request. The rim is not: the jersey art is a fixed navy for both sides, so
+## with the fill gone this outline becomes the only thing telling offence
+## from defence, and at a faint alpha the two teams were genuinely
+## indistinguishable on the field.
+const DISC_ALPHA := 0.12
+const DISC_RIM_ALPHA := 0.85
+const DISC_RIM_WIDTH := 2.6
+
+## Screen shake on a catch, scaled by how far the ball travelled.
+const SHAKE_MIN_PX := 2.0
+const SHAKE_MAX_PX := 16.0
+const SHAKE_FULL_YARDS := 28.0   # air yards at which the shake maxes out
+const SHAKE_TIME := 0.38
+
 var sim: MatchSim = null
 var show_preview: bool = true
 var selected: SimPlayer = null
 var camera_locked: bool = true
+
+## Chalk drawing. Pressing on a flex player and dragging draws his route;
+## pressing and releasing without really moving is still a plain click, so
+## inspecting a receiver and drawing for him share the same gesture.
+## `_stroke` is in absolute field yards - it is converted to alignment-
+## relative waypoints only when the stroke is finished.
+var draw_enabled: bool = false
+var _stroke_slot: String = ""
+var _stroke: Array = []
+var _stroke_len: float = 0.0
+var _stroke_player: SimPlayer = null
+const DRAW_TAP_YARDS := 1.2
 
 var _scale: float = 20.0
 var _center: Vector2 = Vector2.ZERO
@@ -40,6 +91,14 @@ var _cam_y: float = 0.0        # lateral camera focus, in field yards
 var _zoom: float = 1.0
 var _visible_yards: float = MIN_VERT_YARDS
 var _dragging: bool = false
+
+## Active screen shake: current amplitude in pixels, seconds left, and a
+## phase that drives the wobble. Applied as a pure pixel offset on top of the
+## camera (see to_px/to_yards) so it never touches camera state or clamping.
+var _shake_px: float = 0.0
+var _shake_left: float = 0.0
+var _shake_phase: float = 0.0
+var _shake_offset: Vector2 = Vector2.ZERO
 
 ## Floating "+ STAT" stat-gain popups. MatchSim queues raw events onto each
 ## SimPlayer's `pending_stat_gains` (one entry per point, so +5 Agility is 5
@@ -125,7 +184,42 @@ func _process(delta: float) -> void:
 		for sp in sim.defense:
 			_advance_anim(sp, delta)
 			_advance_pops(sp, delta)
+		# A Control only sees _gui_input while the pointer is over it, so a
+		# stroke released off the edge of the window would otherwise never
+		# commit.
+		if _stroke_slot != "" and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_finish_stroke()
+		_advance_shake(delta)
 	queue_redraw()
+
+
+## Drains any catches the sim has logged since the last frame and shakes the
+## camera for them, then decays whatever shake is already running. A longer
+## throw hits harder, up to SHAKE_FULL_YARDS.
+func _advance_shake(delta: float) -> void:
+	while not sim.catch_shakes.is_empty():
+		var air: float = float(sim.catch_shakes.pop_front())
+		var t := clampf(air / SHAKE_FULL_YARDS, 0.0, 1.0)
+		# Eased so the difference between a 5 and a 15 yard grab is felt,
+		# rather than everything short feeling identical.
+		t = t * t * (3.0 - 2.0 * t)
+		_shake_px = maxf(_shake_px, lerpf(SHAKE_MIN_PX, SHAKE_MAX_PX, t))
+		_shake_left = SHAKE_TIME
+
+	if _shake_left <= 0.0:
+		_shake_offset = Vector2.ZERO
+		_shake_px = 0.0
+		return
+
+	_shake_left = maxf(0.0, _shake_left - delta)
+	_shake_phase += delta
+	# Two incommensurate frequencies so it reads as a rattle rather than a
+	# clean oscillation, faded out over the tail.
+	var amp := _shake_px * (_shake_left / SHAKE_TIME)
+	_shake_offset = Vector2(
+		sin(_shake_phase * 71.0) * amp,
+		cos(_shake_phase * 53.0) * amp * 0.8
+	)
 
 
 func _advance_anim(sp: SimPlayer, delta: float) -> void:
@@ -222,8 +316,17 @@ func _recompute_transform() -> void:
 ## Field yards (downfield, lateral) -> screen pixels.
 func to_px(p: Vector2) -> Vector2:
 	return Vector2(
-		_center.x + (p.y - _cam_y) * _scale,
-		_center.y - (p.x - _cam_x) * _scale
+		_center.x + _shake_offset.x + (p.y - _cam_y) * _scale,
+		_center.y + _shake_offset.y - (p.x - _cam_x) * _scale
+	)
+
+
+## Screen pixels -> field yards, clamped inside the playing surface so a
+## stroke dragged off the edge of the window still lands on the field.
+func to_yards(px: Vector2) -> Vector2:
+	return Vector2(
+		clampf((_center.y + _shake_offset.y - px.y) / maxf(_scale, 0.01) + _cam_x, 0.0, YD),
+		clampf((px.x - _center.x - _shake_offset.x) / maxf(_scale, 0.01) + _cam_y, 0.8, YW - 0.8)
 	)
 
 
@@ -244,6 +347,9 @@ func _gui_input(event: InputEvent) -> void:
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_zoom = clampf(_zoom - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
 			return
+		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and _stroke_slot != "":
+			_finish_stroke()
+			return
 		if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 			return
 
@@ -261,10 +367,21 @@ func _gui_input(event: InputEvent) -> void:
 					best = d
 					hit = sp
 
+		# Pressing on one of your own flex players starts a chalk stroke.
+		# A press that never really moves is still just a click (see
+		# _finish_stroke), so inspecting and drawing share one gesture.
+		if hit != null and draw_enabled and hit.is_offense and hit.slot.begins_with("F") 				and sim.phase == MatchSim.Phase.PRESNAP:
+			_begin_stroke(hit)
+			return
+
 		if hit != null:
 			player_clicked.emit(hit)
 		else:
 			field_clicked.emit()
+		return
+
+	if event is InputEventMouseMotion and _stroke_slot != "":
+		_extend_stroke(to_yards((event as InputEventMouseMotion).position))
 		return
 
 	if event is InputEventMouseMotion and _dragging:
@@ -273,6 +390,75 @@ func _gui_input(event: InputEvent) -> void:
 		_cam_y -= mm.relative.x / maxf(_scale, 0.01)
 		_cam_x += mm.relative.y / maxf(_scale, 0.01)
 		_clamp_camera()
+
+
+# ============================================================================
+# Chalk strokes
+# ============================================================================
+
+func _begin_stroke(sp: SimPlayer) -> void:
+	_stroke_player = sp
+	_stroke_slot = sp.slot
+	# Always anchored at the alignment spot rather than wherever he happens to
+	# be standing mid-shift, so the stored route hangs off the same point the
+	# sim will run it from.
+	_stroke = [sp.target_pos]
+	_stroke_len = 0.0
+
+
+func _extend_stroke(point: Vector2) -> void:
+	if _stroke.is_empty():
+		return
+	var last: Vector2 = _stroke[_stroke.size() - 1]
+	var leg := last.distance_to(point)
+	if leg < RouteBook.SAMPLE_MIN_YARDS:
+		return
+	var budget_left := RouteBook.BUDGET_YARDS - _stroke_len
+	if budget_left <= 0.01:
+		return
+	# Out of chalk mid-leg: land exactly on the allowance instead of
+	# overshooting it or dropping the segment entirely.
+	if leg > budget_left:
+		point = last + (point - last).normalized() * budget_left
+		leg = budget_left
+	_stroke.append(point)
+	_stroke_len += leg
+
+
+## Turns the raw trail into waypoints relative to the alignment spot and
+## hands it off. A stroke that barely moved is treated as a click on the
+## player instead, so tapping a receiver still opens his card.
+func _finish_stroke() -> void:
+	var sp := _stroke_player
+	var points := _stroke
+	var total := _stroke_len
+	cancel_stroke()
+
+	if sp == null:
+		return
+	if total < maxf(RouteBook.MIN_ROUTE_YARDS, DRAW_TAP_YARDS) or points.size() < 2:
+		player_clicked.emit(sp)
+		return
+
+	var origin: Vector2 = points[0]
+	var simplified := RouteBook.simplify(points)
+	var route: Array = []
+	for i in range(1, simplified.size()):
+		route.append(simplified[i] - origin)
+	route = RouteBook.truncate(route)
+	if route.is_empty():
+		player_clicked.emit(sp)
+		return
+	route_drawn.emit(sp.slot, route)
+
+
+## Wipes an in-progress stroke without committing it (e.g. the ball was
+## snapped out from under the coach).
+func cancel_stroke() -> void:
+	_stroke_slot = ""
+	_stroke_player = null
+	_stroke = []
+	_stroke_len = 0.0
 
 
 # ============================================================================
@@ -288,6 +474,7 @@ func _draw() -> void:
 	_draw_lines_of_scrimmage()
 	if show_preview and sim.phase == MatchSim.Phase.PRESNAP:
 		_draw_route_preview()
+		_draw_stroke()
 	if sim.phase == MatchSim.Phase.LIVE or sim.phase == MatchSim.Phase.DEAD:
 		_draw_trails()
 	_draw_players()
@@ -304,8 +491,9 @@ func _visible_range() -> Vector2i:
 
 
 func _draw_field() -> void:
-	# Everything outside the sidelines.
-	draw_rect(Rect2(Vector2.ZERO, size), Color("0a120f"))
+	# Everything outside the sidelines: grass too, just a lighter, flatter
+	# green than the playing surface so the field still reads as the field.
+	draw_rect(Rect2(Vector2.ZERO, size), SIDELINE_GRASS)
 
 	var lo := _visible_range()
 	var left := to_px(Vector2(0.0, 0.0)).x
@@ -385,24 +573,114 @@ func _draw_lines_of_scrimmage() -> void:
 		draw_line(Vector2(left, fy), Vector2(right, fy), Color("f2c14e"), 2.5)
 
 
+## Chalk colours. A route you drew is bright and solid; one the game filled
+## in for you is dimmer and dashed, so at a glance you can see which of the
+## five you actually own.
+const CHALK_DRAWN := Color("f2f6ef")
+const CHALK_AUTO := Color("93a89c")
+const CHALK_LIVE := Color("ffe9a8")
+
+
 func _draw_route_preview() -> void:
 	for entry in sim.preview_routes():
 		var line: PackedVector2Array = entry["line"]
-		var kind: String = entry["kind"]
 		if line.size() < 2:
 			continue
-		var col := Color("ffe28a") if kind == "route" else Color("ff9f6e")
+		var auto: bool = bool(entry.get("auto", false))
+		var sp: SimPlayer = entry["player"]
+		# The player currently being drawn for has his old route hidden - the
+		# live stroke stands in for it.
+		if sp != null and sp.slot == _stroke_slot:
+			continue
 		var pts := PackedVector2Array()
-		for p in line:
-			pts.append(to_px(p))
-		draw_polyline(pts, col, 3.0, true)
-		var a := pts[pts.size() - 2]
-		var b := pts[pts.size() - 1]
-		var dir := (b - a).normalized()
-		var perp := Vector2(-dir.y, dir.x)
-		draw_colored_polygon(PackedVector2Array([
-			b + dir * 9.0, b - dir * 4.0 + perp * 6.0, b - dir * 4.0 - perp * 6.0
-		]), col)
+		for pt in line:
+			pts.append(to_px(pt))
+		var col := CHALK_AUTO if auto else CHALK_DRAWN
+		if String(entry["kind"]) == "carry":
+			col = Color("ff9f6e")
+		_chalk(pts, col, 3.0, auto)
+		_chalk_arrow(pts, col)
+		if sp != null:
+			_chalk_tag(pts[pts.size() - 1], sp.label, col)
+
+
+## A chalk line: a soft wide underlay for the dust, the stroke itself, then a
+## scatter of specks along it. The specks are placed from a hash of the point
+## index rather than from randf, so the line does not shimmer between frames.
+func _chalk(pts: PackedVector2Array, col: Color, width: float, dashed: bool = false) -> void:
+	if pts.size() < 2:
+		return
+	if dashed:
+		var on := true
+		for i in range(pts.size() - 1):
+			var seg_len := pts[i].distance_to(pts[i + 1])
+			var step := maxf(1.0, seg_len / maxf(1.0, round(seg_len / 9.0)))
+			var walked := 0.0
+			while walked < seg_len:
+				var a := pts[i].lerp(pts[i + 1], walked / maxf(seg_len, 0.01))
+				var b := pts[i].lerp(pts[i + 1], minf(1.0, (walked + step) / maxf(seg_len, 0.01)))
+				if on:
+					draw_line(a, b, Color(col, 0.10), width * 2.6, true)
+					draw_line(a, b, Color(col, 0.72), width, true)
+				on = not on
+				walked += step
+		return
+
+	draw_polyline(pts, Color(col, 0.10), width * 2.8, true)
+	draw_polyline(pts, Color(col, 0.92), width, true)
+	for i in pts.size():
+		var h := (i * 1103515245 + 12345) & 0xFFFF
+		var off := Vector2(float(h % 13) - 6.0, float((h >> 4) % 13) - 6.0) * 0.28
+		draw_circle(pts[i] + off, width * 0.30, Color(col, 0.35))
+
+
+func _chalk_arrow(pts: PackedVector2Array, col: Color) -> void:
+	var a := pts[pts.size() - 2]
+	var b := pts[pts.size() - 1]
+	var dir := (b - a).normalized()
+	if dir == Vector2.ZERO:
+		return
+	var perp := Vector2(-dir.y, dir.x)
+	draw_colored_polygon(PackedVector2Array([
+		b + dir * 9.0, b - dir * 4.0 + perp * 6.0, b - dir * 4.0 - perp * 6.0
+	]), Color(col, 0.92))
+
+
+## The jersey number chalked at the end of a route, so five lines on the same
+## side of the field are still tellable apart.
+func _chalk_tag(at: Vector2, text: String, col: Color) -> void:
+	var font := ThemeDB.fallback_font
+	var fs := int(maxf(11.0, _scale * 0.5))
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var p := at + Vector2(-w * 0.5, -float(fs) * 0.75)
+	draw_string(font, p + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+		Color(0, 0, 0, 0.45))
+	draw_string(font, p, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
+
+
+## The stroke currently under the cursor, plus how much chalk is left. The
+## remaining-yards readout rides the head of the line so the coach never has
+## to look away from what he is drawing.
+func _draw_stroke() -> void:
+	if _stroke.size() < 1:
+		return
+	var pts := PackedVector2Array()
+	for pt in _stroke:
+		pts.append(to_px(pt))
+	if pts.size() >= 2:
+		_chalk(pts, CHALK_LIVE, 3.4)
+		_chalk_arrow(pts, CHALK_LIVE)
+
+	var head: Vector2 = pts[pts.size() - 1]
+	var left := maxf(0.0, RouteBook.BUDGET_YARDS - _stroke_len)
+	var font := ThemeDB.fallback_font
+	var fs := int(maxf(12.0, _scale * 0.55))
+	var text := "%d yd left" % int(round(left))
+	var col := CHALK_LIVE if left > 4.0 else UIKit.BAD
+	draw_string(font, head + Vector2(12.0, -10.0) + Vector2(1, 1), text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.5))
+	draw_string(font, head + Vector2(12.0, -10.0), text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
 
 
 func _draw_trails() -> void:
@@ -429,9 +707,16 @@ func _num_font_size(r: float) -> int:
 	return int(maxf(9.0, r * 0.62))
 
 
+## Base player radius in pixels. Everything about a body - sprite size, head,
+## jersey number, rings - is a multiple of this, so players stay in
+## proportion at every zoom level.
+func _player_radius() -> float:
+	return maxf(PLAYER_R_MIN, _scale * PLAYER_R)
+
+
 func _draw_players() -> void:
 	var font := ThemeDB.fallback_font
-	var r := maxf(10.0, _scale * 0.62)
+	var r := _player_radius()
 	var fs := _num_font_size(r)
 
 	# Downed players first so anyone still standing draws on top of them.
@@ -467,9 +752,14 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 
 	var body := UIKit.OFFENSE if sp.is_offense else UIKit.DEFENSE.darkened(0.08)
 	var head := Color("c9a37a") if sp.is_offense else Color("a8845f")
+	# The head sprite carries its own skin tone, so the per-side shade that
+	# used to BE the head colour is applied to it as a modulate instead -
+	# the same ratio between the two, just expressed as a tint.
+	var head_tint := Color.WHITE if sp.is_offense else Color(0.84, 0.81, 0.78)
 	if fall > 0.0:
 		body = body.darkened(0.22 * fall)
 		head = head.darkened(0.22 * fall)
+		head_tint = head_tint.darkened(0.22 * fall)
 
 	# Upright unless he is going down, in which case rotate toward the way he
 	# was travelling. The body keeps its own proportions the whole time -
@@ -483,29 +773,42 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var a := center - axis * half
 	var b := center + axis * half
 
-	draw_circle(center + Vector2(2, 4), r * lerpf(0.92, 0.78, fall), Color(0, 0, 0, 0.30))
+	draw_circle(center + Vector2(2, 4), r * lerpf(0.92, 0.78, fall), Color(0, 0, 0, 0.16))
+
+	# Aura'd defenders (see AuraDB/GameState.aura_chance) get a pulsing colored
+	# ring so the "colored enemy" reads at a glance on the field.
+	if not sp.is_offense and sp.data.aura_id != "" and fall <= 0.0:
+		var aura_col := AuraDB.aura_color(sp.data.aura_id)
+		var pulse := 0.08 * sin(Time.get_ticks_msec() * 0.006)
+		draw_arc(center, r * (1.32 + pulse), 0, TAU, 30, aura_col, 3.0)
 
 	var facing := _facing_view(sp)
-	var tex := _body_tex(sp.data, facing[0])
+	var view_name: String = facing[0]
+	var mirrored: bool = facing[1]
+	var tex := _body_tex(sp.data, view_name)
+	var tex_h := 0.0
 	if tex == null:
 		_capsule(a, b, wide + 3.0, body.darkened(0.5))
 		_capsule(a, b, wide, body)
 	else:
-		# Team-color backdrop so offense/defense stay readable at a glance -
-		# the jersey art itself is a fixed navy, so this is the only team cue.
-		draw_circle(center, r * 1.05, body.darkened(0.35))
+		# Team-color backdrop. Kept very faint, but it is still the only
+		# per-team cue the fixed-navy jersey art gives us, so the rim stays a
+		# little stronger than the fill to keep the sides apart at a glance.
+		draw_circle(center, r * 1.12, Color(body, DISC_ALPHA))
+		draw_arc(center, r * 1.12, 0.0, TAU, 28, Color(body, DISC_RIM_ALPHA),
+			DISC_RIM_WIDTH, true)
 
-		var flip: bool = facing[1]
 		var tex_size := tex.get_size()
-		var box_w := r * 1.55
-		var box_h := r * 1.95
-		var w := box_w
-		var h := w * tex_size.y / tex_size.x
-		if h > box_h:
-			h = box_h
-			w = h * tex_size.x / tex_size.y
+		# Equal-area normalisation - see BODY_AREA. Fitting inside a box made
+		# wide sprites squat and narrow ones tall, at very different apparent
+		# sizes; matching area evens them out without touching the art.
+		var k := (r * BODY_AREA) / maxf(sqrt(tex_size.x * tex_size.y), 1.0)
+		var w := tex_size.x * k
+		var h := tex_size.y * k
+		tex_h = h
 
-		draw_set_transform(center, axis.angle() - UP.angle(), Vector2(-1.0 if flip else 1.0, 1.0))
+		draw_set_transform(center, axis.angle() - UP.angle(),
+			Vector2(-1.0 if mirrored else 1.0, 1.0))
 		draw_texture_rect(tex, Rect2(Vector2(-w * 0.5, -h * 0.5), Vector2(w, h)), false)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -529,11 +832,35 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		draw_string(font, np + Vector2(-tw * 0.5, float(fs) * 0.35), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, num_color)
 
-	# Head: sits at the top of the body, rotating with it as he falls.
-	var hp := center + axis * r * 0.50
+	# Head: sits at the top of the body, rotating with it as he falls. Anchored
+	# to this sprite's actual collar depth (BodyArtDB) rather than a fixed
+	# fraction of r, since collar depth and canvas aspect ratio both vary
+	# sprite to sprite - a constant offset left the head floating off the
+	# jersey for several bodies. Falls back to the old fixed offset for the
+	# plain-capsule case, which has no jersey art to align to.
+	var hp: Vector2
+	if tex != null:
+		var neck_frac := BodyArtDB.neck_frac(view_name, sp.data.body)
+		var neck_offset := tex_h * (0.5 - neck_frac) + r * 0.05
+		hp = center + axis * neck_offset
+	else:
+		hp = center + axis * r * 0.50
 	var hr := r * 0.38 * (1.0 + 0.07 * sin(sp.stride * 2.0) * moving)
+	# Dark backing disc. The sprite has a hairline outline of its own, but at
+	# this size it all but disappears, and without a rim the head blends into
+	# the jersey underneath it.
 	draw_circle(hp, hr * 1.22, Color("241d16"))
-	draw_circle(hp, hr, head)
+	var head_tex := HeadArtDB.head_texture(HeadArtDB.view_for(view_name, mirrored))
+	if head_tex == null:
+		draw_circle(hp, hr, head)
+	else:
+		# Turns with the body, so the face still points where he's going once
+		# a tackle starts tipping him over. The sprite is cropped square to
+		# the head itself, so the rect IS the head - no inset to account for.
+		draw_set_transform(hp, axis.angle() - UP.angle(), Vector2.ONE)
+		draw_texture_rect(head_tex, Rect2(Vector2(-hr, -hr), Vector2(hr, hr) * 2.0),
+			false, head_tint)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _capsule(a: Vector2, b: Vector2, width: float, col: Color) -> void:
@@ -562,7 +889,7 @@ func _draw_stat_pops() -> void:
 	if _pops.is_empty():
 		return
 	var font := ThemeDB.fallback_font
-	var r := maxf(10.0, _scale * 0.62)
+	var r := _player_radius()
 	var base_fs := int(maxf(13.0, _scale * 0.75))
 	var fade_start := POP_GROW_TIME + POP_HOLD_TIME
 

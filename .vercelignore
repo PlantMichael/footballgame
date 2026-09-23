@@ -1,0 +1,17 @@
+# The deployed site is the pre-built web_build/ export (see README's
+# Deploying section) - everything else here is Godot project source that
+# Vercel has no use for and shouldn't upload.
+assets/
+data/
+scenes/
+scripts/
+tools/
+addons/
+.godot/
+*.tscn
+*.import
+project.godot
+export_presets.cfg
+icon.svg
+session*.txt
+shopplayers.png

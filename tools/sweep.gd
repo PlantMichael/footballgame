@@ -9,6 +9,13 @@ const DT := 1.0 / 60.0
 const ROSTER_QUALITIES := [2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0]
 
 
+## The balance harnesses still drive the sim off scripted PlayDB plays
+## (MatchSim.set_play) rather than hand-drawn routes, so their tuning
+## baselines stay comparable across the switch to the chalkboard. The
+## playbook is no longer part of GameState, so the pool lives here.
+const PLAY_POOL := ["quick_outs", "slant_flood", "curl_and_out", "hb_dive", "four_verticals"]
+
+
 func _ready() -> void:
 	print("=== ROSTER QUALITY SWEEP (win rate %) ===")
 	var header := "roster ->   "
@@ -17,7 +24,8 @@ func _ready() -> void:
 	print(header)
 
 	for round_index in 5:
-		var line := "%-11s" % GameState.ROUND_NAMES[round_index]
+		var round_name: String = GameState.ROUND_NAMES[round_index] if round_index < GameState.ROUND_NAMES.size() else "Bowl"
+		var line := "%-11s" % round_name
 		var pts := "            "
 		for rq in ROSTER_QUALITIES:
 			var res := _measure(round_index, float(rq))
@@ -41,11 +49,6 @@ func _measure(round_index: int, roster_quality: float) -> Array:
 		GameState.round_index = round_index
 		GameState.roster.assign(Generator.starting_roster(GameState.rng, roster_quality))
 		GameState.auto_fill_lineup()
-		for id in PlayDB.all_ids():
-			if not GameState.playbook.has(id):
-				GameState.playbook.append(id)
-		GameState.active_plays.assign(
-			["quick_outs", "slant_flood", "curl_and_out", "hb_dive", "four_verticals"])
 		var sim := _run(round_index)
 		if sim.won():
 			wins += 1
@@ -83,7 +86,7 @@ func _run(round_index: int) -> MatchSim:
 
 
 func _call_play(sim: MatchSim) -> String:
-	var pool: Array = GameState.active_plays
+	var pool: Array = PLAY_POOL
 	if sim.to_go <= 3.0 and sim.down >= 3:
 		for id in pool:
 			if PlayDB.is_run(id):

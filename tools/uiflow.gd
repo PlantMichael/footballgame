@@ -54,11 +54,10 @@ func _play_full_match() -> void:
 
 		match sim.phase:
 			MatchSim.Phase.PRESNAP:
-				# Rotate through the available plays the way a player would.
-				var pool: Array = GameState.active_plays
-				var pick: String = pool[plays % pool.size()]
-				scene.set("selected_play", pick)
-				sim.set_play(pick)
+				# Chalk a route up for a different receiver each snap, so the
+				# draw -> apply -> snap path is what gets exercised.
+				_chalk_a_route(sim, plays)
+				scene.call("_apply_call", true)
 				scene.call("_refresh_bar")
 				scene.call("_on_snap")
 				if sim.phase != MatchSim.Phase.LIVE:
@@ -83,7 +82,7 @@ func _play_full_match() -> void:
 				if drives_played == 1:
 					_try_substitution(scene, sim)
 				sim.begin_drive()
-				sim.set_play(String(scene.get("selected_play")))
+				scene.call("_apply_call", true)
 				scene.call("_refresh_bar")
 
 	print("  played %d plays over %d drives, final %d-%d" % [
@@ -159,3 +158,15 @@ func _check_screen(tag: String, path: String) -> void:
 		print("  %s ok (%d root children)" % [tag, scene.get_child_count()])
 	scene.queue_free()
 	await get_tree().process_frame
+
+
+## Draws a plausible route for one flex, straight into GameState the way the
+## field view does when the coach finishes a stroke.
+func _chalk_a_route(sim: MatchSim, n: int) -> void:
+	var flexes := sim.flex_players()
+	if flexes.is_empty():
+		return
+	var f: SimPlayer = flexes[n % flexes.size()]
+	var ids: Array = RouteBook.STOCK.keys()
+	var spot := Vector2(f.target_pos.x - sim.los, f.target_pos.y - MatchSim.FIELD_W * 0.5)
+	GameState.set_route(f.slot, RouteBook.route_for_spot(String(ids[n % ids.size()]), spot))

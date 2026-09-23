@@ -78,6 +78,9 @@ func _qb_card(id: int) -> Control:
 	ability_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(ability_desc)
 
+	v.add_child(UIKit.rule())
+	v.add_child(_bowl_marks_row(id))
+
 	var sp := Control.new()
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(sp)
@@ -89,3 +92,18 @@ func _qb_card(id: int) -> Control:
 	v.add_child(pick)
 
 	return p
+
+
+## Isaac-style completion marks: one per bowl, its own logo lit up full
+## color if this QB has already won it in a previous run (MetaState,
+## persisted to user://progress.json), greyed out otherwise.
+func _bowl_marks_row(qb_id: int) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	for bowl_id in BowlDB.all_ids():
+		var won := MetaState.has_mark(qb_id, bowl_id)
+		var badge := UIKit.bowl_badge(bowl_id, 30, not won)
+		if badge != null:
+			badge.tooltip_text = "%s%s" % [BowlDB.bowl_name(bowl_id), " - won" if won else ""]
+			row.add_child(badge)
+	return row

@@ -5,6 +5,8 @@ extends Node
 ##   godot --headless --path . res://tools/trace.tscn
 
 const DT := 1.0 / 60.0
+## Scripted plays, not hand-drawn routes: this harness exists to compare
+## outcomes against a fixed baseline, so it drives MatchSim.set_play.
 const PLAYS := ["quick_outs", "slant_flood", "curl_and_out", "hb_dive", "four_verticals"]
 const MIN_YARDS := 60.0   # only dump plays that gained at least this much
 const MAX_TRIALS := 200
@@ -28,7 +30,6 @@ func _ready() -> void:
 		GameState.new_run(rng.randi())
 		GameState.roster.assign(Generator.starting_roster(GameState.rng, 3.0))
 		GameState.auto_fill_lineup()
-		GameState.active_plays.assign(PLAYS)
 
 		var opp: Dictionary = GameState.bracket[0]
 		var sim := MatchSim.new()
@@ -55,7 +56,7 @@ func _ready() -> void:
 			var log_lines: Array[String] = []
 			var t := 0.0
 			var next := 0.0
-			while sim.phase == MatchSim.Phase.LIVE and t < 20.0:
+			while sim.phase == MatchSim.Phase.LIVE and t < MatchSim.MAX_PLAY_TIME + 2.0:
 				sim.step(DT)
 				t += DT
 				if t >= next:
@@ -107,7 +108,7 @@ func _ready() -> void:
 
 
 func _call_play(sim: MatchSim) -> String:
-	var pool: Array = GameState.active_plays
+	var pool: Array = PLAYS
 	if sim.to_go <= 3.0 and sim.down >= 3:
 		for id in pool:
 			if PlayDB.is_run(id):

@@ -157,7 +157,10 @@ static func body_texture(p: PlayerData, view: String = "front") -> Texture2D:
 
 
 ## Small boxed portrait for `p`, or null if it has no body art yet - callers
-## should skip adding it rather than show an empty box.
+## should skip adding it rather than show an empty box. Layers a front-facing
+## head (HeadArtDB) on top of the jersey art, anchored at that sprite's own
+## collar depth (BodyArtDB) - same idea as field_view.gd's live-match
+## rendering, just done with Control offsets instead of canvas draw calls.
 static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 	var tex := body_texture(p, "front")
 	if tex == null:
@@ -174,6 +177,58 @@ static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 	t.offset_top = 4
 	t.offset_right = -4
 	t.offset_bottom = -4
+	box.add_child(t)
+
+	var head_tex := HeadArtDB.head_texture("front")
+	if head_tex != null:
+		# STRETCH_KEEP_ASPECT_CENTERED letterboxes the body texture inside
+		# `t`'s rect - work out where it actually landed so the head can be
+		# anchored on the real collar instead of a fixed generic offset.
+		var inner := Vector2(size - 8.0, size - 8.0)
+		var tex_size := tex.get_size()
+		var k := minf(inner.x / tex_size.x, inner.y / tex_size.y)
+		var drawn_h := tex_size.y * k
+		var drawn_top := (inner.y - drawn_h) * 0.5 + 4.0
+		var neck_y := drawn_top + drawn_h * BodyArtDB.neck_frac("front", p.body)
+
+		var head_h := drawn_h * 0.34
+		var head := TextureRect.new()
+		head.texture = head_tex
+		head.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		head.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.position = Vector2((size - head_h) * 0.5, neck_y - head_h * 0.92)
+		head.size = Vector2(head_h, head_h)
+		box.add_child(head)
+
+	return box
+
+
+## A bowl's logo (BowlDB.logo) on a white card backing, sized to `size`.
+## The sheet's cells are opaque white squares rather than transparent
+## cutouts, so this leans into that as a deliberate patch/badge look
+## instead of fighting it. `dim` greys out an unearned bowl - see
+## qb_select.gd's completion marks.
+static func bowl_badge(bowl_id: String, size: int = 64, dim: bool = false) -> Control:
+	var tex := BowlDB.logo(bowl_id)
+	if tex == null:
+		return null
+	var box := Panel.new()
+	box.custom_minimum_size = Vector2(size, size)
+	box.add_theme_stylebox_override("panel", stylebox(Color.WHITE, 8, 1, LINE))
+	box.tooltip_text = BowlDB.bowl_name(bowl_id)
+	var t := TextureRect.new()
+	t.texture = tex
+	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	t.set_anchors_preset(Control.PRESET_FULL_RECT)
+	t.offset_left = 3
+	t.offset_top = 3
+	t.offset_right = -3
+	t.offset_bottom = -3
+	if dim:
+		t.modulate = Color(0.55, 0.55, 0.55, 0.6)
 	box.add_child(t)
 	return box
 

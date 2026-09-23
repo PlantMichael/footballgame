@@ -74,15 +74,27 @@ func _shoot_match() -> void:
 	for i in 3:
 		await get_tree().process_frame
 
-	# Switch the play call and grab the formation part way through its shift.
-	var other: String = GameState.active_plays[2]
-	inst.set("selected_play", other)
-	sim.set_play(other, false)
+	# Chalk a fresh route up and grab the formation part way through its shift.
+	var flexes := sim.flex_players()
+	var f: SimPlayer = flexes[0]
+	var spot := Vector2(f.target_pos.x - sim.los, f.target_pos.y - MatchSim.FIELD_W * 0.5)
+	GameState.set_route(f.slot, RouteBook.route_for_spot("corner", spot))
+	inst.call("_apply_call", false)
 	inst.call("_refresh_bar")
 	for i in 8:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_save("match_shift")
+
+	# The route-concept overlay, reachable from the chalkboard.
+	inst.call("_open_examples")
+	for i in 8:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_save("match_examples")
+	inst.call("_dismiss_overlays")
+	for i in 3:
+		await get_tree().process_frame
 
 	# Let it settle before snapping.
 	for i in 40:
@@ -112,7 +124,7 @@ func _shoot_match() -> void:
 		sim.advance()
 		if sim.phase != MatchSim.Phase.PRESNAP:
 			sim.begin_drive()
-		sim.set_play(GameState.active_plays[tries % GameState.active_plays.size()])
+		sim.set_drawn_call(GameState.drawn_routes)
 		sim.snap()
 		var g2 := 0
 		while sim.phase == MatchSim.Phase.LIVE and g2 < 2000:
@@ -140,7 +152,39 @@ func _shoot_match() -> void:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_save("match_downed")
+
+	await _shoot_upgrade_flow(inst, sim)
 	inst.queue_free()
+
+
+## Forces a touchdown result and walks through the per-game upgrade overlay
+## (choice, then recipient picker) so both states can be eyeballed.
+func _shoot_upgrade_flow(inst: Node, sim: MatchSim) -> void:
+	sim.result = {
+		"td": true, "yards": 5.0, "turnover": false,
+		"text": "TOUCHDOWN, Test Player!", "bucks": 100, "events": [],
+	}
+	sim.phase = MatchSim.Phase.DEAD
+	inst.call("_refresh_bar")
+	for i in 3:
+		await get_tree().process_frame
+	inst.call("_on_continue")
+	for i in 5:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_save("match_upgrade_choice")
+
+	var pending: Array = inst.get("pending_upgrades")
+	if pending.is_empty():
+		print("  ERR match_upgrade_choice: pending_upgrades was empty")
+		return
+
+	var target: PlayerData = pending[0]["player"]
+	inst.call("_apply_upgrade", target, pending[0])
+	for i in 5:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_save("match_upgrade_applied")
 
 
 func _was_tackled(sim: MatchSim) -> bool:

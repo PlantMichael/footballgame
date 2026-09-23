@@ -14,7 +14,7 @@ func _ready() -> void:
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(t)
 
-	var s := UIKit.label("Five rounds. One trophy. 3 losses and the season is over.", 18, UIKit.MUTED)
+	var s := UIKit.label("Chart a path to one of 6 bowls. 3 losses and the season is over.", 18, UIKit.MUTED)
 	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(s)
 

@@ -262,5 +262,41 @@
 		"intelligence": 4,
 		"ability_id": "instant_burst",
 		"body": "8"
+	},
+	{
+		"name": "Mr. Worldwide",
+		"pos": "WR",
+		"quality": 4,
+		"strength": 7,
+		"agility": 11,
+		"dexterity": 10,
+		"stamina": 9,
+		"intelligence": 8,
+		"ability_id": "positionless",
+		"body": "3"
+	},
+	{
+		"name": "Gustavo Choker",
+		"pos": "WR",
+		"quality": 2,
+		"strength": 4,
+		"agility": 5,
+		"dexterity": 5,
+		"stamina": 5,
+		"intelligence": 4,
+		"ability_id": "bowl_jitters",
+		"body": "6"
+	},
+	{
+		"name": "Manuel Fern",
+		"pos": "RB",
+		"quality": 3,
+		"strength": 10,
+		"agility": 6,
+		"dexterity": 5,
+		"stamina": 9,
+		"intelligence": 6,
+		"ability_id": "enforcer",
+		"body": "2"
 	}
 ]

@@ -11,7 +11,15 @@ const FIELD_LEN := 120.0
 const FIELD_W := 53.33
 const GOAL_LINE := 110.0
 const OWN_GOAL := 10.0
-const MAX_PLAY_TIME := 16.0
+## Pure safety valve against a true stalemate (nobody ever closes on the
+## carrier) - not meant to cap an ordinary long run. It used to sit at 16s,
+## which was shorter than a breakaway TD from deep in your own territory
+## actually takes at realistic sim speeds, so long runs kept getting whistled
+## dead mid-field instead of finishing. Kept under 33s (some of the tools/
+## balance harnesses cap a single play's own step loop at 2000 steps of
+## 1/60s DT, i.e. ~33.3s - this needs to stay under that or their own cap
+## would silently cut the play short before this one gets the chance to).
+const MAX_PLAY_TIME := 30.0
 const CONTACT_INTERVAL := 3.0
 const FIRST_CONTACT := 1.2      # the first rush move comes before the 3s beat
 
@@ -30,6 +38,23 @@ const FIRST_CONTACT := 1.2      # the first rush move comes before the 3s beat
 const FREE_RUSH_TIME := 0.15
 const SHED_COOLDOWN := 1.0
 
+## How close a free rusher has to get before the QB abandons the rest of his
+## drop and starts looking for an answer. Deliberately short: at 4+ yards he
+## bails on nearly every snap and the pocket stops meaning anything, and
+## every would-be sack turns into a scramble. See _qb_logic.
+const PANIC_DIST := 2.2
+
+## Agility a QB needs to escape a pocket that breaks before his drop is even
+## finished. Below it he takes the sack, so a statue behind a bad line is a
+## real liability and a mobile one is worth paying for.
+const SCRAMBLE_AGILITY := 9
+
+## How much downfield a remaining waypoint has to be worth before a fresh
+## ball carrier bothers running to it, and how close he has to get to call it
+## reached. See _carry_route_logic.
+const CARRY_ROUTE_MIN_GAIN := 0.5
+const CARRY_ROUTE_ARRIVE := 0.8
+
 enum Phase { PRESNAP, LIVE, DEAD, DRIVE_OVER, MATCH_OVER }
 
 # --- Match/drive state ------------------------------------------------------
@@ -45,15 +70,40 @@ var los: float = 35.0
 var opponent_quality: float = 6.0
 var opponent_name: String = "Opponent"
 
+## Set by match.gd before start_match() when this is the run's final, chosen
+## bowl game - see AbilityDB's "bowl_jitters" and _snap_context's
+## is_bowl_game ctx key. Never true in dev mode.
+var is_bowl_game: bool = false
+
 # --- Play state -------------------------------------------------------------
 
 var offense: Array[SimPlayer] = []   # index 0..10, matching GameState.SLOT_ORDER
 var defense: Array[SimPlayer] = []   # 4 linemen, 3 linebackers, 4 defensive backs
 var play_id: String = ""
 var play: Dictionary = {}
+
+## Air yards of every catch made since the renderer last looked. Drained by
+## field_view.gd, which turns each one into a screen shake scaled to how far
+## the ball travelled. Purely presentational - nothing in the sim reads it.
+var catch_shakes: Array = []
+
+## For flexes nobody drew a route for: slot -> the RouteBook.STOCK id they
+## were handed this snap, so the chalkboard can name it instead of just
+## saying "auto". Empty on a scripted play.
+var auto_route_ids: Dictionary = {}
 var time: float = 0.0
 var carrier: SimPlayer = null
 var thrown_to: SimPlayer = null
+
+## Box-score stat line per PlayerData for THIS match - see stat_line_for and
+## _credit_game_stats. Purely presentational (the match screen's Team Stats
+## panel); nothing in the sim itself reads it back.
+var game_stats: Dictionary = {}
+
+## Play-scoped bookkeeping for _credit_game_stats, reset in _begin_call.
+var _last_passer: SimPlayer = null
+var _last_completion_target: SimPlayer = null
+var _pass_completed_this_play: bool = false
 
 var ball_pos: Vector2 = Vector2.ZERO
 var ball_in_air: bool = false
@@ -61,6 +111,21 @@ var ball_from: Vector2 = Vector2.ZERO
 var ball_to: Vector2 = Vector2.ZERO
 var ball_t: float = 0.0
 var ball_air_time: float = 0.0
+
+## Slots (from flex_players) the coach marked as priority targets before the
+## snap - see set_play/toggle_priority_target. The QB's target evaluation
+## gives them a flat score bonus so they get thrown to noticeably more
+## often, without ever being a hard override: a wide open non-priority
+## receiver can still out-score a priority target nobody can get open.
+const PRIORITY_TARGET_BONUS := 5.0
+var priority_targets: Dictionary = {}   # slot String -> true
+
+## Roguelike per-game upgrades picked after a scoring drive (see
+## GameState/match.gd's upgrade-choice overlay). Keyed by PlayerData rather
+## than slot so a bonus follows the player even if he's later subbed to the
+## bench and back in. Lives only on this MatchSim - a fresh match starts
+## with none, so these never carry over between games.
+var match_bonuses: Dictionary = {}   # PlayerData -> {stat String -> int amount}
 
 var pursuit_triggered: bool = false
 var handoff_done: bool = false
@@ -71,10 +136,10 @@ var catch_x: float = 0.0   # field x where the last completion was caught
 var result: Dictionary = {}
 var play_log: Array = []         # human-readable lines for the match feed
 
-## Rolled once per play, before offense alignment, so the offense's own snap
-## context (see _snap_context) can react to whether the defense is blitzing.
-## Assignment itself still happens in _align_defense - this only decides it
-## earlier so both sides can see it.
+## Rolled once per DOWN, not per chalk edit (see _begin_call), before offense
+## alignment, so the offense's own snap context (see _snap_context) can react
+## to whether the defense is blitzing. Assignment itself still happens in
+## _align_defense - this only decides it earlier so both sides can see it.
 var _blitz_this_play: bool = false
 var _zone_scheme_this_play: bool = false
 
@@ -134,9 +199,9 @@ func _build_defense() -> void:
 ## immediately instead of only after the next snap.
 func regenerate_defense(rng_src: RandomNumberGenerator, quality: float) -> void:
 	opponent_quality = quality
-	_roster_defense = Generator.make_defense(rng_src, quality)
+	_roster_defense = Generator.make_defense(rng_src, quality, GameState.aura_chance())
 	_build_defense()
-	if not play_id.is_empty():
+	if not play.is_empty():
 		_align_defense()
 		for sp in defense:
 			sp.pos = sp.target_pos
@@ -150,12 +215,116 @@ func offense_slot(slot: String) -> SimPlayer:
 	return null
 
 
+## Where flex `slot` is aligned for the current call, in field yards. The
+## chalk tool stores strokes relative to this so a route keeps its shape when
+## the ball moves or personnel shuffles the formation.
+func flex_align(slot: String) -> Vector2:
+	var sp := offense_slot(slot)
+	return sp.target_pos if sp != null else Vector2.ZERO
+
+
 func flex_players() -> Array[SimPlayer]:
 	var out: Array[SimPlayer] = []
 	for sp in offense:
 		if sp.slot.begins_with("F"):
 			out.append(sp)
 	return out
+
+
+# --- Pre-snap target priority ------------------------------------------------
+
+func is_priority_target(slot: String) -> bool:
+	return priority_targets.has(slot)
+
+
+func toggle_priority_target(slot: String) -> void:
+	if priority_targets.has(slot):
+		priority_targets.erase(slot)
+	else:
+		priority_targets[slot] = true
+
+
+func clear_priority_targets() -> void:
+	priority_targets.clear()
+
+
+func select_all_priority_targets() -> void:
+	for f in flex_players():
+		priority_targets[f.slot] = true
+
+
+func all_priority_targets_selected() -> bool:
+	for f in flex_players():
+		if not priority_targets.has(f.slot):
+			return false
+	return true
+
+
+# --- Per-game roguelike upgrades ---------------------------------------------
+
+func add_match_bonus(pd: PlayerData, stat: String, amount: int) -> void:
+	var mods: Dictionary = match_bonuses.get(pd, {})
+	mods[stat] = int(mods.get(stat, 0)) + amount
+	match_bonuses[pd] = mods
+
+
+func match_bonus_for(pd: PlayerData) -> Dictionary:
+	return match_bonuses.get(pd, {})
+
+
+# --- Box score ----------------------------------------------------------
+
+## This match's counting stats for `pd` - see the field comment on
+## game_stats for the keys (pass_att, pass_comp, pass_yards, pass_td,
+## pass_int, rush_att, rush_yards, rush_td, rec, rec_yards, rec_td).
+func stat_line_for(pd: PlayerData) -> Dictionary:
+	return game_stats.get(pd, {})
+
+
+func _bump_stat(pd: PlayerData, key: String, amount: float = 1.0) -> void:
+	var line: Dictionary = game_stats.get(pd, {})
+	line[key] = float(line.get(key, 0.0)) + amount
+	game_stats[pd] = line
+
+
+## Credits whoever threw/caught/carried on this play with the box-score
+## stats a completion, incompletion, interception, or run should produce.
+## Sacks and safeties intentionally credit nobody, matching the real
+## convention of excluding sacks from both pass and rush attempts.
+func _credit_game_stats(res: Dictionary) -> void:
+	var kind := String(res.get("kind", ""))
+	var yards: float = res.get("yards", 0.0)
+	var td := bool(res.get("td", false))
+
+	if kind == "touchdown":
+		kind = "complete" if _pass_completed_this_play else "run"
+
+	match kind:
+		"complete":
+			if _last_passer != null:
+				_bump_stat(_last_passer.data, "pass_att")
+				_bump_stat(_last_passer.data, "pass_comp")
+				_bump_stat(_last_passer.data, "pass_yards", yards)
+				if td:
+					_bump_stat(_last_passer.data, "pass_td")
+			if _last_completion_target != null:
+				_bump_stat(_last_completion_target.data, "rec")
+				_bump_stat(_last_completion_target.data, "rec_yards", yards)
+				if td:
+					_bump_stat(_last_completion_target.data, "rec_td")
+		"incomplete":
+			if _last_passer != null:
+				_bump_stat(_last_passer.data, "pass_att")
+		"interception":
+			if _last_passer != null:
+				_bump_stat(_last_passer.data, "pass_att")
+				_bump_stat(_last_passer.data, "pass_int")
+		"run":
+			if carrier != null:
+				_bump_stat(carrier.data, "rush_att")
+				_bump_stat(carrier.data, "rush_yards", yards)
+				if td:
+					_bump_stat(carrier.data, "rush_td")
 
 
 # ============================================================================
@@ -177,6 +346,7 @@ func begin_drive() -> void:
 	to_go = 10.0
 	phase = Phase.PRESNAP
 	result = {}
+	priority_targets.clear()
 	# Everybody catches their breath between drives.
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
@@ -207,17 +377,82 @@ func yards_to_endzone() -> float:
 # Formation
 # ============================================================================
 
-## Position everyone for the chosen play and compute the route preview.
+## Build the offensive call from the coach's chalkboard: the five flex
+## players line up in a RouteBook formation and run whatever was drawn for
+## them, with a random stock route standing in for anyone left blank.
+##
+## This is the normal path. `set_play` below is the scripted-play path, kept
+## for the batch balance harnesses in tools/.
+func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true) -> void:
+	var flexes := flex_players()
+	var spots := RouteBook.formation_for(flexes)
+	var routes: Array = []
+	var slot_pos: Array = []
+	# How deep the SHALLOWEST receiver goes - see the dropback below.
+	var quickest := 99.0
+	auto_route_ids.clear()
+
+	for i in flexes.size():
+		var slot: String = flexes[i].slot
+		var spot: Vector2 = spots[i]
+		var route: Array = routes_by_slot.get(slot, [])
+		if route.is_empty():
+			# Nobody drew for him: give him a stock route, rerolled every
+			# snap so an undrawn receiver stays unpredictable rather than
+			# running the same thing all game.
+			var ids: Array = RouteBook.STOCK.keys()
+			var pick: String = ids[rng.randi_range(0, ids.size() - 1)]
+			auto_route_ids[slot] = pick
+			route = RouteBook.route_for_spot(pick, spot)
+		routes.append(route)
+		slot_pos.append(RouteBook.role_name_for_spot(spot))
+		var depth := 0.0
+		for wp in route:
+			depth = maxf(depth, wp.x)
+		quickest = minf(quickest, depth)
+
+	play_id = ""
+	play = {
+		"name": "Chalk",
+		"kind": "pass",
+		# Keyed to the QUICKEST route on the board, not the deepest: how fast
+		# the ball can come out is set by the shortest outlet, not the longest
+		# route. Chalk a checkdown and the QB gets rid of it; send all five
+		# deep and he has to stand there and wear it.
+		"dropback": clampf(0.8 + minf(quickest, 30.0) * 0.055, 0.8, 2.4),
+		"align": spots,
+		"slot_pos": slot_pos,
+		"routes": routes,
+		# No scripted read order on a drawn call - the QB works off who is
+		# actually open, nudged by whatever the coach flagged as a priority
+		# target. See _evaluate_targets.
+		"progression": [],
+	}
+	_begin_call(instant)
+
+
+## Position everyone for a scripted PlayDB play. Used by the tools/ balance
+## harnesses, which drive the sim off the old playbook so their tuning
+## baselines stay comparable across this change.
 ##
 ## `instant` teleports everyone onto their spots, which is what you want after
-## a whistle when the ball has moved. Changing the play call between snaps
-## passes false so the formation visibly shifts instead.
+## a whistle when the ball has moved. Changing the call between snaps passes
+## false so the formation visibly shifts instead.
 func set_play(id: String, instant: bool = true) -> void:
 	play_id = id
 	play = PlayDB.get_play(id)
+	auto_route_ids.clear()
 	if play.is_empty():
 		return
+	_begin_call(instant)
+
+
+## Shared reset + alignment for both call paths. `play` must already be set.
+func _begin_call(instant: bool) -> void:
 	time = 0.0
+	# Nothing drains this when the sim runs headless, so reset it per play
+	# rather than letting a batch harness grow it for thousands of snaps.
+	catch_shakes.clear()
 	carrier = null
 	thrown_to = null
 	ball_in_air = false
@@ -226,17 +461,25 @@ func set_play(id: String, instant: bool = true) -> void:
 	qb_scrambling = false
 	qb_decision_timer = 0.0
 	catch_x = 0.0
+	_last_passer = null
+	_last_completion_target = null
+	_pass_completed_this_play = false
 	result = {}
 	phase = Phase.PRESNAP
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.30)
 	for sp in defense:
 		sp.energy = minf(1.0, sp.energy + 0.30)
-	_blitz_this_play = rng.randf() < (0.12 + (0.10 if down >= 3 else 0.0))
-	_zone_scheme_this_play = rng.randf() < clampf(0.25 + opponent_quality * 0.02, 0.2, 0.55)
 	_align_offense()
-	_align_defense()
+	# The defense calls its play once per down, not once per chalk edit: `instant`
+	# is true only for a genuinely new snap (see set_drawn_call/set_play callers in
+	# match.gd), false for a same-down route redraw. Re-rolling blitz/zone and
+	# re-running _align_defense on every redraw let the defense visibly "react" to
+	# whatever the coach just drew - a real defense's call is locked in before that.
 	if instant:
+		_blitz_this_play = rng.randf() < (0.12 + (0.10 if down >= 3 else 0.0))
+		_zone_scheme_this_play = rng.randf() < clampf(0.25 + opponent_quality * 0.02, 0.2, 0.55)
+		_align_defense()
 		for sp in offense:
 			sp.pos = sp.target_pos
 			sp.vel = Vector2.ZERO
@@ -277,10 +520,11 @@ func _snap_context(is_run_play: bool) -> Dictionary:
 	var te := 0
 	var rb := 0
 	for f in flex_players():
-		match f.data.pos:
-			PlayerData.Pos.WR: wr += 1
-			PlayerData.Pos.TE: te += 1
-			PlayerData.Pos.RB: rb += 1
+		for pos in _effective_positions(f.data):
+			match pos:
+				PlayerData.Pos.WR: wr += 1
+				PlayerData.Pos.TE: te += 1
+				PlayerData.Pos.RB: rb += 1
 	return {
 		"wr_count": wr,
 		"te_count": te,
@@ -291,7 +535,16 @@ func _snap_context(is_run_play: bool) -> Dictionary:
 		"score_diff": score_us - score_them,
 		"is_run_play": is_run_play,
 		"is_blitzed": _blitz_this_play,
+		"is_bowl_game": is_bowl_game,
 	}
+
+
+## `pd`'s positions for personnel counts, team buffs, and the out-of-position
+## penalty - his real one, unless an ability (AbilityDB.counts_as_positions,
+## e.g. "positionless") replaces it with a whole set at once.
+func _effective_positions(pd: PlayerData) -> Array:
+	var extra := AbilityDB.counts_as_positions(pd.ability_id)
+	return extra if not extra.is_empty() else [pd.pos]
 
 
 ## Bake item and ability modifiers into `eff` for the duration of this play.
@@ -306,6 +559,8 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 	}
 	for key in ItemDB.stat_mods(pd.item_id):
 		base[key] = int(base[key]) + int(ItemDB.stat_mods(pd.item_id)[key])
+	for key in match_bonus_for(pd):
+		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
 	for key in AbilityDB.snap_bonus(pd.ability_id, pd, ctx):
 		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(pd.ability_id, pd, ctx)[key])
 	var agi_cap := AbilityDB.speed_cap(pd.ability_id)
@@ -322,6 +577,9 @@ func _out_of_position_penalty(sp: SimPlayer, wanted: String) -> void:
 	var natural := sp.data.pos_name()
 	if natural == wanted:
 		return
+	for pos in _effective_positions(sp.data):
+		if PlayerData.POS_NAMES[pos] == wanted:
+			return
 	var family_ok := (
 		(wanted in ["WR", "TE", "RB"] and natural in ["WR", "TE", "RB"])
 	)
@@ -374,6 +632,14 @@ func _align_offense() -> void:
 			for wp in assign:
 				f.route.append(Vector2(f.target_pos.x + wp.x,
 					clampf(f.target_pos.y + wp.y, 0.8, FIELD_W - 0.8)))
+		if AbilityDB.dedicated_blocker(f.data.ability_id):
+			# Overrides whatever the coach drew for him: he never runs a
+			# route or takes a handoff, and locks onto his own target for
+			# the whole play instead of the normal per-frame assignment -
+			# see _assign_blocks.
+			f.role = SimPlayer.Role.BLOCK
+			f.route = []
+			f.mark = _pick_dedicated_target()
 
 	# Modifiers last, so ability context sees the final personnel grouping.
 	for i in offense.size():
@@ -420,7 +686,7 @@ func _apply_team_buffs() -> void:
 		var stat: String = buff["stat"]
 		var amount: int = buff["amount"]
 		for other in offense:
-			if other == sp or other.data.pos != target_pos:
+			if other == sp or not _effective_positions(other.data).has(target_pos):
 				continue
 			other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
 
@@ -439,6 +705,7 @@ func _align_defense() -> void:
 		sp.tackle_cd = 0.0
 		sp.free_timer = 0.0
 		sp.trail = PackedVector2Array()
+		sp.aura_timer = 0.0
 		_apply_modifiers(sp, ctx)
 		sp.reaction = maxf(0.15, 0.75 - float(sp.stat("intelligence")) * 0.035)
 
@@ -560,13 +827,15 @@ func preview_routes() -> Array:
 			line.append(f.target_pos)
 			for wp in f.route:
 				line.append(wp)
-			out.append({"line": line, "kind": "route", "player": f})
+			out.append({"line": line, "kind": "route", "player": f,
+				"auto": auto_route_ids.has(f.slot)})
 		elif f.role == SimPlayer.Role.CARRY:
 			var line2 := PackedVector2Array([f.target_pos,
 				Vector2(los + 4.0, f.target_pos.y * 0.4 + FIELD_W * 0.3)])
-			out.append({"line": line2, "kind": "carry", "player": f})
+			out.append({"line": line2, "kind": "carry", "player": f, "auto": false})
 		else:
-			out.append({"line": PackedVector2Array([f.target_pos]), "kind": "block", "player": f})
+			out.append({"line": PackedVector2Array([f.target_pos]), "kind": "block",
+				"player": f, "auto": false})
 	return out
 
 
@@ -652,7 +921,10 @@ func _step_offense(delta: float) -> void:
 		if sp.disrupted > 0.0:
 			sp.disrupted -= delta
 		if sp == carrier and sp.slot != "QB":
-			_carry_logic(sp, delta)
+			# The route he was given gets first refusal - only once it is
+			# used up does he become an ordinary ball carrier.
+			if not _carry_route_logic(sp, delta):
+				_carry_logic(sp, delta)
 			continue
 		match sp.role:
 			SimPlayer.Role.QB:
@@ -690,9 +962,19 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 			qb.hold(delta)
 		return
 
-	if time < dropback:
-		qb.move_toward_point(Vector2(los - 7.0, cy), delta, 0.85)
-		return
+	# A drop is a plan, not a contract: a rusher already in his lap ends it
+	# early and the QB starts looking for an answer. Without this he keeps
+	# backpedalling into a sack he can see coming - survivable when a back
+	# stayed in to help protect, ruinous now that all five receivers release.
+	#
+	# Bailing early is not a free pass, though: see `in_drop` below. The drop
+	# is where sacks come from, and it has to stay that way.
+	var in_drop := time < dropback
+	if in_drop:
+		var early := _closest_free_rusher(qb)
+		if early == null or early.pos.distance_to(qb.pos) > PANIC_DIST:
+			qb.move_toward_point(Vector2(los - 7.0, cy), delta, 0.85)
+			return
 
 	# Slide in the pocket away from the closest free rusher.
 	var threat := _closest_free_rusher(qb)
@@ -721,12 +1003,19 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 
 	# About to be hit: get rid of it. Sacks should be the punishment for a line
 	# that loses instantly, not for one that loses eventually.
+	#
+	# Everything here is much harder while he is still in his drop. Routes
+	# have not developed, so the bar for a throw is high; there is nothing
+	# downfield yet to throw it away past; and only a genuinely mobile QB can
+	# get out of it. Anyone else wears the sack, which is what keeps a
+	# collapsing pocket costly.
 	if threat_dist < 2.3:
-		if best.get("player") != null and float(best.get("score", -99.0)) > -3.0:
+		var bar := 3.5 if in_drop else -3.0
+		if best.get("player") != null and float(best.get("score", -99.0)) > bar:
 			_throw(qb, best["player"])
-		elif hold_time > 0.4:
+		elif not in_drop and (hold_time > 0.4 or time > 1.2):
 			_throwaway(qb)
-		else:
+		elif not in_drop or qb.stat("agility") >= SCRAMBLE_AGILITY:
 			qb_scrambling = true
 			log_line("%s escapes the pocket!" % qb.data.pname)
 		return
@@ -862,6 +1151,13 @@ func _assign_blocks() -> void:
 	for sp in offense:
 		if sp.role != SimPlayer.Role.BLOCK or sp == carrier:
 			continue
+		if AbilityDB.dedicated_blocker(sp.data.ability_id):
+			# Locked onto his own pick for the whole play (see _align_offense
+			# / _pick_dedicated_target) - never reassigned, and his target is
+			# claimed so a normal blocker doesn't also get routed onto him.
+			if sp.mark != null:
+				claimed[sp.mark] = true
+			continue
 		if sp.shed_cooldown > 0.0:
 			sp.mark = null
 			continue
@@ -952,6 +1248,60 @@ func _is_threat(d: SimPlayer) -> bool:
 	return false
 
 
+## The single highest-Strength defender who isn't a defensive lineman -
+## what "Enforcer" (AbilityDB.dedicated_blocker) locks onto for the whole
+## play, regardless of whether that defender is actually rushing. Reads
+## base Strength (d.data), not the live per-play `eff` - this runs inside
+## _align_offense, before _align_defense has necessarily populated `eff`
+## for the play, and the pick shouldn't flap with a temporary modifier
+## (an aura, an item) anyway.
+func _pick_dedicated_target() -> SimPlayer:
+	var best: SimPlayer = null
+	var best_str := -1
+	for d in defense:
+		if d.slot.begins_with("DL"):
+			continue
+		var s := d.data.strength
+		if s > best_str:
+			best_str = s
+			best = d
+	return best
+
+
+## A receiver who catches the ball keeps running the route the coach drew for
+## him, and only turns into an ordinary ball carrier once it runs out. In a
+## game about drawing routes the line should not evaporate the instant the
+## ball arrives - a crosser you chalked to keep working across the field will
+## now actually keep working across it after the catch.
+##
+## Waypoints that are not downfield of him are skipped: a curl or a comeback
+## has him working BACK toward the QB, and finishing that with the ball in his
+## hands would just lose yards. If nothing worth running is left, this returns
+## false and the caller falls through to _carry_logic.
+##
+## Note there is deliberately no defender avoidance here - he runs the line he
+## was given. Drawing a route through traffic is supposed to cost you.
+func _carry_route_logic(sp: SimPlayer, delta: float) -> bool:
+	if sp.role != SimPlayer.Role.ROUTE:
+		return false
+
+	while sp.route_idx < sp.route.size() \
+			and sp.route[sp.route_idx].x <= sp.pos.x + CARRY_ROUTE_MIN_GAIN:
+		sp.route_idx += 1
+	if sp.route_idx >= sp.route.size():
+		sp.route_done = true
+		return false
+
+	var target: Vector2 = sp.route[sp.route_idx]
+	# Same effort as _carry_logic: running with the ball is a touch slower.
+	sp.move_toward_point(target, delta, 0.92)
+	if sp.pos.distance_to(target) < CARRY_ROUTE_ARRIVE:
+		sp.route_idx += 1
+		if sp.route_idx >= sp.route.size():
+			sp.route_done = true
+	return true
+
+
 func _carry_logic(sp: SimPlayer, delta: float) -> void:
 	# Head for the end zone while bending away from nearby defenders.
 	var forward := Vector2(1.0, 0.0)
@@ -1010,6 +1360,8 @@ func _evaluate_targets(qb: SimPlayer) -> Dictionary:
 		# A worse QB misreads coverage: the noise scales with missing INT.
 		var noise := rng.randfn(0.0, (16.0 - qb_int) * 0.18)
 		var score := openness + downfield + prog_bonus - throw_dist * 0.045 + noise
+		if priority_targets.has(f.slot):
+			score += PRIORITY_TARGET_BONUS
 		if score > float(best["score"]):
 			best = {"player": f, "score": score}
 	return best
@@ -1019,6 +1371,35 @@ func _nearest_defender_dist(sp: SimPlayer) -> float:
 	var best := 99.0
 	for d in defense:
 		best = minf(best, d.pos.distance_to(sp.pos))
+	return best
+
+
+## Butter Fingers' Dexterity penalty for anyone standing within
+## AuraDB.BUTTER_FINGERS_RADIUS yards of `pos` - applied directly at the two
+## points Dexterity actually matters (see _throw, _resolve_catch) rather than
+## by mutating eff dictionaries, so there's no baseline to snapshot/restore.
+func _butter_fingers_penalty(pos: Vector2) -> int:
+	for d in defense:
+		if d.data.aura_id == AuraDB.BUTTER_FINGERS and d.pos.distance_to(pos) <= AuraDB.BUTTER_FINGERS_RADIUS:
+			return AuraDB.BUTTER_FINGERS_DEX_PENALTY
+	return 0
+
+
+## Whoever's currently least covered - what the Mind Reader aura targets
+## instead of his assigned man/zone. Same "openness" measure _evaluate_targets
+## uses for the QB, just read from the defense's side of the ball.
+func _most_open_receiver() -> SimPlayer:
+	var best: SimPlayer = null
+	var best_open := -1.0
+	for f in flex_players():
+		if f.role != SimPlayer.Role.ROUTE and f.role != SimPlayer.Role.CARRY:
+			continue
+		if f == carrier:
+			continue
+		var openness := _nearest_defender_dist(f)
+		if openness > best_open:
+			best_open = openness
+			best = f
 	return best
 
 
@@ -1046,6 +1427,9 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 		aim = target.pos + target.vel * t
 
 	var acc := (16.0 - float(qb.stat("intelligence"))) * 0.028 + (16.0 - float(qb.stat("dexterity"))) * 0.045
+	# Butter Fingers' Dexterity penalty, expressed directly as the accuracy
+	# hit it would cause - same 0.045-per-point coefficient as the term above.
+	acc += float(_butter_fingers_penalty(qb.pos)) * 0.045
 	var pressure := _closest_free_rusher(qb)
 	if pressure != null and pressure.pos.distance_to(qb.pos) < 3.5:
 		acc += 0.7
@@ -1061,6 +1445,7 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	qb.has_ball = false
 	carrier = null
 	thrown_to = target
+	_last_passer = qb
 	# The passer_dex_bonus itself is applied in _resolve_catch, not here -
 	# it should land the moment the ball actually reaches the receiver, not
 	# the instant it leaves the QB's hand.
@@ -1077,6 +1462,7 @@ func _throwaway(qb: SimPlayer) -> void:
 	qb.has_ball = false
 	carrier = null
 	thrown_to = null
+	_last_passer = qb
 	_end_play({
 		"kind": "incomplete",
 		"yards": 0.0,
@@ -1096,6 +1482,7 @@ func _trigger_pursuit() -> void:
 
 func _step_defense(delta: float) -> void:
 	for d in defense:
+		d.aura_timer += delta
 		if d.free_timer > 0.0:
 			d.free_timer -= delta
 		if d.stunned > 0.0:
@@ -1116,6 +1503,15 @@ func _step_defense(delta: float) -> void:
 		if ball_in_air and d.role != SimPlayer.Role.RUSH:
 			if d.pos.distance_to(ball_to) < 16.0:
 				d.move_toward_point(ball_to, delta, 1.0)
+				continue
+
+		# Mind Reader ignores his assigned man/zone and beelines for whoever's
+		# actually most open, the same way the QB reads the field - see
+		# _most_open_receiver.
+		if d.data.aura_id == AuraDB.MIND_READER and d.role != SimPlayer.Role.RUSH:
+			var target := _most_open_receiver()
+			if target != null:
+				d.move_toward_point(target.pos, delta, 1.0)
 				continue
 
 		match d.role:
@@ -1284,6 +1680,9 @@ func _resolve_catch() -> void:
 	# covered pass a drop regardless of how the curve was tuned.
 	p -= 0.11 * clampf(1.0 - def_dist / 2.6, 0.0, 1.0)
 	p -= clampf((rec_dist - 1.8) * 0.07, 0.0, 0.11)
+	# Butter Fingers' Dexterity penalty, same 0.015-per-point coefficient
+	# catch_chance_base uses internally for Dexterity.
+	p -= float(_butter_fingers_penalty(rec.pos)) * 0.015
 	p = clampf(p, 0.03, 0.97)
 	if AbilityDB.guarantees_catch(rec.data.ability_id):
 		p = 1.0
@@ -1291,8 +1690,11 @@ func _resolve_catch() -> void:
 	if rng.randf() < p:
 		rec.has_ball = true
 		catch_x = spot.x
+		catch_shakes.append(air_yards)
 		_set_carrier(rec)
 		thrown_to = null
+		_pass_completed_this_play = true
+		_last_completion_target = rec
 		rec.pos = rec.pos.lerp(spot, 0.6)
 		var bucks := 5
 		var msg := "%s hauls it in." % rec.data.pname
@@ -1307,8 +1709,11 @@ func _resolve_catch() -> void:
 			savior.pos = spot
 			savior.has_ball = true
 			catch_x = spot.x
+			catch_shakes.append(air_yards)
 			_set_carrier(savior)
 			thrown_to = null
+			_pass_completed_this_play = true
+			_last_completion_target = savior
 			_award(20, "%s swoops in and steals the catch away from %s!" % [savior.data.pname, rec.data.pname])
 			_trigger_pursuit()
 			return
@@ -1385,7 +1790,19 @@ func _step_contacts(delta: float) -> void:
 			continue
 		b.next_contact = CONTACT_INTERVAL
 		var d: SimPlayer = b.mark
-		if _contact_roll(d, b, "block"):
+		var shed := false
+		if d.data.aura_id == AuraDB.STRONGMAN:
+			# Strongman always wins the shed; the interval before he can do it
+			# again (if a fresh blocker picks him up) shrinks with his
+			# Strength edge instead of the normal probabilistic roll.
+			shed = true
+			var diff := float(d.stat("strength") - b.stat("strength"))
+			b.next_contact = clampf(
+				AuraDB.STRONGMAN_BASE_INTERVAL - diff * AuraDB.STRONGMAN_INTERVAL_PER_STR,
+				AuraDB.STRONGMAN_MIN_INTERVAL, AuraDB.STRONGMAN_BASE_INTERVAL)
+		else:
+			shed = _contact_roll(d, b, "block")
+		if shed:
 			b.engaged = false
 			b.shed_cooldown = SHED_COOLDOWN
 			b.mark = null
@@ -1429,6 +1846,8 @@ func _step_contacts(delta: float) -> void:
 		var chance := 0.88 + float(d.stat("strength") - carrier.stat("strength")) * 0.020
 		chance -= AbilityDB.contact_mod(carrier.data.ability_id, "carry")
 		chance -= ItemDB.contact_mod(carrier.data.item_id, "carry")
+		if d.data.aura_id == AuraDB.BIG_BLOCKER:
+			chance += AuraDB.BIG_BLOCKER_TACKLE_BONUS
 		chance = clampf(chance, 0.12, 0.95)
 		if rng.randf() < chance:
 			_tackle(d)
@@ -1545,6 +1964,7 @@ func _end_play(res: Dictionary) -> void:
 
 	res["duration"] = time
 	result = res
+	_credit_game_stats(res)
 	log_line(res["text"])
 
 

@@ -1,0 +1,14 @@
+[
+	{"id": "strength_small", "stat": "strength", "amount": 2, "weight": 3},
+	{"id": "agility_small", "stat": "agility", "amount": 2, "weight": 3},
+	{"id": "dexterity_small", "stat": "dexterity", "amount": 2, "weight": 3},
+	{"id": "intelligence_small", "stat": "intelligence", "amount": 2, "weight": 3},
+	{"id": "strength_medium", "stat": "strength", "amount": 3, "weight": 2},
+	{"id": "agility_medium", "stat": "agility", "amount": 3, "weight": 2},
+	{"id": "dexterity_medium", "stat": "dexterity", "amount": 3, "weight": 2},
+	{"id": "intelligence_medium", "stat": "intelligence", "amount": 3, "weight": 2},
+	{"id": "strength_big", "stat": "strength", "amount": 5, "weight": 1},
+	{"id": "agility_big", "stat": "agility", "amount": 5, "weight": 1},
+	{"id": "dexterity_big", "stat": "dexterity", "amount": 5, "weight": 1},
+	{"id": "intelligence_big", "stat": "intelligence", "amount": 5, "weight": 1}
+]
