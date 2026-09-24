@@ -28,8 +28,6 @@ var upgrade_panel: PanelContainer
 var log_label: Label
 var cam_btn: Button
 var speed_btns: Dictionary = {}   # float speed -> Button, see _build_speed_buttons
-var handoff_btn: Button
-var scramble_btn: Button
 
 var _sb: Dictionary = {}
 var _last_phase: int = -1
@@ -243,7 +241,6 @@ func _build_upgrade_panel() -> void:
 func _process(delta: float) -> void:
 	_update_top_bar()
 	_update_log()
-	_update_live_buttons()
 
 	if sim.phase != _last_phase:
 		_last_phase = sim.phase
@@ -336,8 +333,6 @@ func _refresh_bar() -> void:
 	_last_phase = sim.phase
 	for c in bar_host.get_children():
 		c.queue_free()
-	handoff_btn = null
-	scramble_btn = null
 
 	field.draw_enabled = sim.phase == MatchSim.Phase.PRESNAP and pending_upgrades.is_empty()
 	if not field.draw_enabled:
@@ -389,6 +384,7 @@ func _playcall_bar() -> Control:
 		v.add_child(_dev_defense_slider())
 
 	v.add_child(_target_priority_row())
+	v.add_child(_play_action_row())
 
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", 8)
@@ -632,6 +628,38 @@ func _load_example(id: String) -> void:
 	_refresh_bar()
 
 
+## Arms an automatic Hand Off or Scramble for the play about to be snapped -
+## replaces the old mid-play HAND OFF/SCRAMBLE buttons, which were too fiddly
+## to click in the middle of a live play. Only one can be armed at a time
+## (see MatchSim.set_planned_action); clicking the armed one again disarms it.
+func _play_action_row() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.add_child(UIKit.label("PLAN", 12, UIKit.ACCENT))
+
+	var handoff_btn := UIKit.button("Hand Off", 11)
+	handoff_btn.custom_minimum_size = Vector2(0, 26)
+	handoff_btn.tooltip_text = "Automatically hand off the instant an eligible RB is close enough to the QB."
+	if sim.planned_action == "handoff":
+		handoff_btn.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+	handoff_btn.pressed.connect(func():
+		sim.set_planned_action("handoff")
+		_refresh_bar())
+	row.add_child(handoff_btn)
+
+	var scramble_btn := UIKit.button("Scramble", 11)
+	scramble_btn.custom_minimum_size = Vector2(0, 26)
+	scramble_btn.tooltip_text = "The QB takes off running the moment the ball is snapped."
+	if sim.planned_action == "scramble":
+		scramble_btn.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+	scramble_btn.pressed.connect(func():
+		sim.set_planned_action("scramble")
+		_refresh_bar())
+	row.add_child(scramble_btn)
+
+	return row
+
+
 func _target_priority_row() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
@@ -717,33 +745,11 @@ func _live_bar() -> Control:
 	row.add_theme_constant_override("separation", 8)
 	row.add_child(UIKit.label("LIVE   ", 15, UIKit.ACCENT))
 
-	handoff_btn = UIKit.button("HAND OFF", 14)
-	handoff_btn.custom_minimum_size = Vector2(110, 34)
-	handoff_btn.pressed.connect(func():
-		var target := sim.nearest_handoff_target()
-		if target != null:
-			sim.request_handoff(target))
-	row.add_child(handoff_btn)
+	if sim.planned_action != "":
+		var plan_label := "Hand Off" if sim.planned_action == "handoff" else "Scramble"
+		row.add_child(UIKit.label("Plan: %s" % plan_label, 13, UIKit.MUTED))
 
-	scramble_btn = UIKit.button("SCRAMBLE", 14)
-	scramble_btn.custom_minimum_size = Vector2(110, 34)
-	scramble_btn.pressed.connect(func(): sim.request_scramble())
-	row.add_child(scramble_btn)
-
-	_update_live_buttons()
 	return row
-
-
-## HAND OFF/SCRAMBLE eligibility changes continuously through a live play
-## (a RB drifting in/out of range, the QB giving up the ball) - _live_bar
-## only rebuilds on a phase change, so this runs every frame instead to keep
-## their enabled state current without tearing the bar down.
-func _update_live_buttons() -> void:
-	if sim.phase != MatchSim.Phase.LIVE or handoff_btn == null:
-		return
-	handoff_btn.disabled = sim.nearest_handoff_target() == null
-	scramble_btn.disabled = not (sim.carrier != null and sim.carrier.slot == "QB"
-		and sim.carrier.has_ball and not sim.qb_scrambling)
 
 
 func _result_bar() -> Control:

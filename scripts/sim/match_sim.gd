@@ -49,8 +49,8 @@ const PANIC_DIST := 2.2
 ## real liability and a mobile one is worth paying for.
 const SCRAMBLE_AGILITY := 9
 
-## How close a flex playing RB has to be to the QB for the coach to hand him
-## the ball mid-play by clicking him - see can_handoff_to/request_handoff.
+## How close a flex playing RB has to be to the QB for a "Hand Off" plan to
+## fire automatically - see can_handoff_to/request_handoff.
 const HANDOFF_RANGE := 3.5
 
 ## How much downfield a remaining waypoint has to be worth before a fresh
@@ -149,6 +149,12 @@ var handoff_done: bool = false
 var qb_decision_timer: float = 0.0
 var qb_scrambling: bool = false
 var catch_x: float = 0.0   # field x where the last completion was caught
+
+## Armed before the snap via set_planned_action, since clicking HAND OFF/
+## SCRAMBLE mid-play was too fiddly to hit in time. "" / "handoff" /
+## "scramble" - only one at a time. Checked each frame in _qb_logic and
+## cleared for the next down in begin_drive/advance.
+var planned_action: String = ""
 
 var result: Dictionary = {}
 var play_log: Array = []         # human-readable lines for the match feed
@@ -364,6 +370,7 @@ func begin_drive() -> void:
 	phase = Phase.PRESNAP
 	result = {}
 	priority_targets.clear()
+	planned_action = ""
 	# Everybody catches their breath between drives.
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
@@ -1060,6 +1067,14 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 		_block_logic(qb, delta)
 		return
 
+	if planned_action == "handoff":
+		var target := nearest_handoff_target()
+		if target != null:
+			request_handoff(target)
+			return
+	elif planned_action == "scramble" and not qb_scrambling:
+		request_scramble()
+
 	if qb_scrambling:
 		_carry_logic(qb, delta)
 		return
@@ -1158,10 +1173,11 @@ func _carry_target() -> SimPlayer:
 	return null
 
 
-## True if the coach could hand the ball off to `sp` right now via the
-## HAND OFF button - the QB still has it, `sp` is playing a RB (natural
-## position or via an ability like "positionless"), and he's standing close
-## enough. Also drives the pulsing "eligible" ring in field_view.gd.
+## True if `sp` could be handed the ball right now - the QB still has it,
+## `sp` is playing a RB (natural position or via an ability like
+## "positionless"), and he's standing close enough. Drives both a "Hand Off"
+## plan firing (see request_handoff) and the pulsing "eligible" ring in
+## field_view.gd.
 func can_handoff_to(sp: SimPlayer) -> bool:
 	if phase != Phase.LIVE or handoff_done:
 		return false
@@ -1174,7 +1190,14 @@ func can_handoff_to(sp: SimPlayer) -> bool:
 	return sp.pos.distance_to(carrier.pos) <= HANDOFF_RANGE
 
 
-## The RB the HAND OFF button would actually hand off to - the closest one
+## Arms (or, clicking the same one again, disarms) a pre-snap plan - see
+## `planned_action`. Setting one always clears the other, since the coach can
+## only call one or the other for a given play.
+func set_planned_action(action: String) -> void:
+	planned_action = "" if planned_action == action else action
+
+
+## The RB a "Hand Off" plan would actually hand off to - the closest one
 ## passing can_handoff_to, or null if nobody currently qualifies.
 func nearest_handoff_target() -> SimPlayer:
 	if carrier == null:
@@ -1191,10 +1214,11 @@ func nearest_handoff_target() -> SimPlayer:
 	return best
 
 
-## Coach-triggered handoff via the HAND OFF button (as opposed to a called
-## run play's automatic one - see _qb_logic/_carry_target). Returns false
-## without effect if can_handoff_to(sp) no longer holds (e.g. the RB drifted
-## out of range between frames).
+## Hands off to `sp` right now - fired automatically by a "Hand Off" plan the
+## instant a target comes into range (as opposed to a called run play's
+## automatic one - see _qb_logic/_carry_target). Returns false without effect
+## if can_handoff_to(sp) no longer holds (e.g. the RB drifted out of range
+## between frames).
 func request_handoff(sp: SimPlayer) -> bool:
 	if not can_handoff_to(sp):
 		return false
@@ -1202,9 +1226,10 @@ func request_handoff(sp: SimPlayer) -> bool:
 	return true
 
 
-## Coach-triggered scramble via the SCRAMBLE button - the same qb_scrambling
-## flag _qb_logic already sets automatically under pressure, just available
-## on demand. False without effect if the QB doesn't currently have the ball.
+## Triggers a scramble right now - fired automatically by a "Scramble" plan
+## the instant the ball is snapped, using the same qb_scrambling flag
+## _qb_logic already sets on its own under pressure. False without effect if
+## the QB doesn't currently have the ball.
 func request_scramble() -> bool:
 	if phase != Phase.LIVE or carrier == null or carrier.slot != "QB" or not carrier.has_ball:
 		return false
@@ -2296,6 +2321,7 @@ func advance() -> Dictionary:
 		log_line(out["reason"])
 	else:
 		phase = Phase.PRESNAP
+		planned_action = ""
 
 	return out
 
