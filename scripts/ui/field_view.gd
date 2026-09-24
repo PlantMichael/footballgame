@@ -10,10 +10,6 @@ extends Control
 signal player_clicked(sp: SimPlayer)
 signal field_clicked()
 
-## Clicking an eligible nearby RB while the QB still has the ball, mid-play -
-## see MatchSim.can_handoff_to. Takes priority over the plain inspect click.
-signal handoff_requested(sp: SimPlayer)
-
 ## Emitted when the coach finishes a chalk stroke on a flex player. `route`
 ## is waypoints in yards RELATIVE to that player's alignment, already
 ## simplified and truncated to the budget - i.e. ready to hand straight to
@@ -27,8 +23,19 @@ const YW := MatchSim.FIELD_W
 ## stay on screen instead of the camera slamming into the ball.
 const MIN_VERT_YARDS := 38.0
 const CAM_LEAD := 6.0        # bias the camera downfield of the ball
-const CAM_SPEED := 3.5
+## Lower than it used to be (3.5) - the follow-cam read as too snappy/jerky
+## panning between plays. See _zoom_pulse for the distinct quick-zoom punch
+## at the start/end of a play, which is a separate effect from this.
+const CAM_SPEED := 2.0
 const UP := Vector2(0.0, -1.0)
+
+## A brief extra zoom-in, triggered once at the snap and once when a play
+## ends (see trigger_zoom_pulse, called from match.gd), that eases back to
+## nothing over ZOOM_PULSE_TIME. Same decay-over-time shape as the screen
+## shake below, just applied to zoom instead of a pixel offset.
+const ZOOM_PULSE_AMOUNT := 0.12
+const ZOOM_PULSE_TIME := 0.35
+var _zoom_pulse_t: float = 0.0
 
 ## Free-camera controls: WASD pans, right-click-drag pans, the scroll wheel
 ## zooms. Any manual pan disengages `camera_locked`; toggling it back on
@@ -71,6 +78,11 @@ const SHAKE_MAX_PX := 16.0
 const SHAKE_FULL_YARDS := 28.0   # air yards at which the shake maxes out
 const SHAKE_TIME := 0.38
 
+## A bigger, longer shake for "combustion"/"aftershock" (see MatchSim.
+## big_shakes) - well past what any ordinary catch produces.
+const BIG_SHAKE_PX := 26.0
+const BIG_SHAKE_TIME := 0.65
+
 var sim: MatchSim = null
 var show_preview: bool = true
 var selected: SimPlayer = null
@@ -101,6 +113,7 @@ var _dragging: bool = false
 ## camera (see to_px/to_yards) so it never touches camera state or clamping.
 var _shake_px: float = 0.0
 var _shake_left: float = 0.0
+var _shake_total: float = SHAKE_TIME   # duration of the currently-running shake, for the decay ratio below
 var _shake_phase: float = 0.0
 var _shake_offset: Vector2 = Vector2.ZERO
 
@@ -182,6 +195,7 @@ func _process(delta: float) -> void:
 		else:
 			_handle_pan_keys(delta)
 		_clamp_camera()
+		_zoom_pulse_t = maxf(0.0, _zoom_pulse_t - delta)
 		for sp in sim.offense:
 			_advance_anim(sp, delta)
 			_advance_pops(sp, delta)
@@ -209,6 +223,14 @@ func _advance_shake(delta: float) -> void:
 		t = t * t * (3.0 - 2.0 * t)
 		_shake_px = maxf(_shake_px, lerpf(SHAKE_MIN_PX, SHAKE_MAX_PX, t))
 		_shake_left = SHAKE_TIME
+		_shake_total = SHAKE_TIME
+
+	# "Combustion"/"Aftershock" - bigger and longer than any ordinary catch.
+	while not sim.big_shakes.is_empty():
+		sim.big_shakes.pop_front()
+		_shake_px = BIG_SHAKE_PX
+		_shake_left = BIG_SHAKE_TIME
+		_shake_total = BIG_SHAKE_TIME
 
 	if _shake_left <= 0.0:
 		_shake_offset = Vector2.ZERO
@@ -219,7 +241,7 @@ func _advance_shake(delta: float) -> void:
 	_shake_phase += delta
 	# Two incommensurate frequencies so it reads as a rattle rather than a
 	# clean oscillation, faded out over the tail.
-	var amp := _shake_px * (_shake_left / SHAKE_TIME)
+	var amp := _shake_px * (_shake_left / _shake_total)
 	_shake_offset = Vector2(
 		sin(_shake_phase * 71.0) * amp,
 		cos(_shake_phase * 53.0) * amp * 0.8
@@ -267,6 +289,21 @@ func snap_camera() -> void:
 
 func toggle_camera_lock() -> void:
 	camera_locked = not camera_locked
+
+
+## A quick zoom-in punch, eased back out over ZOOM_PULSE_TIME - called once
+## from match.gd when a play starts (the snap) and once when it ends (phase
+## goes DEAD), so those two moments read as a deliberate beat instead of the
+## camera just continuing to glide.
+func trigger_zoom_pulse() -> void:
+	_zoom_pulse_t = ZOOM_PULSE_TIME
+
+
+func _zoom_pulse() -> float:
+	if _zoom_pulse_t <= 0.0:
+		return 0.0
+	var t := _zoom_pulse_t / ZOOM_PULSE_TIME
+	return ZOOM_PULSE_AMOUNT * t * t
 
 
 func _camera_target_x() -> float:
@@ -318,7 +355,7 @@ func _recompute_transform() -> void:
 	# area can really show, cutting the far (downfield/endzone) half of the
 	# screen short of the true goal line by about bottom_inset worth of yards.
 	var usable_h := maxf(size.y - bottom_inset, 1.0)
-	_scale = minf(size.x / YW, usable_h / MIN_VERT_YARDS) * _zoom
+	_scale = minf(size.x / YW, usable_h / MIN_VERT_YARDS) * (_zoom + _zoom_pulse())
 	_visible_yards = usable_h / _scale
 	_center = Vector2(size.x * 0.5, usable_h * 0.5)
 
@@ -384,10 +421,6 @@ func _gui_input(event: InputEvent) -> void:
 			_begin_stroke(hit)
 			return
 
-		if hit != null and sim.phase == MatchSim.Phase.LIVE and sim.can_handoff_to(hit):
-			handoff_requested.emit(hit)
-			return
-
 		if hit != null:
 			player_clicked.emit(hit)
 		else:
@@ -420,6 +453,16 @@ func _begin_stroke(sp: SimPlayer) -> void:
 	_stroke_len = 0.0
 
 
+## RouteBook.BUDGET_YARDS, scaled up for a player with "boundless" (route
+## budget quadrupled) - the only ability that touches how much chalk the
+## coach gets, so this is the one place it needs to be threaded through
+## rather than changing the global constant.
+func _route_budget() -> float:
+	if _stroke_player == null:
+		return RouteBook.BUDGET_YARDS
+	return RouteBook.BUDGET_YARDS * AbilityDB.route_budget_mult(_stroke_player.data.ability_id)
+
+
 func _extend_stroke(point: Vector2) -> void:
 	if _stroke.is_empty():
 		return
@@ -427,7 +470,7 @@ func _extend_stroke(point: Vector2) -> void:
 	var leg := last.distance_to(point)
 	if leg < RouteBook.SAMPLE_MIN_YARDS:
 		return
-	var budget_left := RouteBook.BUDGET_YARDS - _stroke_len
+	var budget_left := _route_budget() - _stroke_len
 	if budget_left <= 0.01:
 		return
 	# Out of chalk mid-leg: land exactly on the allowance instead of
@@ -446,6 +489,7 @@ func _finish_stroke() -> void:
 	var sp := _stroke_player
 	var points := _stroke
 	var total := _stroke_len
+	var budget := _route_budget()
 	cancel_stroke()
 
 	if sp == null:
@@ -459,7 +503,7 @@ func _finish_stroke() -> void:
 	var route: Array = []
 	for i in range(1, simplified.size()):
 		route.append(simplified[i] - origin)
-	route = RouteBook.truncate(route)
+	route = RouteBook.truncate(route, budget)
 	if route.is_empty():
 		player_clicked.emit(sp)
 		return
@@ -686,7 +730,7 @@ func _draw_stroke() -> void:
 		_chalk_arrow(pts, CHALK_LIVE)
 
 	var head: Vector2 = pts[pts.size() - 1]
-	var left := maxf(0.0, RouteBook.BUDGET_YARDS - _stroke_len)
+	var left := maxf(0.0, _route_budget() - _stroke_len)
 	var font := ThemeDB.fallback_font
 	var fs := int(maxf(12.0, _scale * 0.55))
 	var text := "%d yd left" % int(round(left))
@@ -812,6 +856,11 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 			var pulse3 := 0.08 * sin(Time.get_ticks_msec() * 0.01)
 			draw_arc(center, r * (1.32 + pulse3), 0, TAU, 30, Color("bfe9ff"), 3.0)
 
+	# "Corruption": a cursed defender fighting for the offense's side.
+	if not sp.is_offense and sp.turned and fall <= 0.0:
+		var pulse4 := 0.08 * sin(Time.get_ticks_msec() * 0.012)
+		draw_arc(center, r * (1.32 + pulse4), 0, TAU, 30, Color("8b3fd1"), 3.0)
+
 	var facing := _facing_view(sp)
 	var view_name: String = facing[0]
 	var mirrored: bool = facing[1]
@@ -880,7 +929,8 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	# this size it all but disappears, and without a rim the head blends into
 	# the jersey underneath it.
 	draw_circle(hp, hr * 1.22, Color("241d16"))
-	var head_tex := HeadArtDB.head_texture(HeadArtDB.view_for(view_name, mirrored))
+	var head_set := sp.data.head_id if sp.data.head_id != "" else "1"
+	var head_tex := HeadArtDB.head_texture(head_set, HeadArtDB.view_for(view_name, mirrored))
 	if head_tex == null:
 		draw_circle(hp, hr, head)
 	else:

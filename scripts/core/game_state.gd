@@ -240,9 +240,9 @@ func is_run_over() -> bool:
 ## two or three buffed defenders instead of the usual at-most-one. Dev mode
 ## gets a flat, high odds at exactly one instead, so every aura stays
 ## reachable without grinding a real run deep.
-const AURA_CHANCE_BASE := 0.05
-const AURA_CHANCE_PER_MATCH := 0.045
-const AURA_CHANCE_MAX := 0.65
+const AURA_CHANCE_BASE := 0.22
+const AURA_CHANCE_PER_MATCH := 0.07
+const AURA_CHANCE_MAX := 0.8
 const AURA_OVERSHOOT_PER_POINT := 0.03
 const MAX_AURAS := 3
 
@@ -321,6 +321,16 @@ func slot_kind(slot: String) -> String:
 	if slot.begins_with("F"):
 		return "FLEX"
 	return slot
+
+
+## Left tackle/guard, right guard/tackle instead of the internal T0-T3 -
+## purely cosmetic, matching the left-to-right lateral order MatchSim
+## already lines them up in (_align_offense's tackle_offsets). Gameplay is
+## unaffected: a T can still fill any of the 4 slots.
+const TACKLE_LABELS := {"T0": "LT", "T1": "LG", "T2": "RG", "T3": "RT"}
+
+func slot_label(slot: String) -> String:
+	return TACKLE_LABELS.get(slot, slot)
 
 
 ## True when this roster index is already used by a different slot.

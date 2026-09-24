@@ -14,6 +14,9 @@ extends RefCounted
 ##   strength, agility, dexterity, stamina, intelligence   int 1-15
 ##   ability_id    String, an id from AbilityDB.ABILITIES ("" for none)
 ##   body          String, sprite id ("6" -> assets/players/*/body_06.png)
+##   head          String, optional - a HeadArtDB set id (e.g. "runnadball" for
+##                 a player with his own unique head). Omit it to roll randomly
+##                 between the generic "1"/"2" styles like a generated player.
 
 const DATA_PATH := "res://data/shop_players.json"
 
@@ -83,6 +86,7 @@ static func _make(entry: Dictionary, rng: RandomNumberGenerator) -> PlayerData:
 	p.intelligence = int(entry.get("intelligence", 5))
 	p.ability_id = String(entry.get("ability_id", ""))
 	p.body = String(entry.get("body", "medium"))
+	p.head_id = String(entry.get("head", Generator.random_head_id(rng)))
 	p.quality = int(entry.get("quality", QUALITY_ROOKIE))
 	return p
 

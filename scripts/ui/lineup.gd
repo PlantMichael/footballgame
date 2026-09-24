@@ -135,7 +135,7 @@ func _slot_row(slot: String) -> Control:
 
 func _slot_label(slot: String) -> String:
 	if slot.begins_with("T"):
-		return "T%s" % slot.substr(1, 1)
+		return GameState.slot_label(slot)
 	if slot.begins_with("F"):
 		return "FLEX"
 	return slot

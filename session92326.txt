@@ -1,0 +1,45 @@
+Agenda for today
+
+
+Here's some changes: 
+
+1. Have camera quick zoom in when starting a play or ending one. Right now camera is too snappy.
+
+2. When catching the ball, dont follow the route if it leads into a defender. Some flex spots run right into a defender.
+
+3. Put game speed at the top of the screen in the top bar, and have it be always present
+
+4. I've added a head 2. Make players have a chance of having head 1 or 2. Ive also made custom heads for Runna D. Ball and Rock Stonehead. In time all all stars will have their own unique head. All the heads added you will need to cut out like you did the first ever head. 
+
+5. scrap the clicking on a rb and just make it a button on the bottom to do a handoff. If a handoff is happening, your linemen and flex spots need to block and make a hole. Addionally, make a QB scramble button you can click to make your qb run the ball.
+
+6. When assigning an upgrade after a touchdown. Instead of it says f0-f4, make it say the players role (wr, rb, etc.)
+
+7. Make the tackle positions left tackle, right tackle, left guard, right guard. T players can be assigned to any of the roles so gameplay wise it will stay the same, itll just provide clarity. 
+
+8. Make aura defenders more common. In 5 matches ive seen 1.
+
+
+Part 2:
+
+If you lose or beat a team by 10 points, you get to go to the Ritual Site
+
+There you can sacrifice a player to receive a random Cursed player. Sacrificed player is taken off your team permanently. Cursed players have all stars stats and only have one name.
+
+
+Asmodeus Cursed player
+Ability: When catching the ball, gain max agility. Explode after 3 seconds
+
+Beelzebub Cursed Player
+Ability: Route limit is quadrupled 
+
+Paimon Cursed Player
+Ability: Curse the nearest Defender. Cursed defender blocks for your team.
+
+Abaddon Cursed Player
+Ability: When receiving the ball, create an earthquake that shakes the field and stuns all players but abaddon for 1 second. (this will have a visual effect and the whole screen will shake)
+
+
+New items:
+
+Sacrificial  gloves $300. At the end of the match, the player wearing these is sacrificed and you receive one random cursed player. 

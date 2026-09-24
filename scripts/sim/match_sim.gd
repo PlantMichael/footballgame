@@ -59,6 +59,13 @@ const HANDOFF_RANGE := 3.5
 const CARRY_ROUTE_MIN_GAIN := 0.5
 const CARRY_ROUTE_ARRIVE := 0.8
 
+## How close a defender standing right on top of a remaining waypoint has to
+## be before that waypoint (and the route from there) is abandoned in favor
+## of open-field running - see _carry_route_logic. Running through traffic
+## mid-route is still on the coach; this only catches a waypoint that would
+## flat-out run the receiver into a defender who's already standing on it.
+const CARRY_ROUTE_ABORT_DIST := 2.0
+
 enum Phase { PRESNAP, LIVE, DEAD, DRIVE_OVER, MATCH_OVER }
 
 # --- Match/drive state ------------------------------------------------------
@@ -90,6 +97,12 @@ var play: Dictionary = {}
 ## field_view.gd, which turns each one into a screen shake scaled to how far
 ## the ball travelled. Purely presentational - nothing in the sim reads it.
 var catch_shakes: Array = []
+
+## One entry per "combustion" explosion or "aftershock" earthquake since the
+## renderer last looked - just a count, drained by field_view.gd into one
+## big multi-directional shake each, bigger than an ordinary catch_shakes
+## entry. Purely presentational.
+var big_shakes: Array = []
 
 ## For flexes nobody drew a route for: slot -> the RouteBook.STOCK id they
 ## were handed this snap, so the chalkboard can name it instead of just
@@ -457,6 +470,7 @@ func _begin_call(instant: bool) -> void:
 	# Nothing drains this when the sim runs headless, so reset it per play
 	# rather than letting a batch harness grow it for thousands of snaps.
 	catch_shakes.clear()
+	big_shakes.clear()
 	carrier = null
 	thrown_to = null
 	ball_in_air = false
@@ -663,6 +677,7 @@ func _align_offense() -> void:
 		sp.has_ball = (sp.slot == "QB")
 		sp.trail = PackedVector2Array([sp.pos])
 		sp.dodge_used = false
+		sp.carry_seconds = 0.0
 		sp.pending_stat_gains.clear()
 		sp.pending_events.clear()
 		_apply_modifiers(sp, ctx)
@@ -754,6 +769,7 @@ func _align_defense() -> void:
 		sp.free_timer = 0.0
 		sp.trail = PackedVector2Array()
 		sp.aura_timer = 0.0
+		sp.turned = false
 		_apply_modifiers(sp, ctx)
 		sp.reaction = maxf(0.15, 0.75 - float(sp.stat("intelligence")) * 0.035)
 
@@ -827,6 +843,7 @@ func _align_defense() -> void:
 	_apply_distraction()
 	_apply_taunt()
 	_apply_snap_push()
+	_apply_curse()
 
 
 ## "Drive Block"-style abilities (AbilityDB.pushes_defense_at_snap): shoves
@@ -843,6 +860,28 @@ func _apply_snap_push() -> void:
 		return
 	for d in defense:
 		d.target_pos.x = minf(d.target_pos.x + push, FIELD_LEN - 1.0)
+
+
+## "Corruption": curses the nearest defender to Paimon's own alignment spot
+## at the snap - see SimPlayer.turned, _turned_logic.
+func _apply_curse() -> void:
+	var source: SimPlayer = null
+	for sp in offense:
+		if AbilityDB.curses_nearest_defender(sp.data.ability_id):
+			source = sp
+			break
+	if source == null:
+		return
+	var best: SimPlayer = null
+	var best_dist := 1e9
+	for d in defense:
+		var dist := d.target_pos.distance_to(source.target_pos)
+		if dist < best_dist:
+			best_dist = dist
+			best = d
+	if best != null:
+		best.turned = true
+		log_line("%s curses %s!" % [source.data.pname, best.data.pname])
 
 
 ## Any offensive player with distracts_defenders pulls the two defenders
@@ -977,6 +1016,17 @@ func _record_trails() -> void:
 # --- Offense ----------------------------------------------------------------
 
 func _step_offense(delta: float) -> void:
+	# "Combustion": a lit fuse that ends the play the instant it runs out,
+	# checked before anything else moves this frame since there's no point
+	# stepping a play that's about to be blown up anyway.
+	if carrier != null:
+		var fuse := AbilityDB.explodes_after_seconds(carrier.data.ability_id)
+		if fuse > 0.0:
+			carrier.carry_seconds += delta
+			if carrier.carry_seconds >= fuse:
+				_trigger_explosion(carrier)
+				return
+
 	# Blockers re-assert this every frame, so clear it once up front rather
 	# than inside each defender's update (which ran after the contact pass).
 	for d in defense:
@@ -1108,11 +1158,10 @@ func _carry_target() -> SimPlayer:
 	return null
 
 
-## True if the coach could hand the ball off to `sp` right now by clicking
-## him - the QB still has it, `sp` is playing a RB (natural position or via
-## an ability like "positionless"), and he's standing close enough. Checked
-## both by field_view.gd (to route the click here instead of the inspect
-## card) and by request_handoff itself.
+## True if the coach could hand the ball off to `sp` right now via the
+## HAND OFF button - the QB still has it, `sp` is playing a RB (natural
+## position or via an ability like "positionless"), and he's standing close
+## enough. Also drives the pulsing "eligible" ring in field_view.gd.
 func can_handoff_to(sp: SimPlayer) -> bool:
 	if phase != Phase.LIVE or handoff_done:
 		return false
@@ -1125,14 +1174,44 @@ func can_handoff_to(sp: SimPlayer) -> bool:
 	return sp.pos.distance_to(carrier.pos) <= HANDOFF_RANGE
 
 
-## Coach-triggered handoff (as opposed to a called run play's automatic
-## one - see _qb_logic/_carry_target). Returns false without effect if
-## can_handoff_to(sp) no longer holds (e.g. the RB drifted out of range
-## between the click and this call).
+## The RB the HAND OFF button would actually hand off to - the closest one
+## passing can_handoff_to, or null if nobody currently qualifies.
+func nearest_handoff_target() -> SimPlayer:
+	if carrier == null:
+		return null
+	var best: SimPlayer = null
+	var best_dist := 1e9
+	for f in flex_players():
+		if not can_handoff_to(f):
+			continue
+		var dist := f.pos.distance_to(carrier.pos)
+		if dist < best_dist:
+			best_dist = dist
+			best = f
+	return best
+
+
+## Coach-triggered handoff via the HAND OFF button (as opposed to a called
+## run play's automatic one - see _qb_logic/_carry_target). Returns false
+## without effect if can_handoff_to(sp) no longer holds (e.g. the RB drifted
+## out of range between frames).
 func request_handoff(sp: SimPlayer) -> bool:
 	if not can_handoff_to(sp):
 		return false
 	_do_handoff(carrier, sp)
+	return true
+
+
+## Coach-triggered scramble via the SCRAMBLE button - the same qb_scrambling
+## flag _qb_logic already sets automatically under pressure, just available
+## on demand. False without effect if the QB doesn't currently have the ball.
+func request_scramble() -> bool:
+	if phase != Phase.LIVE or carrier == null or carrier.slot != "QB" or not carrier.has_ball:
+		return false
+	if qb_scrambling:
+		return false
+	qb_scrambling = true
+	log_line("%s takes off scrambling!" % carrier.data.pname)
 	return true
 
 
@@ -1143,7 +1222,24 @@ func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 	_set_carrier(rb)
 	_trigger_pursuit()
 	_apply_misdirection(rb)
+	_block_for_handoff(rb)
 	log_line("Handoff to %s." % rb.data.pname)
+
+
+## Every other flex still running a route switches to blocking once the
+## handoff happens, alongside the linemen who were already blocking by
+## default - the existing block-assignment machinery (_assign_blocks/
+## _is_threat's "defender near a non-QB carrier" branch) already treats
+## nearby defenders as threats once someone besides the QB is carrying, so
+## flipping their role is all that's needed for them to converge and seal
+## the hole.
+func _block_for_handoff(rb: SimPlayer) -> void:
+	for f in flex_players():
+		if f == rb:
+			continue
+		if f.role == SimPlayer.Role.ROUTE or f.role == SimPlayer.Role.CARRY:
+			f.role = SimPlayer.Role.BLOCK
+			f.mark = null
 
 
 ## Hands `sp` the ball and applies whatever ability triggers off of that -
@@ -1155,6 +1251,33 @@ func _set_carrier(sp: SimPlayer) -> void:
 		var amount := int(bonus[stat])
 		sp.eff[stat] = clampi(sp.stat(stat) + amount, 1, 15)
 		_grant_stat_gain(sp, stat, amount)
+
+
+## Abilities that specifically trigger on RECEIVING the ball (a catch, not a
+## handoff) - "combustion"'s instant max Agility and "aftershock"'s
+## earthquake. Called right after _set_carrier from both of _resolve_catch's
+## success branches (the real catch and a "guardian_angel"-style save).
+func _on_receive(sp: SimPlayer) -> void:
+	if AbilityDB.max_agility_on_catch(sp.data.ability_id):
+		var delta := 15 - sp.stat("agility")
+		if delta > 0:
+			sp.eff["agility"] = 15
+			_grant_stat_gain(sp, "agility", delta)
+	if AbilityDB.earthquake_on_catch(sp.data.ability_id):
+		_trigger_earthquake(sp)
+
+
+## "Aftershock": stuns every other player on the field for 1 second and
+## queues one big shake, instead of the field_view's usual air-yards-scaled
+## catch shake.
+func _trigger_earthquake(sp: SimPlayer) -> void:
+	big_shakes.append(1)
+	for o in offense:
+		if o != sp:
+			o.stunned = maxf(o.stunned, 1.0)
+	for d in defense:
+		d.stunned = maxf(d.stunned, 1.0)
+	log_line("%s TRIGGERS AN EARTHQUAKE!" % sp.data.pname)
 
 
 ## Queue one popup per point of `amount` (positive or negative) so the
@@ -1372,14 +1495,20 @@ func _pick_dedicated_target() -> SimPlayer:
 ## hands would just lose yards. If nothing worth running is left, this returns
 ## false and the caller falls through to _carry_logic.
 ##
-## Note there is deliberately no defender avoidance here - he runs the line he
-## was given. Drawing a route through traffic is supposed to cost you.
+## There's deliberately no defender avoidance WHILE running a given leg - he
+## runs the line he was given, and drawing a route through traffic is
+## supposed to cost you. The one exception is a waypoint that would run him
+## flat into a defender already standing right on top of it (some flex spots'
+## stock/drawn routes do this) - that one waypoint gets skipped just like an
+## already-passed one, handing him off to the avoidance-aware _carry_logic
+## instead of threading him into a tackle for free.
 func _carry_route_logic(sp: SimPlayer, delta: float) -> bool:
 	if sp.role != SimPlayer.Role.ROUTE:
 		return false
 
 	while sp.route_idx < sp.route.size() \
-			and sp.route[sp.route_idx].x <= sp.pos.x + CARRY_ROUTE_MIN_GAIN:
+			and (sp.route[sp.route_idx].x <= sp.pos.x + CARRY_ROUTE_MIN_GAIN
+				or _nearest_defender_dist_to(sp.route[sp.route_idx]) < CARRY_ROUTE_ABORT_DIST):
 		sp.route_idx += 1
 	if sp.route_idx >= sp.route.size():
 		sp.route_done = true
@@ -1461,9 +1590,13 @@ func _evaluate_targets(qb: SimPlayer) -> Dictionary:
 
 
 func _nearest_defender_dist(sp: SimPlayer) -> float:
+	return _nearest_defender_dist_to(sp.pos)
+
+
+func _nearest_defender_dist_to(point: Vector2) -> float:
 	var best := 99.0
 	for d in defense:
-		best = minf(best, d.pos.distance_to(sp.pos))
+		best = minf(best, d.pos.distance_to(point))
 	return best
 
 
@@ -1587,6 +1720,13 @@ func _step_defense(delta: float) -> void:
 		if d.tackle_cd > 0.0:
 			d.tackle_cd -= delta
 
+		# "Corruption": a cursed defender blocks for the offense instead of
+		# running his own assignment - skips the normal role dispatch (and
+		# the pursuit-role-flip below) entirely.
+		if d.turned:
+			_turned_logic(d, delta)
+			continue
+
 		if pursuit_triggered and carrier != null:
 			d.reaction -= delta
 			if d.reaction <= 0.0 and d.role != SimPlayer.Role.RUSH:
@@ -1627,6 +1767,30 @@ func _rush_logic(d: SimPlayer, delta: float) -> void:
 		d.move_toward_point(target, delta, 0.20)
 	else:
 		d.move_toward_point(target, delta, 1.0)
+
+
+## "Corruption": a cursed defender (SimPlayer.turned) closes on whichever
+## OTHER defender is currently nearest the ball carrier's protect point and
+## briefly stuns him on contact - a stand-in for "blocks for your team"
+## that doesn't require restructuring the offense/defense arrays to let a
+## defense-side entity actually throw a real block.
+func _turned_logic(d: SimPlayer, delta: float) -> void:
+	var protect_point := carrier.pos if carrier != null else Vector2(los - 5.0, FIELD_W * 0.5)
+	var target: SimPlayer = null
+	var best_dist := 1e9
+	for other in defense:
+		if other == d or other.turned:
+			continue
+		var dist := other.pos.distance_to(protect_point)
+		if dist < best_dist:
+			best_dist = dist
+			target = other
+	if target == null:
+		d.hold(delta)
+		return
+	d.move_toward_point(target.pos, delta, 1.0)
+	if d.pos.distance_to(target.pos) < 1.8:
+		target.stunned = maxf(target.stunned, 0.5)
 
 
 func _man_logic(d: SimPlayer, delta: float) -> void:
@@ -1785,6 +1949,7 @@ func _resolve_catch() -> void:
 		catch_x = spot.x
 		catch_shakes.append(air_yards)
 		_set_carrier(rec)
+		_on_receive(rec)
 		thrown_to = null
 		_pass_completed_this_play = true
 		_last_completion_target = rec
@@ -1804,6 +1969,7 @@ func _resolve_catch() -> void:
 			catch_x = spot.x
 			catch_shakes.append(air_yards)
 			_set_carrier(savior)
+			_on_receive(savior)
 			thrown_to = null
 			_pass_completed_this_play = true
 			_last_completion_target = savior
@@ -2027,6 +2193,18 @@ func _check_dead() -> void:
 		if carrier != null:
 			yards = carrier.pos.x - los
 		_end_play({"kind": "run", "yards": yards, "timeout": true, "text": "The play is whistled dead."})
+
+
+## "Combustion"'s fuse running out - ends the play as a turnover on the spot,
+## with a bigger shake than an ordinary catch.
+func _trigger_explosion(sp: SimPlayer) -> void:
+	big_shakes.append(1)
+	_end_play({
+		"kind": "explosion",
+		"yards": sp.pos.x - los,
+		"turnover": true,
+		"text": "%s COULDN'T CONTAIN THE CURSE AND EXPLODES!" % sp.data.pname,
+	})
 
 
 func _end_play(res: Dictionary) -> void:

@@ -56,6 +56,14 @@ const BODY_BY_POS := {
 	PlayerData.Pos.TE: "1",
 }
 
+## The pool a player without a fixed head_id (see HeadArtDB, PlayerData) rolls
+## between - a named player like "Runna D. Ball" gets a specific id instead
+## of rolling here (ShopPlayerDB's optional "head" JSON field, CursedPlayerDB).
+const RANDOM_HEAD_IDS := ["1", "2"]
+
+static func random_head_id(rng: RandomNumberGenerator) -> String:
+	return RANDOM_HEAD_IDS[rng.randi_range(0, RANDOM_HEAD_IDS.size() - 1)]
+
 ## NFL-style jersey number bands, inclusive. A position can have more than
 ## one legal band (e.g. a wide receiver can wear 1-49 or 80-89).
 const NUMBER_BANDS := {
@@ -122,6 +130,7 @@ static func make_player(rng: RandomNumberGenerator, pos: PlayerData.Pos, quality
 	p.pname = random_name(rng)
 	p.number = random_number(rng, pos)
 	p.body = BODY_BY_POS.get(pos, p.body)
+	p.head_id = random_head_id(rng)
 
 	var weights: Dictionary = POS_WEIGHTS[pos]
 	for key in STAT_KEYS:
@@ -249,6 +258,7 @@ static func _make_defender(rng: RandomNumberGenerator, role: String, quality: fl
 	var p := PlayerData.new()
 	p.pname = random_name(rng)
 	p.number = random_defense_number(rng, role)
+	p.head_id = random_head_id(rng)
 	var weights: Dictionary
 	match role:
 		"DL":

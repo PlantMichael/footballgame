@@ -27,6 +27,9 @@ var card: PanelContainer
 var upgrade_panel: PanelContainer
 var log_label: Label
 var cam_btn: Button
+var speed_btns: Dictionary = {}   # float speed -> Button, see _build_speed_buttons
+var handoff_btn: Button
+var scramble_btn: Button
 
 var _sb: Dictionary = {}
 var _last_phase: int = -1
@@ -88,7 +91,6 @@ func _build_layout() -> void:
 	field.player_clicked.connect(_on_player_clicked)
 	field.field_clicked.connect(_dismiss_overlays)
 	field.route_drawn.connect(_on_route_drawn)
-	field.handoff_requested.connect(_on_handoff_requested)
 	field.bottom_inset = float(BAR_TALL)
 	add_child(field)
 	field.snap_camera()
@@ -134,6 +136,8 @@ func _build_top_bar() -> void:
 	row.add_child(spacer)
 
 	_add_sb(row, "earned", "Earned", UIKit.ACCENT)
+
+	_build_speed_buttons(row)
 
 	cam_btn = UIKit.button("", 13)
 	cam_btn.custom_minimum_size = Vector2(190, 0)
@@ -239,6 +243,7 @@ func _build_upgrade_panel() -> void:
 func _process(delta: float) -> void:
 	_update_top_bar()
 	_update_log()
+	_update_live_buttons()
 
 	if sim.phase != _last_phase:
 		_last_phase = sim.phase
@@ -260,6 +265,7 @@ func _process(delta: float) -> void:
 	if sim.phase == MatchSim.Phase.DEAD:
 		bucks_earned += int(sim.result.get("bucks", 0))
 		_last_phase = sim.phase
+		field.trigger_zoom_pulse()
 		_refresh_bar()
 
 
@@ -281,6 +287,30 @@ func _update_top_bar() -> void:
 func _update_cam_btn() -> void:
 	var locked: bool = field.get("camera_locked")
 	cam_btn.text = "Camera: Following ball (L)" if locked else "Camera: Free - WASD/drag (L)"
+
+
+## Game-speed control, in the top bar so it's visible in every phase rather
+## than only during Phase.LIVE (where it used to live, in _live_bar).
+func _build_speed_buttons(row: HBoxContainer) -> void:
+	row.add_child(UIKit.label("Speed", 12, UIKit.MUTED))
+	for s in [0.5, 1.0, 2.0, 4.0]:
+		var b := UIKit.button("%sx" % ("0.5" if s == 0.5 else str(int(s))), 13)
+		b.custom_minimum_size = Vector2(48, 0)
+		b.pressed.connect(func():
+			speed = s
+			_update_speed_buttons())
+		row.add_child(b)
+		speed_btns[s] = b
+	_update_speed_buttons()
+
+
+func _update_speed_buttons() -> void:
+	for s in speed_btns:
+		var b: Button = speed_btns[s]
+		if is_equal_approx(float(s), speed):
+			b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+		else:
+			b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.PANEL_HI, 6, 1))
 
 
 func _set_sb(key: String, value: String) -> void:
@@ -306,6 +336,8 @@ func _refresh_bar() -> void:
 	_last_phase = sim.phase
 	for c in bar_host.get_children():
 		c.queue_free()
+	handoff_btn = null
+	scramble_btn = null
 
 	field.draw_enabled = sim.phase == MatchSim.Phase.PRESNAP and pending_upgrades.is_empty()
 	if not field.draw_enabled:
@@ -675,6 +707,7 @@ func _on_snap() -> void:
 	_dismiss_overlays()
 	field.cancel_stroke()
 	sim.snap()
+	field.trigger_zoom_pulse()
 	_refresh_bar()
 
 
@@ -683,16 +716,34 @@ func _live_bar() -> Control:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 8)
 	row.add_child(UIKit.label("LIVE   ", 15, UIKit.ACCENT))
-	for s in [0.5, 1.0, 2.0, 4.0]:
-		var b := UIKit.button("%sx" % ("0.5" if s == 0.5 else str(int(s))), 14)
-		b.custom_minimum_size = Vector2(62, 34)
-		if is_equal_approx(s, speed):
-			b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
-		b.pressed.connect(func():
-			speed = s
-			_refresh_bar())
-		row.add_child(b)
+
+	handoff_btn = UIKit.button("HAND OFF", 14)
+	handoff_btn.custom_minimum_size = Vector2(110, 34)
+	handoff_btn.pressed.connect(func():
+		var target := sim.nearest_handoff_target()
+		if target != null:
+			sim.request_handoff(target))
+	row.add_child(handoff_btn)
+
+	scramble_btn = UIKit.button("SCRAMBLE", 14)
+	scramble_btn.custom_minimum_size = Vector2(110, 34)
+	scramble_btn.pressed.connect(func(): sim.request_scramble())
+	row.add_child(scramble_btn)
+
+	_update_live_buttons()
 	return row
+
+
+## HAND OFF/SCRAMBLE eligibility changes continuously through a live play
+## (a RB drifting in/out of range, the QB giving up the ball) - _live_bar
+## only rebuilds on a phase change, so this runs every frame instead to keep
+## their enabled state current without tearing the bar down.
+func _update_live_buttons() -> void:
+	if sim.phase != MatchSim.Phase.LIVE or handoff_btn == null:
+		return
+	handoff_btn.disabled = sim.nearest_handoff_target() == null
+	scramble_btn.disabled = not (sim.carrier != null and sim.carrier.slot == "QB"
+		and sim.carrier.has_ball and not sim.qb_scrambling)
 
 
 func _result_bar() -> Control:
@@ -864,7 +915,7 @@ func _upgrade_choice_row(entry: Dictionary) -> Control:
 	# light/muted colors (and ACCENT itself) all but disappear on top of it.
 	const DARK := Color("13200f")
 	h.add_child(UIKit.label("#%d %s" % [pd.number, pd.pname], 14, DARK))
-	h.add_child(UIKit.label(String(entry.get("slot", "")), 11, Color(DARK, 0.65)))
+	h.add_child(UIKit.label(pd.pos_name(), 11, Color(DARK, 0.65)))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
@@ -911,7 +962,25 @@ func _finish_match() -> void:
 		"round": GameState.round_label(),
 	}
 	GameState.finish_match(won)
+	_check_sacrificial_gloves()
 	get_tree().change_scene_to_file("res://scenes/post_match.tscn")
+
+
+## "Sacrificial Gloves": whoever's wearing them at the end of the match is
+## cut and replaced with one random Cursed player, win or lose - independent
+## of (and can stack with) a Ritual Site visit.
+func _check_sacrificial_gloves() -> void:
+	for i in GameState.roster.size():
+		if GameState.roster[i].item_id == "sacrificial_gloves":
+			var exclude := {}
+			var cursed_names := CursedPlayerDB.all_names()
+			for p in GameState.roster:
+				if cursed_names.has(p.pname):
+					exclude[p.pname] = true
+			var cursed := CursedPlayerDB.random_cursed(GameState.rng, exclude)
+			GameState.cut_player(i)
+			GameState.add_player(cursed)
+			return
 
 
 # ============================================================================
@@ -928,13 +997,6 @@ func _on_player_clicked(sp: SimPlayer) -> void:
 	side_panel.visible = false
 	_side_panel_mode = ""
 	_show_card(sp)
-
-
-## The coach clicked a RB standing close enough to the QB, mid-play, to
-## take a handoff - see field_view.gd's handoff_requested / MatchSim.
-## can_handoff_to.
-func _on_handoff_requested(sp: SimPlayer) -> void:
-	sim.request_handoff(sp)
 
 
 func _dismiss_overlays() -> void:
@@ -1165,7 +1227,7 @@ func _role_label(sp: SimPlayer) -> String:
 			return "LINEBACKER"
 		return "DEFENSIVE BACK"
 	if sp.slot.begins_with("T"):
-		return "TACKLE  (%s)" % sp.data.pos_name()
+		return "%s  (%s)" % [GameState.slot_label(sp.slot), sp.data.pos_name()]
 	if sp.slot.begins_with("F"):
 		return "FLEX  (%s)" % sp.data.pos_name()
 	return "%s  (%s)" % [sp.slot, sp.data.pos_name()]
@@ -1280,7 +1342,7 @@ func _sub_row(idx: int, kind: String, slot: String) -> Control:
 
 func _slot_title(slot: String) -> String:
 	if slot.begins_with("T"):
-		return "TACKLE %s" % slot.substr(1, 1)
+		return GameState.slot_label(slot)
 	if slot.begins_with("F"):
 		return "FLEX %s" % slot.substr(1, 1)
 	return slot

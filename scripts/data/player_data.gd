@@ -33,6 +33,12 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 ## Generator.BODY_BY_POS); set by hand per entry for shop players.
 @export var body: String = "medium"
 
+## Which HeadArtDB set this player's head is cropped from - "1"/"2" for the
+## two generic random styles, or a per-player id like "runnadball" for a
+## named player's own unique head. "" means "not rolled yet"; callers should
+## fall back to "1" rather than leaving it empty.
+@export var head_id: String = ""
+
 
 func pos_name() -> String:
 	return POS_NAMES[pos]
@@ -98,4 +104,5 @@ func duplicate_player() -> PlayerData:
 	p.aura_id = aura_id
 	p.quality = quality
 	p.body = body
+	p.head_id = head_id
 	return p

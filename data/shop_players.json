@@ -21,7 +21,8 @@
 		"stamina": 7,
 		"intelligence": 6,
 		"ability_id": "cant_miss",
-		"body": "4"
+		"body": "4",
+		"head": "rockstonehead"
 	},
 	{
 		"name": "Johnny Cardio",
@@ -81,7 +82,8 @@
 		"stamina": 11,
 		"intelligence": 9,
 		"ability_id": "misdirection",
-		"body": "1"
+		"body": "1",
+		"head": "runnadball"
 	},
 	{
 		"name": "Dexter Doomer",

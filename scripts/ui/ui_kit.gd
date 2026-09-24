@@ -179,7 +179,7 @@ static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 	t.offset_bottom = -4
 	box.add_child(t)
 
-	var head_tex := HeadArtDB.head_texture("front")
+	var head_tex := HeadArtDB.head_texture(p.head_id if p.head_id != "" else "1", "front")
 	if head_tex != null:
 		# STRETCH_KEEP_ASPECT_CENTERED letterboxes the body texture inside
 		# `t`'s rect - work out where it actually landed so the head can be

@@ -205,7 +205,7 @@ func _starters_summary() -> Control:
 		var p := GameState.player_at(slot)
 		var cell := HBoxContainer.new()
 		cell.add_theme_constant_override("separation", 6)
-		var tag := UIKit.label(GameState.slot_kind(slot) if slot.begins_with("F") else slot, 12, UIKit.MUTED)
+		var tag := UIKit.label(GameState.slot_kind(slot) if slot.begins_with("F") else GameState.slot_label(slot), 12, UIKit.MUTED)
 		tag.custom_minimum_size = Vector2(42, 0)
 		cell.add_child(tag)
 		if p == null:

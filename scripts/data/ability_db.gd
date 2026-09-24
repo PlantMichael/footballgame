@@ -77,6 +77,21 @@ extends RefCounted
 ##                            MatchSim._apply_tier_buffs.
 ##   pushes_defense_at_snap() -> float, default 0.0. The whole defense lines up this many
 ##                            extra yards back from the LOS at the snap. MatchSim._align_defense.
+##   max_agility_on_catch() -> bool, default false. Effective Agility jumps straight to 15
+##                            the instant he catches a pass. MatchSim._resolve_catch.
+##   explodes_after_seconds() -> float, default 0.0. Holding the ball this many seconds as
+##                            carrier ends the play immediately as a turnover, with a big
+##                            screen-shake. MatchSim._step_offense / SimPlayer.carry_seconds.
+##   route_budget_mult()    -> float, default 1.0. Multiplies RouteBook.BUDGET_YARDS while
+##                            the coach is drawing for this player. field_view.gd's
+##                            _extend_stroke/_draw_stroke.
+##   curses_nearest_defender() -> bool, default false. At the snap, the defender nearest
+##                            this player's own alignment spot switches sides for the play -
+##                            see SimPlayer.turned, MatchSim._align_defense/_turned_logic.
+##   earthquake_on_catch()  -> bool, default false. The instant he catches a pass, every
+##                            other player on the field is stunned for 1 second and the
+##                            screen does one big multi-directional shake.
+##                            MatchSim._resolve_catch.
 ##
 ## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
 ## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
@@ -343,6 +358,27 @@ const ABILITIES := {
 		"desc": "At the snap, the whole defense lines up 5 extra yards off the ball.",
 		"pushes_defense_at_snap": Callable(AbilityDB, "_pushes_defense_at_snap_drive_block"),
 	},
+	"combustion": {
+		"name": "Combustion",
+		"desc": "When catching the ball, gains max Agility - but explodes 3 seconds later, ending the play.",
+		"max_agility_on_catch": Callable(AbilityDB, "_max_agility_on_catch_combustion"),
+		"explodes_after_seconds": Callable(AbilityDB, "_explodes_after_seconds_combustion"),
+	},
+	"boundless": {
+		"name": "Boundless",
+		"desc": "His route limit is quadrupled.",
+		"route_budget_mult": Callable(AbilityDB, "_route_budget_mult_boundless"),
+	},
+	"corruption": {
+		"name": "Corruption",
+		"desc": "At the snap, curses the nearest defender - he blocks for your team instead of his own for the rest of the play.",
+		"curses_nearest_defender": Callable(AbilityDB, "_curses_nearest_defender_corruption"),
+	},
+	"aftershock": {
+		"name": "Aftershock",
+		"desc": "When receiving the ball, triggers an earthquake that stuns every other player on the field for 1 second.",
+		"earthquake_on_catch": Callable(AbilityDB, "_earthquake_on_catch_aftershock"),
+	},
 }
 
 
@@ -515,6 +551,36 @@ static func tier_buff(id: String) -> Dictionary:
 ## Extra yards the whole defense lines up off the ball at the snap, default 0.0.
 static func pushes_defense_at_snap(id: String) -> float:
 	return _dispatch(id, "pushes_defense_at_snap", [], 0.0)
+
+
+## True if effective Agility jumps straight to 15 the instant this player
+## catches a pass.
+static func max_agility_on_catch(id: String) -> bool:
+	return _dispatch(id, "max_agility_on_catch", [], false)
+
+
+## Seconds of holding the ball as carrier before this player's ability ends
+## the play as a turnover, default 0.0 (never).
+static func explodes_after_seconds(id: String) -> float:
+	return _dispatch(id, "explodes_after_seconds", [], 0.0)
+
+
+## Multiplier on RouteBook.BUDGET_YARDS while the coach draws for this
+## player, default 1.0.
+static func route_budget_mult(id: String) -> float:
+	return _dispatch(id, "route_budget_mult", [], 1.0)
+
+
+## True if this player curses the nearest defender to his own alignment at
+## the snap, turning him into a blocker for the offense for the play.
+static func curses_nearest_defender(id: String) -> bool:
+	return _dispatch(id, "curses_nearest_defender", [], false)
+
+
+## True if every other player on the field gets stunned for 1 second the
+## instant this player catches a pass.
+static func earthquake_on_catch(id: String) -> bool:
+	return _dispatch(id, "earthquake_on_catch", [], false)
 
 
 # ============================================================================
@@ -779,3 +845,23 @@ static func _tier_buff_veteran_mentor() -> Dictionary:
 
 static func _pushes_defense_at_snap_drive_block() -> float:
 	return 5.0
+
+
+static func _max_agility_on_catch_combustion() -> bool:
+	return true
+
+
+static func _explodes_after_seconds_combustion() -> float:
+	return 3.0
+
+
+static func _route_budget_mult_boundless() -> float:
+	return 4.0
+
+
+static func _curses_nearest_defender_corruption() -> bool:
+	return true
+
+
+static func _earthquake_on_catch_aftershock() -> bool:
+	return true

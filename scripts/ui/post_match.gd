@@ -20,6 +20,11 @@ func _build() -> void:
 
 	var champion := won and GameState.is_run_over()
 	var out_of_lives := not won and not GameState.run_active
+	var margin := int(r.get("score_us", 0)) - int(r.get("score_them", 0))
+	# The Ritual Site: a loss, or a blowout win, opens the door - but only
+	# while the run is actually continuing, since a sacrifice only matters
+	# for a roster you'll keep playing with this run.
+	var ritual_eligible := not champion and not out_of_lives and (not won or margin >= 10)
 
 	if champion:
 		MetaState.award_mark(GameState.qb_id, GameState.chosen_bowl)
@@ -92,6 +97,8 @@ func _build() -> void:
 		shop.custom_minimum_size = Vector2(0, 50)
 		shop.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/shop.tscn"))
 		row.add_child(shop)
+		if ritual_eligible:
+			row.add_child(_ritual_button())
 	elif not champion and not out_of_lives:
 		# Lost, but still have a life left: retry the same round rather than
 		# ending the run. GameState.round_index didn't move, so the hub and
@@ -105,6 +112,8 @@ func _build() -> void:
 		shop2.custom_minimum_size = Vector2(0, 50)
 		shop2.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/shop.tscn"))
 		row.add_child(shop2)
+		if ritual_eligible:
+			row.add_child(_ritual_button())
 	else:
 		var again := UIKit.primary_button("  START A NEW RUN  ", 20)
 		again.custom_minimum_size = Vector2(0, 50)
@@ -115,3 +124,11 @@ func _build() -> void:
 		menu.custom_minimum_size = Vector2(0, 50)
 		menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 		row.add_child(menu)
+
+
+func _ritual_button() -> Control:
+	var b := UIKit.button("  Visit the Ritual Site  ", 17)
+	b.custom_minimum_size = Vector2(0, 50)
+	b.add_theme_color_override("font_color", Color("b060e0"))
+	b.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/ritual_site.tscn"))
+	return b

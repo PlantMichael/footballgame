@@ -50,6 +50,17 @@ var free_timer: float = 0.0     # just shed a block; briefly cannot be picked up
 var disrupted: float = 0.0      # receiver knocked off the route
 var dodge_used: bool = false    # ability_id "phantom_step": once-per-play tackle dodge
 
+## Seconds this player has been the ball carrier. Reset to 0 in
+## MatchSim._set_carrier whenever he's newly handed/thrown the ball,
+## incremented in MatchSim._step_offense while he still has it. Only
+## consulted by "combustion" (AbilityDB.explodes_after_seconds).
+var carry_seconds: float = 0.0
+
+## Cursed by "corruption" (AbilityDB.curses_nearest_defender) at the snap -
+## a defender with this set blocks for the OFFENSE for the rest of the play
+## instead of running his assigned coverage/rush. See MatchSim._turned_logic.
+var turned: bool = false
+
 ## Stat gains awarded mid-play (an ability firing at a throw, a handoff, a
 ## dodge, etc.), one entry per point so the renderer can pop them up one at
 ## a time instead of a single combined number. A "-" prefix means a loss.

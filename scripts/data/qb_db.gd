@@ -65,4 +65,5 @@ static func make_player(rng: RandomNumberGenerator, id: int) -> PlayerData:
 	p.intelligence = e["intelligence"]
 	p.ability_id = String(e.get("ability_id", ""))
 	p.body = String(e.get("body", "1"))
+	p.head_id = String(e.get("head", Generator.random_head_id(rng)))
 	return p

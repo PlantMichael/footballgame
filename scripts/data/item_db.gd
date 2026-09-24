@@ -97,6 +97,12 @@ const ITEMS := {
 		"mods": {"agility": -1},
 		"catch": 0.10,
 	},
+	"sacrificial_gloves": {
+		"name": "Sacrificial Gloves",
+		"desc": "At the end of the match, the player wearing these is sacrificed - you receive one random Cursed player in return.",
+		"cost": 300,
+		"mods": {},
+	},
 }
 
 
