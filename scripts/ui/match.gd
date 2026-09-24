@@ -628,24 +628,32 @@ func _load_example(id: String) -> void:
 	_refresh_bar()
 
 
-## Arms an automatic Hand Off or Scramble for the play about to be snapped -
-## replaces the old mid-play HAND OFF/SCRAMBLE buttons, which were too fiddly
-## to click in the middle of a live play. Only one can be armed at a time
-## (see MatchSim.set_planned_action); clicking the armed one again disarms it.
+## Arms a Hand Off to one specific RB or a Scramble for the play about to be
+## snapped - like picking a priority target, the coach chooses who ahead of
+## time rather than "whoever's closest" during the play. Replaces the old
+## mid-play HAND OFF/SCRAMBLE buttons, which were too fiddly to click during
+## a live play. Only one can be armed at a time (see
+## MatchSim.set_planned_handoff/set_planned_action); clicking the armed one
+## again disarms it.
 func _play_action_row() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	row.add_child(UIKit.label("PLAN", 12, UIKit.ACCENT))
 
-	var handoff_btn := UIKit.button("Hand Off", 11)
-	handoff_btn.custom_minimum_size = Vector2(0, 26)
-	handoff_btn.tooltip_text = "Automatically hand off the instant an eligible RB is close enough to the QB."
-	if sim.planned_action == "handoff":
-		handoff_btn.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
-	handoff_btn.pressed.connect(func():
-		sim.set_planned_action("handoff")
-		_refresh_bar())
-	row.add_child(handoff_btn)
+	var rbs := sim.flex_players().filter(func(f): return sim.plays_rb(f))
+	if not rbs.is_empty():
+		row.add_child(UIKit.label("Hand off to:", 11, UIKit.MUTED))
+		for f in rbs:
+			var slot: String = f.slot
+			var pd := f.data
+			var b := UIKit.button("#%d %s" % [pd.number, pd.pname], 11)
+			b.custom_minimum_size = Vector2(0, 26)
+			if sim.planned_action == "handoff" and sim.planned_handoff_slot == slot:
+				b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+			b.pressed.connect(func():
+				sim.set_planned_handoff(slot)
+				_refresh_bar())
+			row.add_child(b)
 
 	var scramble_btn := UIKit.button("Scramble", 11)
 	scramble_btn.custom_minimum_size = Vector2(0, 26)
@@ -745,9 +753,12 @@ func _live_bar() -> Control:
 	row.add_theme_constant_override("separation", 8)
 	row.add_child(UIKit.label("LIVE   ", 15, UIKit.ACCENT))
 
-	if sim.planned_action != "":
-		var plan_label := "Hand Off" if sim.planned_action == "handoff" else "Scramble"
-		row.add_child(UIKit.label("Plan: %s" % plan_label, 13, UIKit.MUTED))
+	if sim.planned_action == "handoff":
+		var target := sim.offense_slot(sim.planned_handoff_slot)
+		var name := target.data.pname if target != null else "?"
+		row.add_child(UIKit.label("Plan: Hand Off to %s" % name, 13, UIKit.MUTED))
+	elif sim.planned_action == "scramble":
+		row.add_child(UIKit.label("Plan: Scramble", 13, UIKit.MUTED))
 
 	return row
 

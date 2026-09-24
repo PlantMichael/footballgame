@@ -46,7 +46,7 @@
 		"stamina": 6,
 		"intelligence": 4,
 		"ability_id": "quick_recovery",
-		"body": "7"
+		"body": "9"
 	},
 	{
 		"name": "Dustin Johnson",
@@ -335,7 +335,7 @@
 		"stamina": 8,
 		"intelligence": 7,
 		"ability_id": "veteran_mentor",
-		"body": "7"
+		"body": "2"
 	},
 	{
 		"name": "Jared Tickler",

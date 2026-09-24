@@ -150,11 +150,16 @@ var qb_decision_timer: float = 0.0
 var qb_scrambling: bool = false
 var catch_x: float = 0.0   # field x where the last completion was caught
 
-## Armed before the snap via set_planned_action, since clicking HAND OFF/
-## SCRAMBLE mid-play was too fiddly to hit in time. "" / "handoff" /
-## "scramble" - only one at a time. Checked each frame in _qb_logic and
-## cleared for the next down in begin_drive/advance.
+## Armed before the snap via set_planned_handoff/set_planned_action, since
+## clicking HAND OFF/SCRAMBLE mid-play was too fiddly to hit in time. "" /
+## "handoff" / "scramble" - only one at a time. Checked each frame in
+## _qb_logic and cleared for the next down in begin_drive/advance.
 var planned_action: String = ""
+
+## The specific flex slot a "handoff" plan targets - picked pre-snap the same
+## way a priority target is, not "whoever's closest" during the play. Only
+## meaningful when planned_action == "handoff".
+var planned_handoff_slot: String = ""
 
 var result: Dictionary = {}
 var play_log: Array = []         # human-readable lines for the match feed
@@ -371,6 +376,7 @@ func begin_drive() -> void:
 	result = {}
 	priority_targets.clear()
 	planned_action = ""
+	planned_handoff_slot = ""
 	# Everybody catches their breath between drives.
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
@@ -1068,9 +1074,8 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 		return
 
 	if planned_action == "handoff":
-		var target := nearest_handoff_target()
-		if target != null:
-			request_handoff(target)
+		var target := offense_slot(planned_handoff_slot) if planned_handoff_slot != "" else null
+		if target != null and request_handoff(target):
 			return
 	elif planned_action == "scramble" and not qb_scrambling:
 		request_scramble()
@@ -1173,9 +1178,15 @@ func _carry_target() -> SimPlayer:
 	return null
 
 
+## True if `sp` plays RB for handoff purposes - his real position, or an
+## ability like "positionless" that counts him as one. See can_handoff_to
+## and the Hand Off target picker in match.gd.
+func plays_rb(sp: SimPlayer) -> bool:
+	return _effective_positions(sp.data).has(PlayerData.Pos.RB)
+
+
 ## True if `sp` could be handed the ball right now - the QB still has it,
-## `sp` is playing a RB (natural position or via an ability like
-## "positionless"), and he's standing close enough. Drives both a "Hand Off"
+## `sp` plays RB, and he's standing close enough. Drives both a "Hand Off"
 ## plan firing (see request_handoff) and the pulsing "eligible" ring in
 ## field_view.gd.
 func can_handoff_to(sp: SimPlayer) -> bool:
@@ -1185,40 +1196,39 @@ func can_handoff_to(sp: SimPlayer) -> bool:
 		return false
 	if sp == null or not sp.is_offense or sp == carrier:
 		return false
-	if not _effective_positions(sp.data).has(PlayerData.Pos.RB):
+	if not plays_rb(sp):
 		return false
 	return sp.pos.distance_to(carrier.pos) <= HANDOFF_RANGE
 
 
-## Arms (or, clicking the same one again, disarms) a pre-snap plan - see
-## `planned_action`. Setting one always clears the other, since the coach can
-## only call one or the other for a given play.
+## Arms (or, clicking the same target again, disarms) a "Hand Off" plan aimed
+## at one specific flex, picked before the snap the same way a priority
+## target is - see planned_handoff_slot. Always clears any armed Scramble,
+## since the coach can only call one or the other for a given play.
+func set_planned_handoff(slot: String) -> void:
+	if planned_action == "handoff" and planned_handoff_slot == slot:
+		planned_action = ""
+		planned_handoff_slot = ""
+	else:
+		planned_action = "handoff"
+		planned_handoff_slot = slot
+
+
+## Arms (or, clicking the same one again, disarms) the "Scramble" plan - see
+## `planned_action`. Always clears any armed Hand Off target.
 func set_planned_action(action: String) -> void:
-	planned_action = "" if planned_action == action else action
-
-
-## The RB a "Hand Off" plan would actually hand off to - the closest one
-## passing can_handoff_to, or null if nobody currently qualifies.
-func nearest_handoff_target() -> SimPlayer:
-	if carrier == null:
-		return null
-	var best: SimPlayer = null
-	var best_dist := 1e9
-	for f in flex_players():
-		if not can_handoff_to(f):
-			continue
-		var dist := f.pos.distance_to(carrier.pos)
-		if dist < best_dist:
-			best_dist = dist
-			best = f
-	return best
+	if planned_action == action:
+		planned_action = ""
+	else:
+		planned_action = action
+	planned_handoff_slot = ""
 
 
 ## Hands off to `sp` right now - fired automatically by a "Hand Off" plan the
-## instant a target comes into range (as opposed to a called run play's
-## automatic one - see _qb_logic/_carry_target). Returns false without effect
-## if can_handoff_to(sp) no longer holds (e.g. the RB drifted out of range
-## between frames).
+## instant its chosen target comes into range (as opposed to a called run
+## play's automatic one - see _qb_logic/_carry_target). Returns false without
+## effect if can_handoff_to(sp) no longer holds (e.g. the RB drifted out of
+## range between frames).
 func request_handoff(sp: SimPlayer) -> bool:
 	if not can_handoff_to(sp):
 		return false
@@ -2220,14 +2230,14 @@ func _check_dead() -> void:
 		_end_play({"kind": "run", "yards": yards, "timeout": true, "text": "The play is whistled dead."})
 
 
-## "Combustion"'s fuse running out - ends the play as a turnover on the spot,
-## with a bigger shake than an ordinary catch.
+## "Combustion"'s fuse running out - ends the play on the spot, same as an
+## ordinary tackle (the drive continues normally), with a bigger shake than
+## an ordinary catch.
 func _trigger_explosion(sp: SimPlayer) -> void:
 	big_shakes.append(1)
 	_end_play({
 		"kind": "explosion",
 		"yards": sp.pos.x - los,
-		"turnover": true,
 		"text": "%s COULDN'T CONTAIN THE CURSE AND EXPLODES!" % sp.data.pname,
 	})
 
@@ -2322,6 +2332,7 @@ func advance() -> Dictionary:
 	else:
 		phase = Phase.PRESNAP
 		planned_action = ""
+		planned_handoff_slot = ""
 
 	return out
 
