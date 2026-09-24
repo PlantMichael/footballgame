@@ -360,5 +360,53 @@
 		"intelligence": 8,
 		"ability_id": "drive_block",
 		"body": "6"
+	},
+	{
+		"name": "Mr Statpad",
+		"pos": "WR",
+		"quality": 1,
+		"strength": 7,
+		"agility": 7,
+		"dexterity": 7,
+		"stamina": 7,
+		"intelligence": 7,
+		"ability_id": "stat_pad",
+		"body": "5"
+	},
+	{
+		"name": "Gene Clutchman",
+		"pos": "C",
+		"quality": 4,
+		"strength": 12,
+		"agility": 9,
+		"dexterity": 6,
+		"stamina": 10,
+		"intelligence": 10,
+		"ability_id": "stat_shield",
+		"body": "1"
+	},
+	{
+		"name": "Teddy Twohands",
+		"pos": "QB",
+		"quality": 4,
+		"strength": 3,
+		"agility": 3,
+		"dexterity": 2,
+		"stamina": 4,
+		"intelligence": 3,
+		"ability_id": "twohands_aim",
+		"body": "2"
+	},
+	{
+		"name": "Piss Missleson",
+		"pos": "QB",
+		"quality": 3,
+		"strength": 5,
+		"agility": 5,
+		"dexterity": 6,
+		"stamina": 6,
+		"intelligence": 7,
+		"ability_id": "gunslinger_growth",
+		"body": "9"
 	}
 ]

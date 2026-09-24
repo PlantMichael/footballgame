@@ -50,6 +50,13 @@ var free_timer: float = 0.0     # just shed a block; briefly cannot be picked up
 var disrupted: float = 0.0      # receiver knocked off the route
 var dodge_used: bool = false    # ability_id "phantom_step": once-per-play tackle dodge
 
+## Plays' worth of decay stacked up this drive for a "decaying_stat_start"
+## ability (e.g. "stat_pad") - 0 at the start of a drive, +1 after every play.
+## MatchSim.begin_drive resets it, MatchSim.advance increments it,
+## MatchSim._apply_modifiers reads it. Meaningless for anyone without such an
+## ability.
+var stat_decay: int = 0
+
 ## Seconds this player has been the ball carrier. Reset to 0 in
 ## MatchSim._set_carrier whenever he's newly handed/thrown the ball,
 ## incremented in MatchSim._step_offense while he still has it. Only

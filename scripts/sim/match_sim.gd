@@ -380,6 +380,7 @@ func begin_drive() -> void:
 	# Everybody catches their breath between drives.
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
+		sp.stat_decay = 0
 	for sp in defense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
 	log_line("--- Drive %d of %d, ball on the %s ---" % [drive_num, total_drives, yard_line_text(los)])
@@ -588,6 +589,11 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		"stamina": pd.stamina,
 		"intelligence": pd.intelligence,
 	}
+	var decay_start := AbilityDB.decaying_stat_start(pd.ability_id)
+	if decay_start > 0:
+		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(pd.ability_id), 15)
+		for key in base:
+			base[key] = decayed
 	for key in ItemDB.stat_mods(pd.item_id):
 		base[key] = int(base[key]) + int(ItemDB.stat_mods(pd.item_id)[key])
 	for key in match_bonus_for(pd):
@@ -601,6 +607,45 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		base[key] = clampi(int(base[key]), 1, 15)
 	sp.eff = base
 	sp.fatigue_floor = AbilityDB.fatigue_floor(pd.ability_id)
+
+
+## True if the offense should be treated as running the ball for blocking
+## purposes RIGHT NOW - either an old-style scripted PlayDB run play
+## (PlayDB.is_run, only ever set by the tools/ tuning harness - the live game
+## always calls set_drawn_call, which leaves play_id "" and PlayDB.is_run
+## permanently false), or the coach's own drawn-up call: the "Hand Off"/
+## "Scramble" plan is armed for this snap (even before it's actually
+## triggered - the box has to be accounted for from the snap, not from the
+## moment the ball changes hands), the QB is already scrambling, or the
+## handoff already happened. Used for box-defender blocking assignments
+## (_is_threat) and the run-blocking push (_resolve_engagements). Deliberately
+## broader than _play_was_a_run() below - counting the ARMED plan even if it
+## never actually fires is correct here (nobody should sit unblocked just
+## because the RB never got the ball), but wrong for box-score crediting,
+## which must reflect what actually happened this play.
+func _is_run_play() -> bool:
+	return (PlayDB.is_run(play_id) or planned_action == "handoff" or planned_action == "scramble"
+		or handoff_done or qb_scrambling)
+
+
+## True if the ball was ACTUALLY run this play - a real handoff happened or
+## the QB actually scrambled, or (tuning harness only) a scripted PlayDB run
+## play. Unlike _is_run_play() above, this ignores a merely-armed Hand Off/
+## Scramble plan that never actually fired (e.g. the RB never got in range
+## before the whistle, and the QB threw it downfield instead) - crediting
+## that as a run would mislabel what was actually a completed pass. Used by
+## _tackle/_check_dead/_credit_game_stats to classify the finished play.
+func _play_was_a_run() -> bool:
+	return PlayDB.is_run(play_id) or handoff_done or qb_scrambling
+
+
+## True if anyone in the current offense (e.g. "stat_shield") stops
+## decaying_stat_start abilities like "stat_pad" from advancing this play.
+func _team_blocks_stat_loss() -> bool:
+	for sp in offense:
+		if AbilityDB.blocks_stat_loss(sp.data.ability_id):
+			return true
+	return false
 
 
 ## Penalty for lining a player up somewhere he does not belong.
@@ -1491,7 +1536,7 @@ func _is_threat(d: SimPlayer) -> bool:
 	if d.role == SimPlayer.Role.RUSH or d.role == SimPlayer.Role.PURSUE:
 		return true
 	# On a run, anybody in the box has to be accounted for at the snap.
-	if PlayDB.is_run(play_id) and (d.pos.x - los) < 9.0:
+	if _is_run_play() and (d.pos.x - los) < 9.0:
 		return true
 	# After a catch, the nearest defenders are worth blocking too.
 	if carrier != null and carrier.slot != "QB":
@@ -1695,6 +1740,8 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	if pressure != null and pressure.pos.distance_to(qb.pos) < 3.5:
 		acc += 0.7
 	acc *= lerpf(1.35, 1.0, clampf(qb.energy, 0.0, 1.0))
+	if AbilityDB.perfect_aim(qb.data.ability_id):
+		acc = 0.0
 	aim += Vector2(rng.randfn(0.0, acc), rng.randfn(0.0, acc))
 	aim.y = clampf(aim.y, -2.0, FIELD_W + 2.0)
 
@@ -1712,6 +1759,17 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	# the instant it leaves the QB's hand.
 	_trigger_pursuit()
 	log_line("%s throws to %s." % [qb.data.pname, target.data.pname])
+
+	# "Gunslinger Growth": a permanent Dexterity gain (not a per-play eff
+	# bonus - see AbilityDB.dex_per_throw_yards) based on how far downfield
+	# this throw was aimed, whether or not it's actually completed.
+	var growth_rate := AbilityDB.dex_per_throw_yards(qb.data.ability_id)
+	if growth_rate > 0.0:
+		var air_yards := maxf(0.0, aim.x - los)
+		var gain := int(floor(air_yards * growth_rate))
+		if gain > 0:
+			qb.data.add_stat("dexterity", gain)
+			_grant_stat_gain(qb, "dexterity", gain)
 
 
 func _throwaway(qb: SimPlayer) -> void:
@@ -1796,12 +1854,32 @@ func _step_defense(delta: float) -> void:
 
 
 func _rush_logic(d: SimPlayer, delta: float) -> void:
-	var target := carrier.pos if carrier != null else ball_pos
+	var target := _rush_target(d)
 	if d.engaged:
 		# Fighting through a block: heavy speed penalty until the shed roll wins.
 		d.move_toward_point(target, delta, 0.20)
 	else:
 		d.move_toward_point(target, delta, 1.0)
+
+
+## Where a rushing defender (front four, or a blitzing linebacker) is
+## currently converging on. He was bearing down on the quarterback before
+## the snap and has no special knowledge the instant the ball changes hands
+## (a handoff, a scramble) - only once his own reaction delay has actually
+## run out (the same Intelligence-scaled timer _step_defense uses to flip a
+## MAN/ZONE defender into PURSUE, reset by _trigger_pursuit and stretched by
+## a misdirection-style ability - see _apply_misdirection) does he start
+## tracking the real ball carrier instead of still crashing the mesh point.
+## Without this a defensive lineman - who is already right on top of the
+## backfield by design - retargeted onto the runner with zero delay, making
+## every handoff instantly stuffed regardless of any fake.
+func _rush_target(d: SimPlayer) -> Vector2:
+	if carrier == null:
+		return ball_pos
+	if carrier.slot == "QB" or d.reaction <= 0.0:
+		return carrier.pos
+	var qb := offense_slot("QB")
+	return qb.pos if qb != null else carrier.pos
 
 
 ## "Corruption": a cursed defender (SimPlayer.turned) closes on whichever
@@ -2068,7 +2146,7 @@ func _resolve_engagements(delta: float) -> void:
 		# outmatched line gives up a sack on nearly every drop back.
 		var push := clampf(0.35 + diff * 0.16, -0.20, 2.4)
 		# On a run the line fires out and drive blocks rather than pass sets.
-		if PlayDB.is_run(play_id):
+		if _is_run_play():
 			push += 0.40
 		d.pos += away.normalized() * push * delta
 
@@ -2186,8 +2264,8 @@ func _tackle(d: SimPlayer) -> void:
 		return
 	carrier.downed = 0.0001
 	var end_x := carrier.pos.x
-	var is_sack := carrier.slot == "QB" and not qb_scrambling and not PlayDB.is_run(play_id)
-	var kind := "sack" if is_sack else ("run" if PlayDB.is_run(play_id) or qb_scrambling else "complete")
+	var is_sack := carrier.slot == "QB" and not qb_scrambling and not _play_was_a_run()
+	var kind := "sack" if is_sack else ("run" if _play_was_a_run() else "complete")
 	var text := "%s is tackled by %s." % [carrier.data.pname, d.data.pname]
 	if is_sack:
 		text = "SACK! %s gets to %s." % [d.data.pname, carrier.data.pname]
@@ -2210,7 +2288,7 @@ func _check_dead() -> void:
 			return
 		if carrier.pos.y <= 0.3 or carrier.pos.y >= FIELD_W - 0.3:
 			_end_play({
-				"kind": "run" if PlayDB.is_run(play_id) else "complete",
+				"kind": "run" if _play_was_a_run() else "complete",
 				"yards": carrier.pos.x - los,
 				"text": "%s steps out of bounds." % carrier.data.pname,
 			})
@@ -2299,6 +2377,11 @@ func log_line(text: String) -> void:
 func advance() -> Dictionary:
 	if phase != Phase.DEAD:
 		return {"drive_over": false, "reason": "", "match_over": false}
+
+	if not _team_blocks_stat_loss():
+		for sp in offense:
+			if AbilityDB.decaying_stat_start(sp.data.ability_id) > 0:
+				sp.stat_decay += 1
 
 	var out := {"drive_over": false, "reason": "", "match_over": false}
 

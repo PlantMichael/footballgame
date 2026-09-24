@@ -32,6 +32,13 @@ var losses: int = 0
 const MATCH_QUALITY_STEP := 0.15
 var matches_played: int = 0
 
+## How many times the Ritual Site has been used this run. The sacrifice cost
+## escalates with it (see RitualSite.SACRIFICE_COUNT) - 2 players the first
+## visit, 3 the next, and so on - so repeat trips for cursed players cost
+## progressively more of the roster instead of staying a flat, repeatable
+## trade.
+var rituals_completed: int = 0
+
 var rng := RandomNumberGenerator.new()
 
 var team_name: String = "Your Team"
@@ -107,6 +114,7 @@ func new_run(seed_value: int = 0, qb_id: int = -1) -> void:
 	round_index = 0
 	losses = 0
 	matches_played = 0
+	rituals_completed = 0
 	run_active = true
 	last_result = {}
 	_build_bracket()
@@ -133,6 +141,7 @@ func start_dev_mode() -> void:
 	round_index = 0
 	losses = 0
 	matches_played = 0
+	rituals_completed = 0
 	run_active = true
 	last_result = {}
 	bracket = [{

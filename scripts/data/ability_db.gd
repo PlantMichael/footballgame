@@ -92,6 +92,23 @@ extends RefCounted
 ##                            other player on the field is stunned for 1 second and the
 ##                            screen does one big multi-directional shake.
 ##                            MatchSim._resolve_catch.
+##   decaying_stat_start()  -> int, default 0. Nonzero means this player's 5 stats are
+##                            pinned to this value at the start of each drive and knocked
+##                            down by 1 (all 5 at once) after every play instead of using
+##                            his card stats - see SimPlayer.stat_decay, MatchSim.begin_drive/
+##                            advance/_apply_modifiers.
+##   decaying_stat_floor()  -> int, default 1. Floor the above decay stops at.
+##   blocks_stat_loss()     -> bool, default false. While this player is on the field, no
+##                            offensive stat decay (decaying_stat_start above) advances for
+##                            anyone on the team - MatchSim._team_blocks_stat_loss.
+##   perfect_aim()          -> bool, default false. As a passer, every throw lands exactly
+##                            on his intended target - the usual accuracy noise from his
+##                            stats, pressure, and fatigue never gets added. MatchSim._throw.
+##   dex_per_throw_yards()  -> float, default 0.0. As a passer, permanently gains this many
+##                            Dexterity per air yard on every throw (floored), forever -
+##                            mutates PlayerData.dexterity directly rather than a per-play
+##                            eff bonus, since it's meant to persist match to match.
+##                            MatchSim._throw.
 ##
 ## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
 ## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
@@ -379,6 +396,27 @@ const ABILITIES := {
 		"desc": "When receiving the ball, triggers an earthquake that stuns every other player on the field for 1 second.",
 		"earthquake_on_catch": Callable(AbilityDB, "_earthquake_on_catch_aftershock"),
 	},
+	"stat_pad": {
+		"name": "Stat Pad",
+		"desc": "Starts every drive at 7 in every stat, then loses 1 in every stat after each play, down to a floor of 2.",
+		"decaying_stat_start": Callable(AbilityDB, "_decaying_stat_start_stat_pad"),
+		"decaying_stat_floor": Callable(AbilityDB, "_decaying_stat_floor_stat_pad"),
+	},
+	"stat_shield": {
+		"name": "Stat Shield",
+		"desc": "No player on your team can lose stats - they can still gain them.",
+		"blocks_stat_loss": Callable(AbilityDB, "_blocks_stat_loss_stat_shield"),
+	},
+	"twohands_aim": {
+		"name": "Twohands Aim",
+		"desc": "Every throw is pinpoint accurate, whatever the rest of his stat line says.",
+		"perfect_aim": Callable(AbilityDB, "_perfect_aim_twohands_aim"),
+	},
+	"gunslinger_growth": {
+		"name": "Gunslinger Growth",
+		"desc": "Permanently gains 1 Dexterity for every 10 air yards he throws.",
+		"dex_per_throw_yards": Callable(AbilityDB, "_dex_per_throw_yards_gunslinger_growth"),
+	},
 }
 
 
@@ -581,6 +619,37 @@ static func curses_nearest_defender(id: String) -> bool:
 ## instant this player catches a pass.
 static func earthquake_on_catch(id: String) -> bool:
 	return _dispatch(id, "earthquake_on_catch", [], false)
+
+
+## Nonzero means this player's 5 stats are pinned to this value at the start
+## of each drive and decay by 1 (all 5 at once) after every play instead of
+## using his card stats, down to decaying_stat_floor(). 0 means no decay.
+static func decaying_stat_start(id: String) -> int:
+	return _dispatch(id, "decaying_stat_start", [], 0)
+
+
+## Floor the decay above stops at, default 1 (irrelevant when
+## decaying_stat_start() is 0).
+static func decaying_stat_floor(id: String) -> int:
+	return _dispatch(id, "decaying_stat_floor", [], 1)
+
+
+## True if this player's presence on the field stops any offensive stat
+## decay (see decaying_stat_start) from advancing for the whole team.
+static func blocks_stat_loss(id: String) -> bool:
+	return _dispatch(id, "blocks_stat_loss", [], false)
+
+
+## True if, as a passer, this player's throws never get the usual random
+## accuracy noise - the ball always lands exactly where he aimed it.
+static func perfect_aim(id: String) -> bool:
+	return _dispatch(id, "perfect_aim", [], false)
+
+
+## As a passer, Dexterity permanently gained per air yard thrown, default 0.0
+## (no growth). E.g. 0.1 means +1 Dexterity every 10 air yards.
+static func dex_per_throw_yards(id: String) -> float:
+	return _dispatch(id, "dex_per_throw_yards", [], 0.0)
 
 
 # ============================================================================
@@ -865,3 +934,23 @@ static func _curses_nearest_defender_corruption() -> bool:
 
 static func _earthquake_on_catch_aftershock() -> bool:
 	return true
+
+
+static func _decaying_stat_start_stat_pad() -> int:
+	return 7
+
+
+static func _decaying_stat_floor_stat_pad() -> int:
+	return 2
+
+
+static func _blocks_stat_loss_stat_shield() -> bool:
+	return true
+
+
+static func _perfect_aim_twohands_aim() -> bool:
+	return true
+
+
+static func _dex_per_throw_yards_gunslinger_growth() -> float:
+	return 0.1

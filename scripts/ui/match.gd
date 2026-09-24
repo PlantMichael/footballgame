@@ -262,7 +262,6 @@ func _process(delta: float) -> void:
 	if sim.phase == MatchSim.Phase.DEAD:
 		bucks_earned += int(sim.result.get("bucks", 0))
 		_last_phase = sim.phase
-		field.trigger_zoom_pulse()
 		_refresh_bar()
 
 
@@ -640,12 +639,12 @@ func _play_action_row() -> Control:
 	row.add_theme_constant_override("separation", 6)
 	row.add_child(UIKit.label("PLAN", 12, UIKit.ACCENT))
 
-	var rbs := sim.flex_players().filter(func(f): return sim.plays_rb(f))
+	var rbs: Array[SimPlayer] = sim.flex_players().filter(func(f): return sim.plays_rb(f))
 	if not rbs.is_empty():
 		row.add_child(UIKit.label("Hand off to:", 11, UIKit.MUTED))
-		for f in rbs:
+		for f: SimPlayer in rbs:
 			var slot: String = f.slot
-			var pd := f.data
+			var pd: PlayerData = f.data
 			var b := UIKit.button("#%d %s" % [pd.number, pd.pname], 11)
 			b.custom_minimum_size = Vector2(0, 26)
 			if sim.planned_action == "handoff" and sim.planned_handoff_slot == slot:
@@ -743,6 +742,7 @@ func _on_snap() -> void:
 	_dismiss_overlays()
 	field.cancel_stroke()
 	sim.snap()
+	field.snap_camera()
 	field.trigger_zoom_pulse()
 	_refresh_bar()
 
@@ -809,6 +809,7 @@ func _on_continue() -> void:
 			return
 	else:
 		_apply_call()
+		field.snap_camera()
 	_refresh_bar()
 
 
