@@ -65,6 +65,18 @@ extends RefCounted
 ##                            single highest-Strength non-lineman defender rather than
 ##                            whichever rusher the normal per-frame assignment would give him.
 ##                            MatchSim._align_offense / _assign_blocks / _pick_dedicated_target.
+##   right_side_buff()      -> Dictionary {"stat": String, "amount": int, "count": int},
+##                            default {}. The `count` flex players aligned furthest to the
+##                            formation's right get the stat bonus, not just the ability
+##                            holder (who is usually a lineman, not a flex, himself).
+##                            MatchSim._apply_alignment_buffs.
+##   tier_buff()            -> Dictionary {"qualities": Array[int] (ShopPlayerDB.QUALITY_*),
+##                            "amount": int}, default {}. Every teammate whose shop rarity
+##                            tier is in `qualities` gets +amount to every stat - generated
+##                            (non-shop) players have quality 0 and never match.
+##                            MatchSim._apply_tier_buffs.
+##   pushes_defense_at_snap() -> float, default 0.0. The whole defense lines up this many
+##                            extra yards back from the LOS at the snap. MatchSim._align_defense.
 ##
 ## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
 ## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
@@ -288,7 +300,7 @@ const ABILITIES := {
 	},
 	"cloaked_route": {
 		"name": "Cloaked Route",
-		"desc": "For the first 3 seconds of the play, his man defender doesn't react to him at all.",
+		"desc": "For the first 2 seconds of the play, his man defender doesn't react to him at all.",
 		"cloak_seconds": Callable(AbilityDB, "_cloak_seconds_cloaked_route"),
 	},
 	"decoy": {
@@ -310,6 +322,26 @@ const ABILITIES := {
 		"name": "Enforcer",
 		"desc": "Never runs a route or takes a handoff. Locks onto the strongest non-lineman defender all game and blocks him alone.",
 		"dedicated_blocker": Callable(AbilityDB, "_dedicated_blocker_enforcer"),
+	},
+	"right_side_coach": {
+		"name": "Right Side Coach",
+		"desc": "The 2 flex players aligned furthest right get +2 Dexterity.",
+		"right_side_buff": Callable(AbilityDB, "_right_side_buff_right_side_coach"),
+	},
+	"tackle_pride": {
+		"name": "Tackle Pride",
+		"desc": "+1 Strength to every other Tackle on the field.",
+		"team_buff": Callable(AbilityDB, "_team_buff_tackle_pride"),
+	},
+	"veteran_mentor": {
+		"name": "Veteran Mentor",
+		"desc": "+1 to every stat for every Rookie or Sophomore-tier signed player on the field.",
+		"tier_buff": Callable(AbilityDB, "_tier_buff_veteran_mentor"),
+	},
+	"drive_block": {
+		"name": "Drive Block",
+		"desc": "At the snap, the whole defense lines up 5 extra yards off the ball.",
+		"pushes_defense_at_snap": Callable(AbilityDB, "_pushes_defense_at_snap_drive_block"),
 	},
 }
 
@@ -466,6 +498,23 @@ static func counts_as_positions(id: String) -> Array:
 ## locked for the whole play onto the strongest non-lineman defender.
 static func dedicated_blocker(id: String) -> bool:
 	return _dispatch(id, "dedicated_blocker", [], false)
+
+
+## {"stat": String, "amount": int, "count": int} buff for the `count` flex
+## players aligned furthest right, default {}.
+static func right_side_buff(id: String) -> Dictionary:
+	return _dispatch(id, "right_side_buff", [], {})
+
+
+## {"qualities": Array[int], "amount": int} buff for every teammate whose
+## shop rarity tier (PlayerData.quality) is in `qualities`, default {}.
+static func tier_buff(id: String) -> Dictionary:
+	return _dispatch(id, "tier_buff", [], {})
+
+
+## Extra yards the whole defense lines up off the ball at the snap, default 0.0.
+static func pushes_defense_at_snap(id: String) -> float:
+	return _dispatch(id, "pushes_defense_at_snap", [], 0.0)
 
 
 # ============================================================================
@@ -695,7 +744,7 @@ static func _on_carry_bonus_instant_burst() -> Dictionary:
 
 
 static func _cloak_seconds_cloaked_route() -> float:
-	return 3.0
+	return 2.0
 
 
 static func _taunts_defenders_decoy() -> bool:
@@ -714,3 +763,19 @@ static func _snap_bowl_jitters(_p: PlayerData, ctx: Dictionary) -> Dictionary:
 
 static func _dedicated_blocker_enforcer() -> bool:
 	return true
+
+
+static func _right_side_buff_right_side_coach() -> Dictionary:
+	return {"stat": "dexterity", "amount": 2, "count": 2}
+
+
+static func _team_buff_tackle_pride() -> Dictionary:
+	return {"pos": PlayerData.Pos.T, "stat": "strength", "amount": 1}
+
+
+static func _tier_buff_veteran_mentor() -> Dictionary:
+	return {"qualities": [ShopPlayerDB.QUALITY_ROOKIE, ShopPlayerDB.QUALITY_SOPHOMORE], "amount": 1}
+
+
+static func _pushes_defense_at_snap_drive_block() -> float:
+	return 5.0

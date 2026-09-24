@@ -22,11 +22,17 @@ Part 2
 
 I want to add these players
 
-Mr. Worldwide - All Star wr
-Ability: This player counts as a rb, te, and wr
+Travis Buckler Sophomore T
+Ability: the 2 flex spots on the right gain +2 dex
 
-Gustavo Choker - Sophomore wr
-Ability: Have + 3 to all stats while not playing in a Bowl game.
+Roger Ricardo Rookie T
+Ability: Give all other tackles +1 strength
 
-Manuel Fern - Veteran RB
-Ability: Cannot be thrown the ball and cannot run routes. Picks the highest strength non-lineman defender and tackles him. 
+Muhammed Yonkers Veteran T
+Give all Rookies and Sophomores +1 to all stats 
+
+Jared Tickler Sophomore C
+Ability: Give your QB +3 INT
+
+Bo Dinkler All star T
+Ability: At the start of the play, push all enemy players 5 yards away

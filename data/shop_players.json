@@ -298,5 +298,65 @@
 		"intelligence": 6,
 		"ability_id": "enforcer",
 		"body": "2"
+	},
+	{
+		"name": "Travis Buckler",
+		"pos": "T",
+		"quality": 2,
+		"strength": 6,
+		"agility": 4,
+		"dexterity": 4,
+		"stamina": 6,
+		"intelligence": 5,
+		"ability_id": "right_side_coach",
+		"body": "3"
+	},
+	{
+		"name": "Roger Ricardo",
+		"pos": "T",
+		"quality": 1,
+		"strength": 4,
+		"agility": 2,
+		"dexterity": 2,
+		"stamina": 4,
+		"intelligence": 3,
+		"ability_id": "tackle_pride",
+		"body": "5"
+	},
+	{
+		"name": "Muhammed Yonkers",
+		"pos": "T",
+		"quality": 3,
+		"strength": 10,
+		"agility": 6,
+		"dexterity": 6,
+		"stamina": 8,
+		"intelligence": 7,
+		"ability_id": "veteran_mentor",
+		"body": "7"
+	},
+	{
+		"name": "Jared Tickler",
+		"pos": "C",
+		"quality": 2,
+		"strength": 5,
+		"agility": 4,
+		"dexterity": 3,
+		"stamina": 5,
+		"intelligence": 6,
+		"ability_id": "qb_whisperer",
+		"body": "4"
+	},
+	{
+		"name": "Bo Dinkler",
+		"pos": "T",
+		"quality": 4,
+		"strength": 13,
+		"agility": 8,
+		"dexterity": 7,
+		"stamina": 10,
+		"intelligence": 8,
+		"ability_id": "drive_block",
+		"body": "6"
 	}
 ]

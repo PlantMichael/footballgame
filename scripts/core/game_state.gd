@@ -192,27 +192,73 @@ func current_opponent() -> Dictionary:
 
 
 ## The opponent quality to actually build a match's defense with: the
-## round's base quality plus a step for every match already played this run.
+## round's base quality, plus a step for every match already played this
+## run, plus a bump if the coach's own roster has outpaced that ramp (see
+## _difficulty_overshoot) - a stacked lineup keeps facing a defense sized to
+## match it instead of stomping whatever round-based quality was expected of
+## a rookie roster at this point in the run.
+const ROSTER_OVERSHOOT_WEIGHT := 0.6
+
 func current_match_quality() -> float:
-	return float(current_opponent().get("quality", 3.0)) + float(matches_played) * MATCH_QUALITY_STEP
+	var base := float(current_opponent().get("quality", 3.0)) + float(matches_played) * MATCH_QUALITY_STEP
+	return base + _difficulty_overshoot() * ROSTER_OVERSHOOT_WEIGHT
+
+
+## Average PlayerData.overall() of the 11 starters, on the same rough 1-15
+## scale as the "quality" knob Generator builds a defense from. 0.0 if the
+## lineup isn't even filled out yet.
+func roster_overall() -> float:
+	var total := 0
+	var counted := 0
+	for slot in SLOT_ORDER:
+		var p := player_at(slot)
+		if p != null:
+			total += p.overall()
+			counted += 1
+	if counted == 0:
+		return 0.0
+	return float(total) / float(counted)
+
+
+## How far the roster's actual strength has pulled ahead of the round's own
+## base quality ramp - 0 for a roster that's still on curve (rookies, or
+## just keeping pace round to round), positive once a signing outpaces it.
+## Drives both current_match_quality and aura_count.
+func _difficulty_overshoot() -> float:
+	var base := float(current_opponent().get("quality", ROUND_ONE_QUALITY))
+	return maxf(0.0, roster_overall() - base)
 
 
 func is_run_over() -> bool:
 	return round_index >= bracket.size()
 
 
-## Odds that a single defender on the opposing unit spawns with a colored
-## aura (AuraDB) this match - climbs with how deep into the run you are.
-## Dev mode gets a flat, high odds instead so every aura is actually
+## How many defenders spawn with a colored aura (AuraDB) this match. The
+## base chance for the first climbs with how deep into the run you are;
+## each additional one on top of that is driven purely by the roster
+## overshoot, so a coach who stomps early with a stacked lineup runs into
+## two or three buffed defenders instead of the usual at-most-one. Dev mode
+## gets a flat, high odds at exactly one instead, so every aura stays
 ## reachable without grinding a real run deep.
 const AURA_CHANCE_BASE := 0.05
 const AURA_CHANCE_PER_MATCH := 0.045
 const AURA_CHANCE_MAX := 0.65
+const AURA_OVERSHOOT_PER_POINT := 0.03
+const MAX_AURAS := 3
 
-func aura_chance() -> float:
+func aura_count(rng_src: RandomNumberGenerator) -> int:
 	if dev_mode:
-		return DEV_AURA_CHANCE
-	return clampf(AURA_CHANCE_BASE + float(matches_played) * AURA_CHANCE_PER_MATCH, 0.0, AURA_CHANCE_MAX)
+		return 1 if rng_src.randf() < DEV_AURA_CHANCE else 0
+	var chance := clampf(
+		AURA_CHANCE_BASE + float(matches_played) * AURA_CHANCE_PER_MATCH
+			+ _difficulty_overshoot() * AURA_OVERSHOOT_PER_POINT,
+		0.0, AURA_CHANCE_MAX)
+	var count := 0
+	for i in MAX_AURAS:
+		if rng_src.randf() < chance:
+			count += 1
+		chance *= 0.5   # each additional aura is noticeably less likely than the last
+	return count
 
 
 # --- Bowl path choices -------------------------------------------------------

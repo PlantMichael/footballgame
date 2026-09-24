@@ -49,6 +49,10 @@ const PANIC_DIST := 2.2
 ## real liability and a mobile one is worth paying for.
 const SCRAMBLE_AGILITY := 9
 
+## How close a flex playing RB has to be to the QB for the coach to hand him
+## the ball mid-play by clicking him - see can_handoff_to/request_handoff.
+const HANDOFF_RANGE := 3.5
+
 ## How much downfield a remaining waypoint has to be worth before a fresh
 ## ball carrier bothers running to it, and how close he has to get to call it
 ## reached. See _carry_route_logic.
@@ -199,7 +203,7 @@ func _build_defense() -> void:
 ## immediately instead of only after the next snap.
 func regenerate_defense(rng_src: RandomNumberGenerator, quality: float) -> void:
 	opponent_quality = quality
-	_roster_defense = Generator.make_defense(rng_src, quality, GameState.aura_chance())
+	_roster_defense = Generator.make_defense(rng_src, quality, GameState.aura_count(rng_src))
 	_build_defense()
 	if not play.is_empty():
 		_align_defense()
@@ -671,6 +675,50 @@ func _align_offense() -> void:
 		_out_of_position_penalty(offense_slot("F%d" % i), str(slot_pos[i]))
 
 	_apply_team_buffs()
+	_apply_alignment_buffs()
+	_apply_tier_buffs()
+
+
+## "Right Side Coach"-style abilities (AbilityDB.right_side_buff): buffs the
+## `count` flex players aligned furthest to the formation's right (largest
+## lateral offset), regardless of who's actually holding the ability - he's
+## usually a lineman, not a flex, coaching up whoever lines up out there.
+func _apply_alignment_buffs() -> void:
+	var source: SimPlayer = null
+	for sp in offense:
+		if not AbilityDB.right_side_buff(sp.data.ability_id).is_empty():
+			source = sp
+			break
+	if source == null:
+		return
+	var buff := AbilityDB.right_side_buff(source.data.ability_id)
+	var stat: String = String(buff.get("stat", ""))
+	var amount: int = int(buff.get("amount", 0))
+	var count: int = int(buff.get("count", 0))
+	if stat == "" or amount == 0 or count <= 0:
+		return
+	var flexes := flex_players()
+	flexes.sort_custom(func(a: SimPlayer, b: SimPlayer) -> bool: return a.target_pos.y > b.target_pos.y)
+	for i in mini(count, flexes.size()):
+		var f: SimPlayer = flexes[i]
+		f.eff[stat] = clampi(f.stat(stat) + amount, 1, 15)
+
+
+## "Veteran Mentor"-style abilities (AbilityDB.tier_buff): +amount to every
+## stat for any teammate whose shop rarity tier is in the ability's list.
+## Generated (non-shop) players are always quality 0 and never match.
+func _apply_tier_buffs() -> void:
+	for sp in offense:
+		var buff := AbilityDB.tier_buff(sp.data.ability_id)
+		if buff.is_empty():
+			continue
+		var qualities: Array = buff.get("qualities", [])
+		var amount: int = int(buff.get("amount", 0))
+		for other in offense:
+			if other == sp or not qualities.has(other.data.quality):
+				continue
+			for stat in ["strength", "agility", "dexterity", "stamina", "intelligence"]:
+				other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
 
 
 ## Some abilities (e.g. a Center's "give all TEs +2 Int") buff every
@@ -778,6 +826,23 @@ func _align_defense() -> void:
 
 	_apply_distraction()
 	_apply_taunt()
+	_apply_snap_push()
+
+
+## "Drive Block"-style abilities (AbilityDB.pushes_defense_at_snap): shoves
+## every defender's presnap starting spot back this many yards. Only their
+## starting point moves - man coverage recomputes off the receiver's actual
+## position the instant the ball's live, so the cushion this buys erodes
+## over the play exactly like a real off-the-ball push would, rather than
+## permanently deepening anyone's zone.
+func _apply_snap_push() -> void:
+	var push := 0.0
+	for sp in offense:
+		push = maxf(push, AbilityDB.pushes_defense_at_snap(sp.data.ability_id))
+	if push <= 0.0:
+		return
+	for d in defense:
+		d.target_pos.x = minf(d.target_pos.x + push, FIELD_LEN - 1.0)
 
 
 ## Any offensive player with distracts_defenders pulls the two defenders
@@ -1041,6 +1106,34 @@ func _carry_target() -> SimPlayer:
 		if f.role == SimPlayer.Role.CARRY:
 			return f
 	return null
+
+
+## True if the coach could hand the ball off to `sp` right now by clicking
+## him - the QB still has it, `sp` is playing a RB (natural position or via
+## an ability like "positionless"), and he's standing close enough. Checked
+## both by field_view.gd (to route the click here instead of the inspect
+## card) and by request_handoff itself.
+func can_handoff_to(sp: SimPlayer) -> bool:
+	if phase != Phase.LIVE or handoff_done:
+		return false
+	if carrier == null or carrier.slot != "QB" or not carrier.has_ball:
+		return false
+	if sp == null or not sp.is_offense or sp == carrier:
+		return false
+	if not _effective_positions(sp.data).has(PlayerData.Pos.RB):
+		return false
+	return sp.pos.distance_to(carrier.pos) <= HANDOFF_RANGE
+
+
+## Coach-triggered handoff (as opposed to a called run play's automatic
+## one - see _qb_logic/_carry_target). Returns false without effect if
+## can_handoff_to(sp) no longer holds (e.g. the RB drifted out of range
+## between the click and this call).
+func request_handoff(sp: SimPlayer) -> bool:
+	if not can_handoff_to(sp):
+		return false
+	_do_handoff(carrier, sp)
+	return true
 
 
 func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:

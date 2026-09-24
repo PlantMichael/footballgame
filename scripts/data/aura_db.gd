@@ -1,9 +1,11 @@
 class_name AuraDB
 extends RefCounted
 
-## Difficulty-scaled defender auras (see GameState.aura_chance and
-## Generator.make_defense). At most one defender per match spawns with one of
-## these, colored so he stands out on the field (see field_view.gd).
+## Difficulty-scaled defender auras (see GameState.aura_count and
+## Generator.make_defense). Usually zero or one defender per match spawns
+## with one of these, occasionally more if the roster has outpaced the
+## round's difficulty ramp - each one colored so he stands out on the field
+## (see field_view.gd).
 ##
 ## Unlike AbilityDB, this isn't a generic hook registry - each aura is a single
 ## one-off behavior wired directly at its call site in match_sim.gd/sim_player.gd

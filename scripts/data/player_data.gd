@@ -21,7 +21,7 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 @export var ability_id: String = ""
 @export var item_id: String = ""
 
-## Difficulty-scaled defender special power (see AuraDB, GameState.aura_chance).
+## Difficulty-scaled defender special power (see AuraDB, GameState.aura_count).
 ## Only ever set on generated opposing defenders, never on the player's roster.
 @export var aura_id: String = ""
 

@@ -10,6 +10,10 @@ extends Control
 signal player_clicked(sp: SimPlayer)
 signal field_clicked()
 
+## Clicking an eligible nearby RB while the QB still has the ball, mid-play -
+## see MatchSim.can_handoff_to. Takes priority over the plain inspect click.
+signal handoff_requested(sp: SimPlayer)
+
 ## Emitted when the coach finishes a chalk stroke on a flex player. `route`
 ## is waypoints in yards RELATIVE to that player's alignment, already
 ## simplified and truncated to the budget - i.e. ready to hand straight to
@@ -308,9 +312,15 @@ func _handle_pan_keys(delta: float) -> void:
 
 
 func _recompute_transform() -> void:
-	_scale = minf(size.x / YW, size.y / MIN_VERT_YARDS) * _zoom
-	_visible_yards = size.y / _scale
-	_center = Vector2(size.x * 0.5, (size.y - bottom_inset) * 0.5)
+	# Base the scale/visible-yards budget on the height actually visible
+	# above the bottom bar, not the whole control - otherwise the clamp in
+	# _clamp_camera lets the camera sit closer to midfield than the visible
+	# area can really show, cutting the far (downfield/endzone) half of the
+	# screen short of the true goal line by about bottom_inset worth of yards.
+	var usable_h := maxf(size.y - bottom_inset, 1.0)
+	_scale = minf(size.x / YW, usable_h / MIN_VERT_YARDS) * _zoom
+	_visible_yards = usable_h / _scale
+	_center = Vector2(size.x * 0.5, usable_h * 0.5)
 
 
 ## Field yards (downfield, lateral) -> screen pixels.
@@ -372,6 +382,10 @@ func _gui_input(event: InputEvent) -> void:
 		# _finish_stroke), so inspecting and drawing share one gesture.
 		if hit != null and draw_enabled and hit.is_offense and hit.slot.begins_with("F") 				and sim.phase == MatchSim.Phase.PRESNAP:
 			_begin_stroke(hit)
+			return
+
+		if hit != null and sim.phase == MatchSim.Phase.LIVE and sim.can_handoff_to(hit):
+			handoff_requested.emit(hit)
 			return
 
 		if hit != null:
@@ -775,12 +789,28 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 
 	draw_circle(center + Vector2(2, 4), r * lerpf(0.92, 0.78, fall), Color(0, 0, 0, 0.16))
 
-	# Aura'd defenders (see AuraDB/GameState.aura_chance) get a pulsing colored
+	# Aura'd defenders (see AuraDB/GameState.aura_count) get a pulsing colored
 	# ring so the "colored enemy" reads at a glance on the field.
 	if not sp.is_offense and sp.data.aura_id != "" and fall <= 0.0:
 		var aura_col := AuraDB.aura_color(sp.data.aura_id)
 		var pulse := 0.08 * sin(Time.get_ticks_msec() * 0.006)
 		draw_arc(center, r * (1.32 + pulse), 0, TAU, 30, aura_col, 3.0)
+
+	# A RB close enough to take a live handoff (see MatchSim.can_handoff_to)
+	# gets his own pulsing ring so clicking him to hand it off is discoverable
+	# instead of a hidden gesture.
+	if sp.is_offense and fall <= 0.0 and sim.phase == MatchSim.Phase.LIVE and sim.can_handoff_to(sp):
+		var pulse2 := 0.08 * sin(Time.get_ticks_msec() * 0.008)
+		draw_arc(center, r * (1.32 + pulse2), 0, TAU, 30, UIKit.GOOD, 3.0)
+
+	# A receiver whose man defender is still ignoring him (e.g. "Cloaked
+	# Route") gets his own ring for as long as that lasts, so the effect
+	# reads as something actually happening rather than an invisible number.
+	if sp.is_offense and fall <= 0.0 and sim.phase == MatchSim.Phase.LIVE:
+		var cloak_dur := AbilityDB.cloak_seconds(sp.data.ability_id)
+		if cloak_dur > 0.0 and sim.time < cloak_dur:
+			var pulse3 := 0.08 * sin(Time.get_ticks_msec() * 0.01)
+			draw_arc(center, r * (1.32 + pulse3), 0, TAU, 30, Color("bfe9ff"), 3.0)
 
 	var facing := _facing_view(sp)
 	var view_name: String = facing[0]

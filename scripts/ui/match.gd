@@ -66,7 +66,7 @@ func _start_match() -> void:
 	sim = MatchSim.new()
 	sim.setup(
 		GameState.starters(),
-		Generator.make_defense(GameState.rng, quality, GameState.aura_chance()),
+		Generator.make_defense(GameState.rng, quality, GameState.aura_count(GameState.rng)),
 		quality,
 		String(opp.get("name", "Opponent")),
 		int(opp.get("drives", 4))
@@ -88,6 +88,7 @@ func _build_layout() -> void:
 	field.player_clicked.connect(_on_player_clicked)
 	field.field_clicked.connect(_dismiss_overlays)
 	field.route_drawn.connect(_on_route_drawn)
+	field.handoff_requested.connect(_on_handoff_requested)
 	field.bottom_inset = float(BAR_TALL)
 	add_child(field)
 	field.snap_camera()
@@ -311,8 +312,14 @@ func _refresh_bar() -> void:
 		field.cancel_stroke()
 
 	var tall := sim.phase != MatchSim.Phase.LIVE
-	play_bar.offset_top = -float(BAR_TALL if tall else BAR_SHORT)
-	side_panel.offset_bottom = -float(BAR_TALL if tall else BAR_SHORT)
+	var bar_height := float(BAR_TALL if tall else BAR_SHORT)
+	play_bar.offset_top = -bar_height
+	side_panel.offset_bottom = -bar_height
+	# The camera centers on what's actually visible above the bar, not the
+	# whole control - keep it in sync with the bar's real height (it shrinks
+	# during LIVE) or a deep play's downfield half gets clipped short of the
+	# true goal line. See field_view.gd's _recompute_transform/_clamp_camera.
+	field.bottom_inset = bar_height
 	for side in ["left", "right"]:
 		bar_host.add_theme_constant_override("margin_" + side, 8)
 	bar_host.add_theme_constant_override("margin_top", 4)
@@ -723,10 +730,13 @@ func _on_continue() -> void:
 	var outcome := sim.advance()
 	if outcome["drive_over"]:
 		opponent_note = ""
-		if sim.drive_num < sim.total_drives:
+		var more_drives_left := sim.drive_num < sim.total_drives
+		if more_drives_left:
 			opponent_note = sim.sim_opponent_drive()
 			sim.log_line(opponent_note)
-		if scored:
+		# No point handing out a per-game upgrade for a drive that was the
+		# match's last - there's no more of the game left for it to matter in.
+		if scored and more_drives_left:
 			_start_upgrade_choice()
 			return
 	else:
@@ -920,6 +930,13 @@ func _on_player_clicked(sp: SimPlayer) -> void:
 	_show_card(sp)
 
 
+## The coach clicked a RB standing close enough to the QB, mid-play, to
+## take a handoff - see field_view.gd's handoff_requested / MatchSim.
+## can_handoff_to.
+func _on_handoff_requested(sp: SimPlayer) -> void:
+	sim.request_handoff(sp)
+
+
 func _dismiss_overlays() -> void:
 	card.visible = false
 	side_panel.visible = false
@@ -1091,6 +1108,15 @@ func _show_card(sp: SimPlayer) -> void:
 		ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		ab.custom_minimum_size = Vector2(300, 0)
 		v.add_child(ab)
+
+	if pd.aura_id != "":
+		v.add_child(UIKit.vsep(2))
+		var aura_col := AuraDB.aura_color(pd.aura_id)
+		v.add_child(UIKit.label("%s AURA" % AuraDB.aura_name(pd.aura_id).to_upper(), 13, aura_col))
+		var aura_desc := UIKit.label(AuraDB.aura_desc(pd.aura_id), 12, Color("9fc0b2"))
+		aura_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		aura_desc.custom_minimum_size = Vector2(300, 0)
+		v.add_child(aura_desc)
 
 	if pd.item_id != "":
 		v.add_child(UIKit.label("Item: %s" % ItemDB.item_name(pd.item_id), 12, UIKit.ACCENT))

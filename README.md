@@ -314,13 +314,20 @@ defense wins comfortably, an even matchup wins roughly 40%.
   The bonus fades to exactly 0 by 7 yards and stays there; normal-to-deep
   routes are untouched, since completion rates were already balanced around
   those and QB accuracy already makes long throws harder on its own.
-- **Defenses get tougher with every match played, not just every round.**
+- **Defenses get tougher with every match played, not just every round -
+  and with how strong your own roster actually is.**
   `GameState.current_match_quality()` adds `MATCH_QUALITY_STEP` (0.15) per
   match already played this run - wins and retried losses alike - on top of
   the round's base quality, and both the actual defenders (`Generator.make_defense`)
   and the pre-kickoff difficulty rating in the hub read it. Grinding out
   extra attempts at a round after a loss doesn't leave it exactly as easy
-  as it was the first time.
+  as it was the first time. On top of that, `_difficulty_overshoot()` compares
+  the round's base quality against `roster_overall()` (the 11 starters'
+  average `PlayerData.overall()`) and feeds however far the roster is ahead
+  of that curve into both the defenders' quality and `aura_count()` - so
+  landing an All Star well ahead of schedule gets you a defense (and
+  possibly more than one aura'd defender) sized to that roster, not to the
+  round you happen to be on.
 - **Mid-play stat gains pop up next to the player** (`SimPlayer.pending_stat_gains`,
   `field_view.gd`'s `_advance_pops`/`_draw_stat_pops`). An ability that changes a
   stat *during* a live play - `MatchSim._set_carrier` on a handoff/catch,
