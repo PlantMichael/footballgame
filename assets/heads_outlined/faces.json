@@ -1,35 +1,59 @@
 {
-	"headforward": [
+	"amillionbuggsback": [
+		257.4,
+		133.4,
+		494.7,
+		494.7
+	],
+	"amillionbuggsfront": [
+		257.7,
+		135.0,
+		493.1,
+		493.1
+	],
+	"amillionbuggsleft": [
+		173.2,
+		144.5,
+		487.9,
+		487.9
+	],
+	"amillionbuggsright": [
+		255.9,
+		134.4,
+		493.1,
+		493.1
+	],
+	"cursedplayerback": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
-	"headback": [
+	"cursedplayerfront": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
-	"headleft": [
+	"cursedplayerleft": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
-	"headright": [
-		255.9,
-		134.5,
-		493.0,
-		493.0
-	],
-	"head2front": [
+	"cursedplayerright": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
 	"head2back": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"head2front": [
 		255.9,
 		134.5,
 		493.0,
@@ -47,29 +71,77 @@
 		493.0,
 		493.0
 	],
-	"runnadballfront": [
-		256.1,
-		135.0,
-		492.6,
-		492.6
-	],
-	"runnadballback": [
+	"headback": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
-	"runnadballleft": [
-		256.1,
-		136.0,
-		492.0,
-		492.0
+	"headforward": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
 	],
-	"runnadballright": [
-		256.5,
-		135.6,
-		492.5,
-		492.5
+	"headleft": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"headright": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"moneybagsback": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"moneybagsfront": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"moneybagsleft": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"moneybagsright": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"mrworldwideback": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"mrworldwidefront": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"mrworldwideleft": [
+		191.2,
+		182.7,
+		388.7,
+		388.7
+	],
+	"mrworldwideright": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
 	],
 	"rockstonehead": [
 		255.9,
@@ -95,52 +167,28 @@
 		493.0,
 		493.0
 	],
-	"cursedplayerfront": [
+	"runnadballback": [
 		255.9,
 		134.5,
 		493.0,
 		493.0
 	],
-	"cursedplayerback": [
-		255.9,
-		134.5,
-		493.0,
-		493.0
-	],
-	"cursedplayerleft": [
-		255.9,
-		134.5,
-		493.0,
-		493.0
-	],
-	"cursedplayerright": [
-		255.9,
-		134.5,
-		493.0,
-		493.0
-	],
-	"amillionbuggsfront": [
-		257.7,
+	"runnadballfront": [
+		256.1,
 		135.0,
-		493.1,
-		493.1
+		492.6,
+		492.6
 	],
-	"amillionbuggsback": [
-		257.4,
-		133.4,
-		494.7,
-		494.7
+	"runnadballleft": [
+		256.1,
+		136.0,
+		492.0,
+		492.0
 	],
-	"amillionbuggsleft": [
-		173.2,
-		144.5,
-		487.9,
-		487.9
-	],
-	"amillionbuggsright": [
-		255.9,
-		134.4,
-		493.1,
-		493.1
+	"runnadballright": [
+		256.5,
+		135.6,
+		492.5,
+		492.5
 	]
 }

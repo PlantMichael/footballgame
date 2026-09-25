@@ -7,7 +7,7 @@ extends Node
 ##   godot --headless --path . res://tools/handoff_check.tscn
 
 const DT := 1.0 / 60.0
-const PLAYS := 300
+const PLAYS := 150
 const DRIVE_LEN := 6
 
 

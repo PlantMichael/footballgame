@@ -546,11 +546,15 @@ func cut_player(roster_index: int) -> void:
 
 # --- Progression ------------------------------------------------------------
 
-func finish_match(won: bool) -> void:
+## `tied` - the match ended level after overtime. A tie costs no life, but
+## the round isn't won either, so it gets replayed exactly like a loss would.
+func finish_match(won: bool, tied: bool = false) -> void:
 	matches_played += 1
 	next_weather = WeatherDB.roll(rng)
 	if round_index < bracket.size():
-		bracket[round_index]["result"] = "W" if won else "L"
+		bracket[round_index]["result"] = "T" if tied else ("W" if won else "L")
+	if tied:
+		return
 	if won:
 		round_index += 1
 	else:

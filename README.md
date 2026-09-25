@@ -179,6 +179,7 @@ godot --headless --path . res://tools/yac_check.tscn   # post-catch route-follow
 godot --headless --path . res://tools/ability_check.tscn  # does a passer ability reach the catch roll
 godot --headless --path . res://tools/prop_check.tscn  # peels/chains/kegs/slot machine + mid-play stat gainers fire
 godot --headless --path . res://tools/handoff_check.tscn  # yards per carry and who tackles, on Hand Off plays
+godot --headless --path . res://tools/tackle_check.tscn  # every tackle attempt on handoffs: who, blocked or free, odds
 godot --headless --path . res://tools/sweep.tscn      # win rate vs roster quality
 godot --headless --path . res://tools/trace.tscn      # step-by-step trace of one play
 godot --path . res://tools/uiflow.tscn                # end-to-end match through the UI

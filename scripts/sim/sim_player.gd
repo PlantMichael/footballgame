@@ -91,8 +91,6 @@ var run_lane_y: float = -1.0
 ## - he goes where he's shoved and can't fight toward the ball carrier. Set
 ## each frame from the previous frame's engagements.
 var driven: bool = false
-## Seconds this blocker has spent driving his current man on a run play.
-var drive_time: float = 0.0
 
 ## Speed multiplier from the ground he's standing on this frame - e.g. a
 ## rain puddle (WeatherDB.PUDDLE_SPEED_MULT). MatchSim._update_terrain sets

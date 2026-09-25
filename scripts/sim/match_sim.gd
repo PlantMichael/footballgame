@@ -75,6 +75,12 @@ var score_us: int = 0
 var score_them: int = 0
 var drive_num: int = 0
 var total_drives: int = 4
+
+## Overtime: when regulation ends tied, start_overtime() tacks OVERTIME_DRIVES
+## more drives on. Still tied after those and the match is a tie.
+const OVERTIME_DRIVES := 2
+var in_overtime: bool = false
+var regulation_drives: int = 0
 var down: int = 1
 var to_go: float = 10.0
 var los: float = 35.0
@@ -106,6 +112,11 @@ var play: Dictionary = {}
 ## field_view.gd, which turns each one into a screen shake scaled to how far
 ## the ball travelled. Purely presentational - nothing in the sim reads it.
 var catch_shakes: Array = []
+
+## Every tackle attempt this play, for the tools/ harnesses (handoff_check):
+## {"d": SimPlayer, "engaged": bool, "dist": float, "reach": float,
+##  "chance": float, "made": bool, "time": float}. Nothing in the game reads it.
+var tackle_log: Array = []
 
 ## One entry per "combustion" explosion or "aftershock" earthquake since the
 ## renderer last looked - just a count, drained by field_view.gd into one
@@ -412,6 +423,8 @@ func start_match() -> void:
 	drive_num = 0
 	score_us = 0
 	score_them = 0
+	in_overtime = false
+	regulation_drives = 0
 	begin_drive()
 
 
@@ -567,6 +580,7 @@ func _begin_call(instant: bool) -> void:
 	# rather than letting a batch harness grow it for thousands of snaps.
 	catch_shakes.clear()
 	big_shakes.clear()
+	tackle_log.clear()
 	kegs.clear()
 	slot_machine = {}
 	shots.clear()
@@ -833,7 +847,6 @@ func _align_offense() -> void:
 		# is what let two rushers come free simultaneously and overwhelm the
 		# one spare blocker who could otherwise have picked either one up.
 		sp.next_contact = FIRST_CONTACT + rng.randf_range(-0.2, 0.2)
-		sp.drive_time = 0.0
 		sp.tackle_cd = 0.0
 		sp.has_ball = (sp.slot == "QB")
 		sp.trail = PackedVector2Array([sp.pos])
@@ -1819,11 +1832,16 @@ func _assign_blocks() -> void:
 		if sp.shed_cooldown > 0.0:
 			sp.mark = null
 			continue
-		# Keep a valid existing assignment so blocks do not flicker - but only
-		# while he's actually on his man. A claim held from across the field
-		# (a receiver who flipped to blocking on a handoff) otherwise stopped
-		# a free lineman right there from picking that defender up.
-		if sp.mark != null and _is_threat(sp.mark) and sp.mark.stunned <= 0.0 and not claimed.has(sp.mark) 				and (sp.engaged or sp.pos.distance_to(sp.mark.pos) <= BLOCK_CLAIM_DIST):
+		# Keep a valid existing assignment so blocks do not flicker - but on a
+		# run, only while he's actually on his man. A claim held from across
+		# the field (a receiver who flipped to blocking on a handoff) otherwise
+		# stopped a free lineman right there from picking that defender up.
+		# Pass protection keeps the old sticky behaviour on purpose: the pass
+		# rush is tuned around it (see the sack numbers in README).
+		var keeps_claim := sp.engaged or not _is_run_play() \
+			or sp.pos.distance_to(sp.mark.pos) <= BLOCK_CLAIM_DIST if sp.mark != null else false
+		if sp.mark != null and _is_threat(sp.mark) and sp.mark.stunned <= 0.0 and not claimed.has(sp.mark) \
+				and keeps_claim:
 			claimed[sp.mark] = true
 			continue
 		sp.mark = null
@@ -1895,6 +1913,14 @@ func _block_logic(sp: SimPlayer, delta: float) -> void:
 		d.engaged = true
 
 
+## How far from the ball a defender can be and still count as "in the box"
+## on a run - see _is_threat.
+const RUN_BOX_RADIUS := 12.0
+
+func _ball_point() -> Vector2:
+	return carrier.pos if carrier != null else Vector2(los - 5.0, FIELD_W * 0.5)
+
+
 func _is_threat(d: SimPlayer) -> bool:
 	# A "corruption"-cursed defender is on our side for the play - blocking
 	# him just takes a lineman off somebody real.
@@ -1902,8 +1928,11 @@ func _is_threat(d: SimPlayer) -> bool:
 		return false
 	if d.role == SimPlayer.Role.RUSH or d.role == SimPlayer.Role.PURSUE:
 		return true
-	# On a run, anybody in the box has to be accounted for at the snap.
-	if _is_run_play() and (d.pos.x - los) < 9.0:
+	# On a run, anybody in the box has to be accounted for at the snap - the
+	# box being near the ball, not a whole-field-wide strip: counting a
+	# corner 20+ yards across the field sent free linemen wandering off
+	# after him.
+	if _is_run_play() and (d.pos.x - los) < 9.0 and d.pos.distance_to(_ball_point()) < RUN_BOX_RADIUS:
 		return true
 	# After a catch, the nearest defenders are worth blocking too.
 	if carrier != null and carrier.slot != "QB":
@@ -2602,14 +2631,6 @@ const RUN_PUSH_PER_STR := 0.3
 const RUN_PUSH_MIN := 0.0
 const RUN_PUSH_MAX := 3.5
 
-## A run blocker who's been driving his man for SEAL_MIN_DRIVE seconds and
-## has him SEAL_DIST yards to the side of the back's lane releases him -
-## staggered for SEAL_STAGGER_BASE plus SEAL_STAGGER_PER_STR per point of
-## Strength edge - and climbs to the next level.
-const SEAL_DIST := 2.5
-const SEAL_MIN_DRIVE := 0.4
-const SEAL_STAGGER_BASE := 0.6
-const SEAL_STAGGER_PER_STR := 0.15
 
 
 func _resolve_engagements(delta: float) -> void:
@@ -2642,19 +2663,6 @@ func _resolve_engagements(delta: float) -> void:
 			# working toward the runner underneath it (_rush_logic/
 			# _pursue_logic hold him), or his own steps cancel the push.
 			d.driven = diff > 0.0
-			# Sealed: shoved far enough out of the lane that he's no longer in
-			# the way. Leave him staggered and climb - _assign_blocks sends
-			# the blocker up to the next defender in the box, usually a
-			# linebacker. A stronger blocker gets there sooner, which is how
-			# the line's Strength turns into yards past the first level.
-			b.drive_time = b.drive_time + delta if d.driven else 0.0
-			if b.drive_time >= SEAL_MIN_DRIVE and absf(d.pos.y - lane_y) >= SEAL_DIST:
-				d.stunned = maxf(d.stunned, SEAL_STAGGER_BASE + diff * SEAL_STAGGER_PER_STR)
-				d.engaged = false
-				d.driven = false
-				b.engaged = false
-				b.mark = null
-				b.drive_time = 0.0
 			continue
 		# Yards per second of displacement; a losing blocker gets driven back.
 		# The lower clamp matters: a blocker losing the strength matchup should
@@ -2734,8 +2742,15 @@ func _step_contacts(delta: float) -> void:
 		chance -= ItemDB.total_contact_mod(carrier.data.items, "carry")
 		if d.data.aura_id == AuraDB.BIG_BLOCKER:
 			chance += AuraDB.BIG_BLOCKER_TACKLE_BONUS
+		# A running back who took a handoff is built for this - he runs
+		# through arm tackles far more often than a receiver after the catch.
+		if handoff_done and carrier.slot != "QB" and plays_rb(carrier):
+			chance -= HANDOFF_BREAK_BONUS
 		chance = clampf(chance, 0.12, 0.95)
-		if rng.randf() < chance:
+		var made := rng.randf() < chance
+		tackle_log.append({"d": d, "engaged": d.engaged, "dist": reach, "reach": _tackle_reach(d),
+			"chance": chance, "made": made, "time": time})
+		if made:
 			_tackle(d)
 			return
 		else:
@@ -2768,6 +2783,13 @@ func _tackle_reach(d: SimPlayer) -> float:
 			return clampf(TACKLE_REACH_BLOCKED + edge * TACKLE_REACH_PER_STR,
 				TACKLE_REACH_MIN, TACKLE_REACH_FREE)
 	return TACKLE_REACH_BLOCKED
+
+
+## How much less likely each tackle attempt is to bring down a running back
+## carrying a handoff (see _step_contacts). The base chance is ~0.88, so this
+## is the difference between breaking roughly one tackle in eight and one in
+## three.
+const HANDOFF_BREAK_BONUS := 0.25
 
 
 ## Doc rule: the bigger the strength gap, the better the chance of a push-off,
@@ -2970,6 +2992,28 @@ func sim_opponent_drive() -> String:
 	elif roll < td_chance + 0.30:
 		return "%s turns it over. Your defense comes up big." % opponent_name
 	return "%s goes three and out." % opponent_name
+
+
+## Regulation (or overtime) is over with the score level.
+func needs_overtime() -> bool:
+	return not in_overtime and drive_num >= total_drives and phase == Phase.DRIVE_OVER \
+		and score_us == score_them
+
+
+func start_overtime() -> void:
+	in_overtime = true
+	regulation_drives = total_drives
+	total_drives += OVERTIME_DRIVES
+	log_line("--- Tied at %d. OVERTIME: %d drives each ---" % [score_us, OVERTIME_DRIVES])
+
+
+## Which overtime drive this is (1-based), or 0 in regulation.
+func overtime_drive() -> int:
+	return drive_num - regulation_drives if in_overtime else 0
+
+
+func tied() -> bool:
+	return score_us == score_them
 
 
 func match_finished() -> bool:

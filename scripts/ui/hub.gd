@@ -73,6 +73,9 @@ func _bracket_panel() -> Control:
 		elif b["result"] == "L":
 			status = "L "
 			col = UIKit.BAD
+		elif b["result"] == "T":
+			status = "T "
+			col = UIKit.MUTED
 
 		row.add_child(UIKit.label(status, 15, col))
 		var bowl_id := String(b.get("bowl_id", ""))

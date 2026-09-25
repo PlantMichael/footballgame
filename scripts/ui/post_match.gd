@@ -1,6 +1,7 @@
 extends Control
 
-## Result screen. Continues the run on a win, ends it on a loss.
+## Result screen. Continues the run on a win; a loss (or an overtime tie) retries
+## the round, and a loss with no lives left ends the run.
 
 
 func _ready() -> void:
@@ -11,6 +12,7 @@ func _ready() -> void:
 func _build() -> void:
 	var r := GameState.last_result
 	var won := bool(r.get("won", false))
+	var tied := bool(r.get("tied", false))
 
 	var center := VBoxContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -19,7 +21,7 @@ func _build() -> void:
 	add_child(center)
 
 	var champion := won and GameState.is_run_over()
-	var out_of_lives := not won and not GameState.run_active
+	var out_of_lives := not won and not tied and not GameState.run_active
 	var margin := int(r.get("score_us", 0)) - int(r.get("score_them", 0))
 	# The Ritual Site: a blowout either way (win or lose by 10+) opens the
 	# door - but only while the run is actually continuing, since a sacrifice
@@ -42,6 +44,9 @@ func _build() -> void:
 	elif out_of_lives:
 		headline = "SEASON OVER"
 		col = UIKit.BAD
+	elif tied:
+		headline = "TIE GAME"
+		col = UIKit.ACCENT
 	elif not won:
 		headline = "TOUGH LOSS"
 		col = UIKit.BAD
@@ -56,6 +61,14 @@ func _build() -> void:
 	], 26)
 	score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(score)
+	if bool(r.get("overtime", false)):
+		var ot := UIKit.label("after overtime", 15, UIKit.MUTED)
+		ot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		center.add_child(ot)
+	if tied:
+		var tie_note := UIKit.label("No loss counted - but you'll have to play this round again.", 16, UIKit.TEXT)
+		tie_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		center.add_child(tie_note)
 
 	var earned := UIKit.label("Earned $%d football bucks%s" % [
 		int(r.get("bucks", 0)),
@@ -100,10 +113,11 @@ func _build() -> void:
 		if ritual_eligible:
 			row.add_child(_ritual_button())
 	elif not champion and not out_of_lives:
-		# Lost, but still have a life left: retry the same round rather than
-		# ending the run. GameState.round_index didn't move, so the hub and
+		# Lost (or tied), but still have a life left: retry the same round
+		# rather than ending the run. GameState.round_index didn't move, so the hub and
 		# shop both still point at the same opponent as before.
-		var retry := UIKit.primary_button("  TRY THE %s AGAIN  " % GameState.round_label().to_upper(), 20)
+		var retry_text := "  REPLAY THE %s  " if tied else "  TRY THE %s AGAIN  "
+		var retry := UIKit.primary_button(retry_text % GameState.round_label().to_upper(), 20)
 		retry.custom_minimum_size = Vector2(0, 50)
 		retry.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
 		row.add_child(retry)

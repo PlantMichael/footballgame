@@ -281,7 +281,10 @@ func _update_top_bar() -> void:
 	if GameState.dev_mode:
 		_set_sb("drive", "%d" % sim.drive_num)
 	else:
-		_set_sb("drive", "%d / %d" % [sim.drive_num, sim.total_drives])
+		if sim.in_overtime:
+			_set_sb("drive", "OT %d / %d" % [sim.overtime_drive(), MatchSim.OVERTIME_DRIVES])
+		else:
+			_set_sb("drive", "%d / %d" % [sim.drive_num, sim.total_drives])
 	_set_sb("down", sim.down_text())
 	_set_sb("spot", sim.yard_line_text(sim.los))
 	_set_sb("earned", "$%d" % bucks_earned)
@@ -820,7 +823,9 @@ func _on_continue() -> void:
 	if outcome["drive_over"]:
 		opponent_note = ""
 		var more_drives_left := sim.drive_num < sim.total_drives
-		if more_drives_left:
+		# In overtime the opponent answers every one of your drives, the last
+		# included - otherwise any score on your final OT drive would win.
+		if more_drives_left or sim.in_overtime:
 			opponent_note = sim.sim_opponent_drive()
 			sim.log_line(opponent_note)
 		# No point handing out a per-game upgrade for a drive that was the
@@ -852,7 +857,22 @@ func _drive_over_bar() -> Control:
 		o.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(o)
 
-	if last_drive:
+	if last_drive and sim.needs_overtime():
+		var ot_note := UIKit.label("Tied at the end of regulation - %d drives each to settle it. Still tied after that and it's a tie game." % MatchSim.OVERTIME_DRIVES, 14, UIKit.MUTED)
+		ot_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(ot_note)
+		var ot := UIKit.primary_button("GO TO OVERTIME", 18)
+		ot.custom_minimum_size = Vector2(0, 40)
+		ot.pressed.connect(func():
+			_dismiss_overlays()
+			opponent_note = ""
+			sim.start_overtime()
+			sim.begin_drive()
+			_apply_call()
+			field.snap_camera()
+			_refresh_bar())
+		v.add_child(ot)
+	elif last_drive:
 		var finish := UIKit.primary_button("FINAL WHISTLE", 18)
 		finish.custom_minimum_size = Vector2(0, 40)
 		finish.pressed.connect(_finish_match)
@@ -985,6 +1005,7 @@ func _center_panel(panel: PanelContainer) -> void:
 
 func _finish_match() -> void:
 	var won := sim.won()
+	var tied := sim.tied()
 	# The bowl game (the bracket's last entry) pays out per the chosen bowl's
 	# prestige tier instead of the flat build-up-round bonus - see BowlDB.
 	var is_bowl_game := GameState.round_index == GameState.bracket.size() - 1
@@ -994,6 +1015,8 @@ func _finish_match() -> void:
 	GameState.add_bucks(bucks_earned)
 	GameState.last_result = {
 		"won": won,
+		"tied": tied,
+		"overtime": sim.in_overtime,
 		"score_us": sim.score_us,
 		"score_them": sim.score_them,
 		"opponent": sim.opponent_name,
@@ -1001,7 +1024,7 @@ func _finish_match() -> void:
 		"win_bonus": win_bonus,
 		"round": GameState.round_label(),
 	}
-	GameState.finish_match(won)
+	GameState.finish_match(won, tied)
 	_check_sacrificial_gloves()
 	get_tree().change_scene_to_file("res://scenes/post_match.tscn")
 

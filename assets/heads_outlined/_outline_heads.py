@@ -7,17 +7,17 @@
 # lets the rest overflow, rather than being squashed to fit a square. Run from the project
 # root after changing any head art:  python assets/heads_outlined/_outline_heads.py
 # (needs numpy, scipy, Pillow)
-import glob, json, os
+import glob, json, os, re
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-HEADS = ["headforward", "headback", "headleft", "headright",
-         "head2front", "head2back", "head2left", "head2right",
-         "runnadballfront", "runnadballback", "runnadballleft", "runnadballright",
-         "rockstonehead", "rockstoneheadback", "rockstoneheadleft", "rockstoneheadright",
-         "cursedplayerfront", "cursedplayerback", "cursedplayerleft", "cursedplayerright",
-         "amillionbuggsfront", "amillionbuggsback", "amillionbuggsleft", "amillionbuggsright"]
+# Every head the game draws: read straight out of HeadArtDB's SOURCE table,
+# which points each set at its copy in this folder. So adding a head is: drop
+# the four views in assets/, add them to SOURCE in head_art_db.gd, run this.
+# Nothing else to keep in sync.
+with open("scripts/data/head_art_db.gd", encoding="utf-8") as f:
+    HEADS = sorted(set(re.findall(r'"res://assets/heads_outlined/([a-z0-9_]+)\.png"', f.read())))
 
 # The body sprites carry a ~6.5px black outline, and a head is drawn at about
 # 0.18x its source size relative to them - so ~36px on a 496px-tall head.
@@ -56,6 +56,20 @@ for name in HEADS:
     img = np.asarray(Image.open(src).convert("RGBA")).astype(np.float32)
     alpha = img[..., 3]
     solid = alpha > 127
+    # Strip faint stock-image watermarks. Some source art carries one across
+    # the transparent canvas (never more than ~25% opaque); left in, it bloats
+    # the crop and smudges around the head. Keep every connected shape that's
+    # clearly opaque somewhere - so thin, partly transparent details hanging
+    # off the face (sunglasses arms, a sparkle) survive - minus any faint
+    # pixels more than a few away from its opaque parts.
+    strong = alpha >= 80
+    shapes, count = ndimage.label(alpha > 0)
+    has_strong = np.zeros(count + 1, dtype=bool)
+    has_strong[np.unique(shapes[strong])] = True
+    has_strong[0] = False
+    keep = has_strong[shapes] & ndimage.binary_dilation(strong, iterations=3)
+    img[~keep] = 0.0
+    alpha = img[..., 3]
     ys = np.where(solid.any(axis=1))[0]
     faces[name] = face_box(solid)
     # Thickness scales with the face, not the whole silhouette - hair on

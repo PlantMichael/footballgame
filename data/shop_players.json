@@ -276,7 +276,8 @@
 		"stamina": 9,
 		"intelligence": 8,
 		"ability_id": "positionless",
-		"body": "3"
+		"body": "3",
+		"head": "mrworldwide"
 	},
 	{
 		"name": "Gustavo Choker",
@@ -552,6 +553,7 @@
 		"stamina": 9,
 		"intelligence": 10,
 		"ability_id": "jackpot",
-		"body": "6"
+		"body": "6",
+		"head": "moneybags"
 	}
 ]

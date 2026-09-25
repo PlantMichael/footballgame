@@ -49,6 +49,18 @@ const SOURCE := {
 		"left": "res://assets/heads_outlined/amillionbuggsleft.png",
 		"right": "res://assets/heads_outlined/amillionbuggsright.png",
 	},
+	"mrworldwide": {
+		"front": "res://assets/heads_outlined/mrworldwidefront.png",
+		"back": "res://assets/heads_outlined/mrworldwideback.png",
+		"left": "res://assets/heads_outlined/mrworldwideleft.png",
+		"right": "res://assets/heads_outlined/mrworldwideright.png",
+	},
+	"moneybags": {
+		"front": "res://assets/heads_outlined/moneybagsfront.png",
+		"back": "res://assets/heads_outlined/moneybagsback.png",
+		"left": "res://assets/heads_outlined/moneybagsleft.png",
+		"right": "res://assets/heads_outlined/moneybagsright.png",
+	},
 	"cursed": {
 		"front": "res://assets/heads_outlined/cursedplayerfront.png",
 		"back": "res://assets/heads_outlined/cursedplayerback.png",

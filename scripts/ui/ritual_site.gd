@@ -50,13 +50,23 @@ func _build() -> void:
 
 	root.add_child(UIKit.label("THE RITUAL SITE", 30, RITUAL_COLOR))
 	root.add_child(UIKit.label(
-		"Sacrifice %d players, permanently, for one random Cursed player in return." % _sacrifice_count,
+		"Sacrifice %d players, permanently, for one random Cursed player in return. Anything they're wearing goes back in the bag." % _sacrifice_count,
 		14, UIKit.MUTED))
 	root.add_child(UIKit.rule())
 
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
+	# Starters first, in formation order, so it's obvious who you'd be
+	# pulling out of the lineup; then the bench.
+	var order: Array = []
+	for slot in GameState.SLOT_ORDER:
+		var idx := int(GameState.lineup.get(slot, -1))
+		if idx >= 0 and not order.has(idx):
+			order.append(idx)
 	for i in GameState.roster.size():
+		if not order.has(i):
+			order.append(i)
+	for i in order:
 		list.add_child(_roster_row(i))
 	var scroll := UIKit.scroll(list)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -88,15 +98,58 @@ func _roster_row(idx: int) -> Control:
 	h.add_theme_constant_override("separation", 12)
 	row.add_child(h)
 
-	var card := UIKit.player_card(p)
+	var card := UIKit.player_card(p, false)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(card)
+	h.add_child(_status_column(idx, p))
 
 	var toggle := UIKit.button("  Chosen  " if chosen else "  Choose  ", 14)
 	toggle.add_theme_color_override("font_color", RITUAL_COLOR if chosen else Color("d9534f"))
 	toggle.pressed.connect(func(): _toggle_selected(idx))
 	h.add_child(toggle)
 	return row
+
+
+## Where he stands on the team: which lineup spot he starts at (or bench),
+## and what's in each of his three item slots.
+func _status_column(idx: int, p: PlayerData) -> Control:
+	var v := VBoxContainer.new()
+	v.custom_minimum_size = Vector2(260, 0)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 2)
+
+	var slot := _starting_slot(idx)
+	if slot != "":
+		v.add_child(UIKit.label("STARTING  -  %s" % _slot_name(slot), 14, UIKit.ACCENT))
+	else:
+		v.add_child(UIKit.label("BENCH", 14, UIKit.MUTED))
+
+	for i in PlayerData.ITEM_SLOTS:
+		var category_name := ItemDB.category_name(ItemDB.CATEGORIES[i])
+		var item_id: String = p.items[i]
+		if item_id == "":
+			v.add_child(UIKit.label("%s: -" % category_name, 12, UIKit.MUTED))
+		else:
+			var l := UIKit.label("%s: %s" % [category_name, ItemDB.item_name(item_id)], 12, UIKit.TEXT)
+			l.tooltip_text = ItemDB.item_desc(item_id)
+			l.mouse_filter = Control.MOUSE_FILTER_STOP
+			v.add_child(l)
+	return v
+
+
+func _starting_slot(idx: int) -> String:
+	for slot in GameState.lineup:
+		if int(GameState.lineup[slot]) == idx:
+			return slot
+	return ""
+
+
+func _slot_name(slot: String) -> String:
+	if slot.begins_with("T"):
+		return GameState.slot_label(slot)
+	if slot.begins_with("F"):
+		return "FLEX"
+	return slot
 
 
 ## Tapping an unselected player adds him, up to _sacrifice_count; tapping
