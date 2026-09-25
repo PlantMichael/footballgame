@@ -2280,10 +2280,12 @@ func _step_defense(delta: float) -> void:
 		if d.free_timer > 0.0:
 			d.free_timer -= delta
 		if d.stunned > 0.0:
-			d.stunned -= delta
+			# hold() counts the stun down itself - doing it here too used to
+			# make every defender stun (a broken tackle, a slip, an
+			# earthquake...) last only half as long as it said.
+			d.hold(delta)
 			if d.stunned <= 0.0:
 				d.downed = 0.0   # back on his feet
-			d.hold(delta)
 			continue
 		if d.tackle_cd > 0.0:
 			d.tackle_cd -= delta
@@ -2758,6 +2760,11 @@ func _step_contacts(delta: float) -> void:
 			# the rest of the pursuit time to close.
 			d.stunned = 0.5
 			d.downed = 0.0001
+			# The man who just got run through doesn't get a second grab at
+			# the same spot: he has to get up and chase like everyone else.
+			# (His cooldown doesn't tick while he's down, so it's this on top
+			# of the 0.5s stun.)
+			d.tackle_cd = BROKEN_TACKLE_RETRY
 			carrier.vel *= 0.5
 			carrier.disrupted = maxf(carrier.disrupted, 0.6)
 			_award(8, "%s breaks the tackle!" % carrier.data.pname)
@@ -2790,6 +2797,10 @@ func _tackle_reach(d: SimPlayer) -> float:
 ## is the difference between breaking roughly one tackle in eight and one in
 ## three.
 const HANDOFF_BREAK_BONUS := 0.25
+
+## Seconds (after his 0.5s stun) before a defender whose tackle was just
+## broken may try that again - see _step_contacts.
+const BROKEN_TACKLE_RETRY := 1.0
 
 
 ## Doc rule: the bigger the strength gap, the better the chance of a push-off,
