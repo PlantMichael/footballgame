@@ -9,7 +9,8 @@
 		"stamina": 8,
 		"intelligence": 9,
 		"ability_id": "dash_start",
-		"body": "9"
+		"body": "9",
+		"head": "amillionbuggs"
 	},
 	{
 		"name": "Rock Stonehead",
@@ -408,5 +409,149 @@
 		"intelligence": 7,
 		"ability_id": "gunslinger_growth",
 		"body": "9"
+	},
+	{
+		"name": "Trip Slipson",
+		"pos": "RB",
+		"quality": 4,
+		"strength": 9,
+		"agility": 11,
+		"dexterity": 8,
+		"stamina": 10,
+		"intelligence": 9,
+		"ability_id": "slippery_trail",
+		"body": "1"
+	},
+	{
+		"name": "Wide Nelson",
+		"pos": "T",
+		"quality": 2,
+		"strength": 5,
+		"agility": 4,
+		"dexterity": 3,
+		"stamina": 6,
+		"intelligence": 4,
+		"ability_id": "warming_up",
+		"body": "2"
+	},
+	{
+		"name": "Sigma Mogmen",
+		"pos": "TE",
+		"quality": 1,
+		"strength": 4,
+		"agility": 3,
+		"dexterity": 3,
+		"stamina": 3,
+		"intelligence": 2,
+		"ability_id": "sigma_grindset",
+		"body": "4"
+	},
+	{
+		"name": "Evil Warlock",
+		"pos": "TE",
+		"quality": 4,
+		"strength": 9,
+		"agility": 8,
+		"dexterity": 10,
+		"stamina": 9,
+		"intelligence": 11,
+		"ability_id": "dark_chains",
+		"body": "6"
+	},
+	{
+		"name": "Potential Man",
+		"pos": "WR",
+		"quality": 3,
+		"strength": 5,
+		"agility": 8,
+		"dexterity": 13,
+		"stamina": 7,
+		"intelligence": 7,
+		"ability_id": "wasted_potential",
+		"body": "9"
+	},
+	{
+		"name": "RJ Bildgewater",
+		"pos": "TE",
+		"quality": 2,
+		"strength": 6,
+		"agility": 4,
+		"dexterity": 5,
+		"stamina": 5,
+		"intelligence": 4,
+		"ability_id": "kneecapper",
+		"body": "3"
+	},
+	{
+		"name": "Gyro Footballi",
+		"pos": "QB",
+		"quality": 1,
+		"strength": 3,
+		"agility": 4,
+		"dexterity": 3,
+		"stamina": 3,
+		"intelligence": 3,
+		"ability_id": "power_scramble",
+		"body": "5"
+	},
+	{
+		"name": "Juanwho Knocks",
+		"pos": "RB",
+		"quality": 2,
+		"strength": 5,
+		"agility": 6,
+		"dexterity": 4,
+		"stamina": 5,
+		"intelligence": 4,
+		"ability_id": "knock_knock",
+		"body": "8"
+	},
+	{
+		"name": "Toby Copycat",
+		"pos": "WR",
+		"quality": 3,
+		"strength": 6,
+		"agility": 8,
+		"dexterity": 7,
+		"stamina": 7,
+		"intelligence": 7,
+		"ability_id": "copycat",
+		"body": "5"
+	},
+	{
+		"name": "Tainted Eden",
+		"pos": "TE",
+		"quality": 2,
+		"strength": 5,
+		"agility": 5,
+		"dexterity": 5,
+		"stamina": 5,
+		"intelligence": 5,
+		"ability_id": "tainted_blessing",
+		"body": "2"
+	},
+	{
+		"name": "Tony KappaKappaPsi",
+		"pos": "WR",
+		"quality": 4,
+		"strength": 7,
+		"agility": 10,
+		"dexterity": 10,
+		"stamina": 8,
+		"intelligence": 9,
+		"ability_id": "keg_stand",
+		"body": "3"
+	},
+	{
+		"name": "Richard MoneyBags",
+		"pos": "TE",
+		"quality": 4,
+		"strength": 9,
+		"agility": 8,
+		"dexterity": 9,
+		"stamina": 9,
+		"intelligence": 10,
+		"ability_id": "jackpot",
+		"body": "6"
 	}
 ]

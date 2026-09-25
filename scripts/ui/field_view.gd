@@ -37,6 +37,13 @@ const ZOOM_PULSE_AMOUNT := 0.12
 const ZOOM_PULSE_TIME := 0.35
 var _zoom_pulse_t: float = 0.0
 
+## An eased camera move between plays (see glide_camera): from where the last
+## play ended back to the new line of scrimmage, instead of either cutting
+## there or trailing after it on the ordinary follow lerp.
+const GLIDE_TIME := 0.7
+var _glide_t: float = 0.0          # seconds left; 0 = not gliding
+var _glide_from: Vector2 = Vector2.ZERO   # (cam_x, cam_y) when it started
+
 ## Free-camera controls: WASD pans, right-click-drag pans, the scroll wheel
 ## zooms. Any manual pan disengages `camera_locked`; toggling it back on
 ## (see toggle_camera_lock) resumes following the ball.
@@ -69,7 +76,7 @@ const BODY_AREA := 1.95
 ## from defence, and at a faint alpha the two teams were genuinely
 ## indistinguishable on the field.
 const DISC_ALPHA := 0.12
-const DISC_RIM_ALPHA := 0.85
+const DISC_RIM_ALPHA := 0.5
 const DISC_RIM_WIDTH := 2.6
 
 ## Screen shake on a catch, scaled by how far the ball travelled.
@@ -82,6 +89,32 @@ const SHAKE_TIME := 0.38
 ## big_shakes) - well past what any ordinary catch produces.
 const BIG_SHAKE_PX := 26.0
 const BIG_SHAKE_TIME := 0.65
+
+## Ability props (see MatchSim's "Ability props" section), cut out of
+## assets/assets.png by assets/props/_cut_props.py. Sizes are in yards.
+const TEX_PEEL := preload("res://assets/props/banana_peel.png")
+const TEX_CHAIN := preload("res://assets/props/chain.png")
+const TEX_KEG := preload("res://assets/props/beer_keg.png")
+const TEX_SLOT := preload("res://assets/props/slot_machine.png")
+const PEEL_W := 2.0
+const KEG_H := 2.0
+const SLOT_H := 2.8
+const CHAIN_THICK := 0.65
+const JACKPOT_TEXT_TIME := 1.6
+const SHOT_FLASH_TIME := 0.3
+
+## Weather (see WeatherDB): screen-space particles - raindrops, snowflakes,
+## wind streaks - each {"p": Vector2 px, "v": Vector2 px/s, "age": float,
+## "life": float, "size": float, "phase": float}. Topped up to the weather's
+## count every frame; purely visual.
+var _wx: Array = []
+const RAIN_DROPS := 240
+const SNOW_FLAKES := 170
+const WIND_STREAKS := 22
+const RAIN_TINT := Color(0.05, 0.08, 0.16, 0.20)
+const SNOW_COVER := Color(0.93, 0.96, 1.0, 0.20)
+const PUDDLE_FILL := Color(0.24, 0.38, 0.50, 0.60)
+const PUDDLE_RIM := Color(0.62, 0.78, 0.90, 0.45)
 
 var sim: MatchSim = null
 var show_preview: bool = true
@@ -165,6 +198,11 @@ func _facing_view(sp: SimPlayer) -> Array:
 	var flip := false
 	if dir.dot(-UP) > best:
 		best = dir.dot(-UP); view = "front"; flip = false
+	# A body with no side-view art (body 9 - the defensive backs' and a few
+	# receivers' body) sticks to front/back rather than dropping to the plain
+	# capsule whenever he runs across the field.
+	if _body_tex(sp.data, "left") == null and _body_tex(sp.data, "front") != null:
+		return [view, flip]
 	if dir.dot(Vector2.LEFT) > best:
 		best = dir.dot(Vector2.LEFT); view = "left"; flip = false
 	if dir.dot(Vector2.RIGHT) > best:
@@ -192,10 +230,17 @@ const FALL_TIME := 0.34
 
 func _process(delta: float) -> void:
 	if sim != null:
-		if camera_locked:
+		if camera_locked and _glide_t > 0.0:
+			_glide_t = maxf(0.0, _glide_t - delta)
+			var f := 1.0 - _glide_t / GLIDE_TIME
+			f = f * f * (3.0 - 2.0 * f)   # ease in and out
+			_cam_x = lerpf(_glide_from.x, _camera_target_x(), f)
+			_cam_y = lerpf(_glide_from.y, _camera_target_y(), f)
+		elif camera_locked:
 			_cam_x = lerpf(_cam_x, _camera_target_x(), clampf(delta * CAM_SPEED, 0.0, 1.0))
 			_cam_y = lerpf(_cam_y, _camera_target_y(), clampf(delta * CAM_SPEED, 0.0, 1.0))
 		else:
+			_glide_t = 0.0   # the coach took the camera; don't resume later
 			_handle_pan_keys(delta)
 		_clamp_camera()
 		_zoom_pulse_t = maxf(0.0, _zoom_pulse_t - delta)
@@ -211,6 +256,7 @@ func _process(delta: float) -> void:
 		if _stroke_slot != "" and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			_finish_stroke()
 		_advance_shake(delta)
+		_advance_weather(delta)
 	queue_redraw()
 
 
@@ -284,10 +330,21 @@ func _advance_pops(sp: SimPlayer, delta: float) -> void:
 ## start of a new drive). Has no effect while the camera is unlocked - free
 ## camera position is left exactly where the player put it.
 func snap_camera() -> void:
+	_glide_t = 0.0
 	if sim != null and camera_locked:
 		_cam_x = _camera_target_x()
 		_cam_y = _camera_target_y()
 		_clamp_camera()
+
+
+## Smoothly pans the locked camera from wherever it is now to its current
+## target over GLIDE_TIME (e.g. from the catch back to the QB for the next
+## snap). No effect while the camera is unlocked.
+func glide_camera() -> void:
+	if sim == null or not camera_locked:
+		return
+	_glide_from = Vector2(_cam_x, _cam_y)
+	_glide_t = GLIDE_TIME
 
 
 func toggle_camera_lock() -> void:
@@ -532,14 +589,19 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), UIKit.TURF)
 		return
 	_draw_field()
+	_draw_weather_ground()
 	_draw_lines_of_scrimmage()
 	if show_preview and sim.phase == MatchSim.Phase.PRESNAP:
 		_draw_route_preview()
 		_draw_stroke()
 	if sim.phase == MatchSim.Phase.LIVE or sim.phase == MatchSim.Phase.DEAD:
 		_draw_trails()
+	_draw_ground_props()
+	_draw_chains()
 	_draw_players()
+	_draw_prop_overlays()
 	_draw_ball()
+	_draw_weather_sky()
 	_draw_stat_pops()
 
 
@@ -754,6 +816,205 @@ func _draw_trails() -> void:
 		draw_polyline(pts, Color(UIKit.OFFENSE, 0.20), 2.0, true)
 
 
+# ============================================================================
+# Weather
+# ============================================================================
+
+func _weather_count() -> int:
+	match sim.weather:
+		WeatherDB.RAINY: return RAIN_DROPS
+		WeatherDB.SNOWY: return SNOW_FLAKES
+		WeatherDB.WINDY: return WIND_STREAKS
+	return 0
+
+
+## A fresh particle for the current weather. `anywhere` scatters it across
+## the whole screen (filling up when the weather first appears); otherwise
+## it starts just off the edge it blows/falls in from.
+func _spawn_wx(anywhere: bool) -> Dictionary:
+	var w := maxf(size.x, 1.0)
+	var h := maxf(size.y, 1.0)
+	match sim.weather:
+		WeatherDB.RAINY:
+			var p := Vector2(randf_range(-80.0, w + 80.0), randf_range(0.0, h) if anywhere else randf_range(-60.0, -10.0))
+			return {"p": p, "v": Vector2(-140.0, randf_range(820.0, 1000.0)), "age": 0.0,
+				"life": 99.0, "size": randf_range(10.0, 18.0), "phase": 0.0}
+		WeatherDB.SNOWY:
+			var p2 := Vector2(randf_range(-20.0, w + 20.0), randf_range(0.0, h) if anywhere else randf_range(-30.0, -5.0))
+			return {"p": p2, "v": Vector2(randf_range(-12.0, 12.0), randf_range(45.0, 105.0)), "age": 0.0,
+				"life": 99.0, "size": randf_range(1.4, 3.6), "phase": randf() * TAU}
+		_:
+			# Wind: a streak blowing left to right across the screen.
+			var p3 := Vector2(randf_range(0.0, w) if anywhere else randf_range(-240.0, -40.0), randf_range(0.0, h))
+			return {"p": p3, "v": Vector2(randf_range(650.0, 1000.0), randf_range(-25.0, 25.0)), "age": 0.0,
+				"life": randf_range(0.8, 1.6), "size": randf_range(60.0, 140.0), "phase": randf() * TAU}
+
+
+func _advance_weather(delta: float) -> void:
+	var want := _weather_count()
+	var h := size.y
+	var w := size.x
+	var kept: Array = []
+	for pt in _wx:
+		pt["age"] += delta
+		pt["p"] += pt["v"] * delta
+		if sim.weather == WeatherDB.SNOWY:
+			# Flakes drift side to side as they fall.
+			pt["p"].x += sin(pt["age"] * 1.7 + pt["phase"]) * 18.0 * delta
+		var p: Vector2 = pt["p"]
+		if pt["age"] < pt["life"] and p.y < h + 40.0 and p.x < w + 260.0 and p.x > -300.0:
+			kept.append(pt)
+	# A different weather's particles don't belong any more (dev-mode switch).
+	if kept.size() > want:
+		kept.resize(want)
+	var first_fill := kept.is_empty()
+	while kept.size() < want:
+		kept.append(_spawn_wx(first_fill))
+	_wx = kept
+
+
+## Weather that sits on the turf, under everyone: rain puddles (in field
+## yards, so they scroll with the field) and snow cover.
+func _draw_weather_ground() -> void:
+	if sim.weather == WeatherDB.SNOWY:
+		var left := to_px(Vector2(0.0, 0.0)).x
+		var right := to_px(Vector2(0.0, YW)).x
+		draw_rect(Rect2(Vector2(left, 0.0), Vector2(right - left, size.y)), SNOW_COVER)
+	if sim.puddles.is_empty():
+		return
+	var t := Time.get_ticks_msec() * 0.001
+	for i in sim.puddles.size():
+		var pd: Dictionary = sim.puddles[i]
+		var c := to_px(pd["pos"])
+		var rad: float = float(pd["r"]) * _scale
+		if c.y < -rad or c.y > size.y + rad:
+			continue
+		var stretch: float = pd["stretch"]
+		draw_set_transform(c, 0.0, Vector2(1.0, stretch))
+		draw_circle(Vector2.ZERO, rad, PUDDLE_FILL)
+		draw_arc(Vector2.ZERO, rad, 0.0, TAU, 32, PUDDLE_RIM, 2.0, true)
+		# Raindrops landing: two rings per puddle expanding out and fading,
+		# staggered by index so they don't all pulse together.
+		for k in 2:
+			var ph := fmod(t * 0.8 + float(i) * 0.37 + float(k) * 0.5, 1.0)
+			var ring := rad * (0.15 + 0.7 * ph)
+			var off := Vector2(sin(float(i) * 2.3 + float(k)), cos(float(i) * 1.7 + float(k))) * rad * 0.3
+			draw_arc(off, ring, 0.0, TAU, 20, Color(PUDDLE_RIM, 0.5 * (1.0 - ph)), 1.5, true)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Weather in the air, over everything but the stat popups.
+func _draw_weather_sky() -> void:
+	match sim.weather:
+		WeatherDB.RAINY:
+			draw_rect(Rect2(Vector2.ZERO, size), RAIN_TINT)
+			for pt in _wx:
+				var p: Vector2 = pt["p"]
+				var dir: Vector2 = (pt["v"] as Vector2).normalized()
+				draw_line(p, p - dir * float(pt["size"]), Color(0.75, 0.85, 1.0, 0.45), 1.3, true)
+		WeatherDB.SNOWY:
+			for pt in _wx:
+				draw_circle(pt["p"], float(pt["size"]), Color(1.0, 1.0, 1.0, 0.85))
+		WeatherDB.WINDY:
+			for pt in _wx:
+				var p2: Vector2 = pt["p"]
+				var len: float = pt["size"]
+				# Fades in, then out, over its life; a gentle wave along it.
+				var life_t: float = float(pt["age"]) / float(pt["life"])
+				var alpha := 0.32 * sin(clampf(life_t, 0.0, 1.0) * PI)
+				var pts := PackedVector2Array()
+				for s in 7:
+					var f := float(s) / 6.0
+					pts.append(p2 + Vector2(-len * f, sin(f * TAU + float(pt["phase"]) + float(pt["age"]) * 6.0) * 4.0))
+				draw_polyline(pts, Color(1.0, 1.0, 1.0, alpha), 2.0, true)
+
+
+## A prop sprite standing upright on the field at `at` (yards), `h` pixels
+## tall, its feet at the point rather than its middle so it sits on the turf.
+func _draw_prop(tex: Texture2D, at: Vector2, h: float, rot: float = 0.0,
+		tint: Color = Color.WHITE) -> void:
+	var ts := tex.get_size()
+	var w := ts.x * h / maxf(ts.y, 1.0)
+	var p := to_px(at)
+	draw_circle(p + Vector2(2, 2), w * 0.36, Color(0, 0, 0, 0.18))
+	draw_set_transform(p, rot, Vector2.ONE)
+	draw_texture_rect(tex, Rect2(Vector2(-w * 0.5, -h * 0.85), Vector2(w, h)), false, tint)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Banana peels, kegs, and the slot machine - everything that sits on the
+## turf underneath the players.
+func _draw_ground_props() -> void:
+	var peel_h := PEEL_W * _scale * TEX_PEEL.get_height() / maxf(TEX_PEEL.get_width(), 1.0)
+	for peel in sim.banana_peels:
+		_draw_prop(TEX_PEEL, peel, peel_h)
+	for keg in sim.kegs:
+		_draw_prop(TEX_KEG, keg, KEG_H * _scale)
+	var sm := sim.slot_machine
+	if not sm.is_empty():
+		var rot := 0.0
+		if not sm["resolved"]:
+			# Rattles while the reels spin.
+			rot = sin(Time.get_ticks_msec() * 0.05) * 0.06
+		elif sm["hit"]:
+			var pulse := 0.1 * sin(Time.get_ticks_msec() * 0.012)
+			draw_circle(to_px(sm["pos"]), SLOT_H * _scale * (0.75 + pulse),
+				Color(UIKit.BALL, 0.35))
+		var tint := Color.WHITE if (not sm["resolved"] or sm["hit"]) else Color(0.6, 0.6, 0.6)
+		_draw_prop(TEX_SLOT, sm["pos"], SLOT_H * _scale, rot, tint)
+
+
+## "Dark Chains": the chain texture tiled along the line between the two
+## chained defenders' feet.
+func _draw_chains() -> void:
+	for c in sim.chains:
+		var a := to_px((c[0] as SimPlayer).pos)
+		var b := to_px((c[1] as SimPlayer).pos)
+		var span := a.distance_to(b)
+		if span < 1.0:
+			continue
+		var tex_size := TEX_CHAIN.get_size()
+		var thick := maxf(6.0, CHAIN_THICK * _scale)
+		var k := thick / tex_size.y
+		var tile_w := tex_size.x * k
+		draw_set_transform(a, (b - a).angle(), Vector2.ONE)
+		var x := 0.0
+		while x < span:
+			var seg := minf(tile_w, span - x)
+			draw_texture_rect_region(TEX_CHAIN, Rect2(Vector2(x, -thick * 0.5), Vector2(seg, thick)),
+				Rect2(Vector2.ZERO, Vector2(seg / k, tex_size.y)))
+			x += tile_w
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Things that play over the top of the players: the "kneecapper" muzzle
+## flash and the slot machine's result.
+func _draw_prop_overlays() -> void:
+	if sim.phase == MatchSim.Phase.LIVE and sim.time < SHOT_FLASH_TIME:
+		var fade := 1.0 - sim.time / SHOT_FLASH_TIME
+		for shot in sim.shots:
+			var from := to_px((shot["from"] as SimPlayer).pos)
+			var to := to_px((shot["to"] as SimPlayer).pos)
+			draw_line(from, to, Color(1.0, 0.92, 0.5, fade), 4.0, true)
+			draw_circle(from, _player_radius() * 0.6 * fade, Color(1.0, 0.75, 0.3, fade))
+
+	var sm := sim.slot_machine
+	if sm.is_empty() or not sm["resolved"]:
+		return
+	var since := sim.time - MatchSim.SLOT_SPIN_TIME
+	if since > JACKPOT_TEXT_TIME:
+		return
+	var font := ThemeDB.fallback_font
+	var fs := int(maxf(16.0, _scale * (1.0 if sm["hit"] else 0.7)))
+	var text := "JACKPOT!" if sm["hit"] else "BUST"
+	var col := UIKit.BALL if sm["hit"] else Color(0.8, 0.8, 0.8)
+	var alpha := 1.0 - clampf((since - JACKPOT_TEXT_TIME * 0.6) / (JACKPOT_TEXT_TIME * 0.4), 0.0, 1.0)
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var at := to_px(sm["pos"]) + Vector2(-w * 0.5, -SLOT_H * _scale - since * 20.0)
+	draw_string(font, at + Vector2(2, 2), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.6 * alpha))
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, alpha))
+
+
 ## Screen-space direction a tackled player topples: the way he was running,
 ## or straight ahead from his stance if he was standing still.
 func _fall_dir(sp: SimPlayer) -> Vector2:
@@ -864,10 +1125,18 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		var pulse4 := 0.08 * sin(Time.get_ticks_msec() * 0.012)
 		draw_arc(center, r * (1.32 + pulse4), 0, TAU, 30, Color("8b3fd1"), 3.0)
 
+	# "Kneecapper": limping at half speed.
+	if not sp.is_offense and sp.slowed > 0.0 and fall <= 0.0:
+		draw_arc(center, r * 1.25, 0, TAU, 30, Color(UIKit.BAD, 0.85), 3.0)
+	# "Keg Stand": off drinking instead of covering anyone.
+	if not sp.is_offense and sp.lured and fall <= 0.0:
+		draw_arc(center, r * 1.4, 0, TAU, 30, Color("e8b04a"), 2.5)
+
 	var facing := _facing_view(sp)
 	var view_name: String = facing[0]
 	var mirrored: bool = facing[1]
 	var tex := _body_tex(sp.data, view_name)
+	var tex_w := 0.0
 	var tex_h := 0.0
 	if tex == null:
 		_capsule(a, b, wide + 3.0, body.darkened(0.5))
@@ -887,11 +1156,20 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		var k := (r * BODY_AREA) / maxf(sqrt(tex_size.x * tex_size.y), 1.0)
 		var w := tex_size.x * k
 		var h := tex_size.y * k
+		tex_w = w
 		tex_h = h
+		# The rig's Body scale/position (BodyArtDB.head_rig) on top of that -
+		# e.g. shrinking a tall, skinny sprite to the others' height. tex_w/h
+		# stay unscaled: the head is placed in the rig's own space.
+		var body_rig := BodyArtDB.head_rig(view_name, sp.data.body)
+		var bs: Vector2 = body_rig["body_scale"]
+		var bo: Vector2 = body_rig["body_offset"]
+		var body_rect := Rect2(Vector2(bo.x * w - w * bs.x * 0.5, bo.y * h - h * bs.y * 0.5),
+			Vector2(w * bs.x, h * bs.y))
 
 		draw_set_transform(center, axis.angle() - UP.angle(),
 			Vector2(-1.0 if mirrored else 1.0, 1.0))
-		draw_texture_rect(tex, Rect2(Vector2(-w * 0.5, -h * 0.5), Vector2(w, h)), false)
+		draw_texture_rect(tex, body_rect, false)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	if sp == sim.carrier and fall <= 0.0:
@@ -914,34 +1192,40 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		draw_string(font, np + Vector2(-tw * 0.5, float(fs) * 0.35), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, num_color)
 
-	# Head: sits at the top of the body, rotating with it as he falls. Anchored
-	# to this sprite's actual collar depth (BodyArtDB) rather than a fixed
-	# fraction of r, since collar depth and canvas aspect ratio both vary
-	# sprite to sprite - a constant offset left the head floating off the
-	# jersey for several bodies. Falls back to the old fixed offset for the
-	# plain-capsule case, which has no jersey art to align to.
+	# Head: placed from this body's rig scene (BodyArtDB.head_rig - drag the
+	# Head in assets/players/rigs/<view>/body_0N.tscn to move it), in the
+	# body sprite's own frame, so it stays glued to the collar as he topples
+	# and mirrors along with a mirrored side view. Falls back to a fixed
+	# offset for the plain-capsule case, which has no jersey art to align to.
+	var body_rot := axis.angle() - UP.angle()
 	var hp: Vector2
+	var head_h: float
+	var head_rot := body_rot
 	if tex != null:
-		var neck_frac := BodyArtDB.neck_frac(view_name, sp.data.body)
-		var neck_offset := tex_h * (0.5 - neck_frac) + r * 0.05
-		hp = center + axis * neck_offset
+		var rig := BodyArtDB.head_rig(view_name, sp.data.body)
+		var off: Vector2 = rig["offset"]
+		var mirror := -1.0 if mirrored else 1.0
+		hp = center + Vector2(off.x * tex_w * mirror, off.y * tex_h).rotated(body_rot)
+		head_h = float(rig["height"]) * tex_h
+		head_rot += float(rig["rotation"]) * mirror
 	else:
 		hp = center + axis * r * 0.50
-	var hr := r * 0.38 * (1.0 + 0.07 * sin(sp.stride * 2.0) * moving)
-	# Dark backing disc. The sprite has a hairline outline of its own, but at
-	# this size it all but disappears, and without a rim the head blends into
-	# the jersey underneath it.
-	draw_circle(hp, hr * 1.22, Color("241d16"))
+		head_h = r * 0.76
+	head_h *= 1.0 + 0.07 * sin(sp.stride * 2.0) * moving
+	var hr := head_h * 0.5
 	var head_set := sp.data.head_id if sp.data.head_id != "" else "1"
-	var head_tex := HeadArtDB.head_texture(head_set, HeadArtDB.view_for(view_name, mirrored))
+	var head_view := HeadArtDB.view_for(view_name, mirrored)
+	var head_tex := HeadArtDB.head_texture(head_set, head_view)
 	if head_tex == null:
+		draw_circle(hp, hr * 1.12, Color("241d16"))
 		draw_circle(hp, hr, head)
 	else:
-		# Turns with the body, so the face still points where he's going once
-		# a tackle starts tipping him over. The sprite is cropped square to
-		# the head itself, so the rect IS the head - no inset to account for.
-		draw_set_transform(hp, axis.angle() - UP.angle(), Vector2.ONE)
-		draw_texture_rect(head_tex, Rect2(Vector2(-hr, -hr), Vector2(hr, hr) * 2.0),
+		# The head art carries its own black outline, baked to match the
+		# body's (assets/heads_outlined/_outline_heads.py). head_h is the
+		# FACE's size - hair or anything else past the round face overflows
+		# around it (HeadArtDB.face_draw_rect) rather than shrinking it.
+		draw_set_transform(hp, head_rot, Vector2.ONE)
+		draw_texture_rect(head_tex, HeadArtDB.face_draw_rect(head_set, head_view, head_tex, head_h),
 			false, head_tint)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 

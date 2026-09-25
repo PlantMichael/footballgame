@@ -73,6 +73,7 @@ func _start_match() -> void:
 		int(opp.get("drives", 4))
 	)
 	sim.is_bowl_game = not GameState.dev_mode and GameState.round_index == GameState.bracket.size() - 1
+	sim.set_weather(GameState.next_weather)
 	sim.start_match()
 	bucks_earned = 0
 	_apply_call()
@@ -128,6 +129,8 @@ func _build_top_bar() -> void:
 	_add_sb(row, "drive", "Drive", UIKit.TEXT)
 	_add_sb(row, "down", "Down", UIKit.TEXT)
 	_add_sb(row, "spot", "Ball on", UIKit.TEXT)
+	_add_sb(row, "weather", "Weather", UIKit.TEXT)
+	_update_weather_label()
 
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -163,6 +166,13 @@ func _build_top_bar() -> void:
 		var exit_dev := UIKit.button("  Exit dev mode  ", 13)
 		exit_dev.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 		row.add_child(exit_dev)
+
+
+func _update_weather_label() -> void:
+	var l: Label = _sb["weather"]
+	l.text = WeatherDB.weather_name(sim.weather)
+	l.tooltip_text = WeatherDB.weather_desc(sim.weather)
+	l.mouse_filter = Control.MOUSE_FILTER_STOP
 
 
 func _add_sb(row: HBoxContainer, key: String, title: String, col: Color) -> void:
@@ -727,6 +737,17 @@ func _dev_defense_slider() -> Control:
 		# drop any card/sub panel in case it was pointing at one of them.
 		_dismiss_overlays())
 
+	# Cycle the match's weather to test each one without playing a run.
+	var weather_btn := UIKit.button("  DEV: Weather - %s  " % WeatherDB.weather_name(sim.weather), 13)
+	weather_btn.pressed.connect(func():
+		GameState.next_weather = WeatherDB.next_in_cycle(sim.weather)
+		sim.set_weather(GameState.next_weather)
+		# Re-run the snap-time stat pass so the new weather's effects apply.
+		_apply_call(true)
+		_update_weather_label()
+		_refresh_bar())
+	row.add_child(weather_btn)
+
 	return row
 
 
@@ -809,7 +830,8 @@ func _on_continue() -> void:
 			return
 	else:
 		_apply_call()
-		field.snap_camera()
+		# Pan back from where the play ended to the new spot, not a cut.
+		field.glide_camera()
 	_refresh_bar()
 
 
@@ -989,7 +1011,7 @@ func _finish_match() -> void:
 ## of (and can stack with) a Ritual Site visit.
 func _check_sacrificial_gloves() -> void:
 	for i in GameState.roster.size():
-		if GameState.roster[i].item_id == "sacrificial_gloves":
+		if GameState.roster[i].has_item("sacrificial_gloves"):
 			var exclude := {}
 			var cursed_names := CursedPlayerDB.all_names()
 			for p in GameState.roster:
@@ -1198,9 +1220,9 @@ func _show_card(sp: SimPlayer) -> void:
 		aura_desc.custom_minimum_size = Vector2(300, 0)
 		v.add_child(aura_desc)
 
-	if pd.item_id != "":
-		v.add_child(UIKit.label("Item: %s" % ItemDB.item_name(pd.item_id), 12, UIKit.ACCENT))
-		var it := UIKit.label(ItemDB.item_desc(pd.item_id), 12, UIKit.MUTED)
+	for item_id in pd.equipped_items():
+		v.add_child(UIKit.label("Item: %s" % ItemDB.item_name(item_id), 12, UIKit.ACCENT))
+		var it := UIKit.label(ItemDB.item_desc(item_id), 12, UIKit.MUTED)
 		it.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		it.custom_minimum_size = Vector2(300, 0)
 		v.add_child(it)

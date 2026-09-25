@@ -68,6 +68,47 @@ var carry_seconds: float = 0.0
 ## instead of running his assigned coverage/rush. See MatchSim._turned_logic.
 var turned: bool = false
 
+## Yards actually run since the snap (live movement only, not the presnap
+## shift). Reset in MatchSim.snap. Drives "slippery_trail"'s peel drops and
+## "keg_stand"'s keg.
+var odometer: float = 0.0
+
+## Odometer readings still to come at which this player drops a banana peel
+## ("slippery_trail"). Rolled at the snap, consumed in MatchSim._step_props.
+var peel_drops: Array[float] = []
+var keg_dropped: bool = false
+
+## Seconds banked toward the next "warming_up"-style per-second gain.
+var gain_timer: float = 0.0
+## "power_scramble": the scramble bonus only lands once per play.
+var run_bonus_used: bool = false
+
+## Lateral field-y of the gap a handed-off back is hitting (MatchSim.
+## _run_to_hole), or -1 before he's picked one. Reset per play.
+var run_lane_y: float = -1.0
+
+## Being driven by a stronger run blocker (see MatchSim._resolve_engagements)
+## - he goes where he's shoved and can't fight toward the ball carrier. Set
+## each frame from the previous frame's engagements.
+var driven: bool = false
+## Seconds this blocker has spent driving his current man on a run play.
+var drive_time: float = 0.0
+
+## Speed multiplier from the ground he's standing on this frame - e.g. a
+## rain puddle (WeatherDB.PUDDLE_SPEED_MULT). MatchSim._update_terrain sets
+## it every live frame.
+var terrain_mult: float = 1.0
+
+## Seconds left running at half speed after being shot ("kneecapper").
+var slowed: float = 0.0
+## Seconds until this defender can slip on a banana peel again, so one peel
+## doesn't pin him to the turf forever.
+var slip_cd: float = 0.0
+## Lured to a "keg_stand" beer keg: abandons his assignment and goes to
+## `lure_point` instead. See MatchSim._lured_logic.
+var lured: bool = false
+var lure_point: Vector2 = Vector2.ZERO
+
 ## Stat gains awarded mid-play (an ability firing at a throw, a handoff, a
 ## dodge, etc.), one entry per point so the renderer can pop them up one at
 ## a time instead of a single combined number. A "-" prefix means a loss.
@@ -105,6 +146,9 @@ func speed() -> float:
 	var mult: float = lerpf(fatigue_floor, 1.0, clampf(energy, 0.0, 1.0))
 	if disrupted > 0.0:
 		mult *= 0.55
+	if slowed > 0.0:
+		mult *= 0.5
+	mult *= terrain_mult
 	if data != null and data.aura_id == AuraDB.SPEEDFREAK:
 		mult *= 1.0 + clampf(aura_timer * AuraDB.SPEEDFREAK_RAMP, 0.0, AuraDB.SPEEDFREAK_MAX_MULT)
 	return max_speed() * mult
@@ -152,6 +196,7 @@ func move_toward_point(target: Vector2, delta: float, effort: float = 1.0) -> vo
 	if vel.length() > speed():
 		vel = vel.normalized() * speed()
 	pos += vel * delta
+	odometer += vel.length() * delta
 	stride += vel.length() * delta * 3.2
 	drain(delta, clampf(vel.length() / maxf(max_speed(), 0.01), 0.0, 1.0))
 

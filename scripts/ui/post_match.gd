@@ -21,10 +21,10 @@ func _build() -> void:
 	var champion := won and GameState.is_run_over()
 	var out_of_lives := not won and not GameState.run_active
 	var margin := int(r.get("score_us", 0)) - int(r.get("score_them", 0))
-	# The Ritual Site: a loss, or a blowout win, opens the door - but only
-	# while the run is actually continuing, since a sacrifice only matters
-	# for a roster you'll keep playing with this run.
-	var ritual_eligible := not champion and not out_of_lives and (not won or margin >= 10)
+	# The Ritual Site: a blowout either way (win or lose by 10+) opens the
+	# door - but only while the run is actually continuing, since a sacrifice
+	# only matters for a roster you'll keep playing with this run.
+	var ritual_eligible := not champion and not out_of_lives and absi(margin) >= 10
 
 	if champion:
 		MetaState.award_mark(GameState.qb_id, GameState.chosen_bowl)

@@ -131,7 +131,7 @@ static func stat_color(v: int) -> Color:
 static func stat_row(p: PlayerData, size: int = 13) -> HBoxContainer:
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
-	var mods := ItemDB.stat_mods(p.item_id)
+	var mods := ItemDB.total_stat_mods(p.items)
 	for key in STAT_KEYS:
 		var v: int = p.stat(key)
 		var l := label("%s %d" % [STAT_LABELS[key], v], size, stat_color(v))
@@ -169,18 +169,11 @@ static func body_texture(p: PlayerData, view: String = "front") -> Texture2D:
 	return load(path)
 
 
-## Head diameter as a fraction of the jersey's own drawn height, and how much
-## of that head sits above the collar rather than overlapping into it - see
-## player_portrait. Kept alongside field_view.gd's matching 0.38/r-based
-## sizing (same proportions, different coordinate system).
-const PORTRAIT_HEAD_RATIO := 0.34
-const PORTRAIT_HEAD_ABOVE_COLLAR := 0.92
-
 ## Small boxed portrait for `p`, or null if it has no body art yet - callers
 ## should skip adding it rather than show an empty box. Layers a front-facing
-## head (HeadArtDB) on top of the jersey art, anchored at that sprite's own
-## collar depth (BodyArtDB) - same idea as field_view.gd's live-match
-## rendering, just done with Control offsets instead of canvas draw calls.
+## head (HeadArtDB) on top of the jersey art where that body's rig scene puts
+## it (BodyArtDB.head_rig) - same placement field_view.gd uses on the field,
+## just done with Control offsets instead of canvas draw calls.
 static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 	var tex := body_texture(p, "front")
 	if tex == null:
@@ -192,42 +185,51 @@ static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 	var margin := 4.0
 	var inner := Vector2(size, size) - Vector2(margin, margin) * 2.0
 	var tex_size := tex.get_size()
-	var neck_frac := BodyArtDB.neck_frac("front", p.body)
+	var head_set := p.head_id if p.head_id != "" else "1"
+	var head_tex := HeadArtDB.head_texture(head_set, "front")
+	var rig := BodyArtDB.head_rig("front", p.body)
 
-	# Fitting the jersey to fill the whole box (as if drawing it alone) left
-	# no room above the collar for a head, which is why heads used to float
-	# off the top edge of the portrait entirely. The head+jersey composite is
-	# taller than the jersey by itself - shrink the jersey by that same
-	# factor so the two fit inside the box together.
-	var composite_factor := 1.0 + PORTRAIT_HEAD_RATIO * PORTRAIT_HEAD_ABOVE_COLLAR - neck_frac
-	var k := minf(inner.x / tex_size.x, inner.y / tex_size.y) / composite_factor
-	var drawn_w := tex_size.x * k
-	var drawn_h := tex_size.y * k
-	var composite_h := drawn_h * composite_factor
-	var composite_top := margin + (inner.y - composite_h) * 0.5
-	var drawn_left := margin + (inner.x - drawn_w) * 0.5
-	var drawn_top := composite_top + drawn_h * (PORTRAIT_HEAD_RATIO * PORTRAIT_HEAD_ABOVE_COLLAR - neck_frac)
+	# Everything below is in body-texture pixels, origin at the body's
+	# centre, until the final fit. The head usually pokes out above the
+	# jersey, so fit the union of the two rects - not the jersey alone - or
+	# the head ends up off the top of the box.
+	var body_size := tex_size * (rig["body_scale"] as Vector2)
+	var body_rect := Rect2((rig["body_offset"] as Vector2) * tex_size - body_size * 0.5, body_size)
+	var bounds := body_rect
+	var head_rect := Rect2()
+	var off: Vector2 = rig["offset"]
+	var face_center := Vector2(off.x * tex_size.x, off.y * tex_size.y)
+	if head_tex != null:
+		# Sized by the face; any hair past it overflows (and is included in
+		# the fit, so it doesn't poke out of the box either).
+		var face_h: float = float(rig["height"]) * tex_size.y
+		var draw := HeadArtDB.face_draw_rect(head_set, "front", head_tex, face_h)
+		head_rect = Rect2(face_center + draw.position, draw.size)
+		bounds = bounds.merge(head_rect)
+	var k := minf(inner.x / bounds.size.x, inner.y / bounds.size.y)
+	# Where the body centre (body-texture origin) lands in the box.
+	var origin := Vector2(margin, margin) + (inner - bounds.size * k) * 0.5 - bounds.position * k
 
 	var t := TextureRect.new()
 	t.texture = tex
 	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	t.position = Vector2(drawn_left, drawn_top)
-	t.size = Vector2(drawn_w, drawn_h)
+	t.position = origin + body_rect.position * k
+	t.size = body_rect.size * k
 	box.add_child(t)
 
-	var head_tex := HeadArtDB.head_texture(p.head_id if p.head_id != "" else "1", "front")
 	if head_tex != null:
-		var neck_y := drawn_top + drawn_h * neck_frac
-		var head_h := drawn_h * PORTRAIT_HEAD_RATIO
 		var head := TextureRect.new()
 		head.texture = head_tex
 		head.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		head.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		head.position = Vector2((size - head_h) * 0.5, neck_y - head_h * PORTRAIT_HEAD_ABOVE_COLLAR)
-		head.size = Vector2(head_h, head_h)
+		head.position = origin + head_rect.position * k
+		head.size = head_rect.size * k
+		# Turn about the face's centre, not the middle of the hair-and-all rect.
+		head.pivot_offset = (face_center - head_rect.position) * k
+		head.rotation = float(rig["rotation"])
 		box.add_child(head)
 
 	return box
@@ -293,12 +295,13 @@ static func player_card(p: PlayerData, show_item: bool = true) -> HBoxContainer:
 	v.add_child(ab)
 
 	if show_item:
-		var item_text := "Item: none"
-		if p.item_id != "":
-			item_text = "Item: %s (%s)" % [ItemDB.item_name(p.item_id), ItemDB.item_desc(p.item_id)]
-		var il := label(item_text, 12, ACCENT if p.item_id != "" else MUTED)
-		il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		v.add_child(il)
+		var equipped := p.equipped_items()
+		if equipped.is_empty():
+			v.add_child(label("Items: none", 12, MUTED))
+		for item_id in equipped:
+			var il := label("Item: %s (%s)" % [ItemDB.item_name(item_id), ItemDB.item_desc(item_id)], 12, ACCENT)
+			il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			v.add_child(il)
 
 	return outer
 

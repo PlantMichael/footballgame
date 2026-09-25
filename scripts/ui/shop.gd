@@ -196,6 +196,9 @@ func _item_cards() -> Array:
 		var name_label := UIKit.label(ItemDB.item_name(id), 16, UIKit.TEXT)
 		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(name_label)
+		var cat_label := UIKit.label(ItemDB.category_name(ItemDB.item_category(id)).to_upper(), 11, UIKit.ACCENT)
+		cat_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(cat_label)
 		v.add_child(UIKit.rule())
 		var d := UIKit.label(ItemDB.item_desc(id), 12, UIKit.MUTED)
 		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

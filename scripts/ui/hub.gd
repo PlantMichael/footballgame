@@ -142,6 +142,11 @@ func _matchup_panel() -> Control:
 	v.add_child(UIKit.label("%s  -  %d drives  -  difficulty %s" % [
 		opp["round"], opp["drives"], _difficulty_stars(GameState.current_match_quality())
 	], 15, UIKit.MUTED))
+	var forecast := UIKit.label("Forecast: %s - %s" % [WeatherDB.weather_name(GameState.next_weather),
+		WeatherDB.weather_desc(GameState.next_weather)], 14,
+		UIKit.MUTED if GameState.next_weather == WeatherDB.CLEAR else UIKit.ACCENT)
+	forecast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(forecast)
 
 	v.add_child(UIKit.vsep(6))
 	v.add_child(UIKit.rule())

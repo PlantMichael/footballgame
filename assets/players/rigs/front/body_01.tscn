@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3 uid="uid://bj53h8es74rat"]
+
+[ext_resource type="Texture2D" uid="uid://b6s6cbitwq3xo" path="res://assets/players/front/body_01.png" id="1_body"]
+[ext_resource type="Texture2D" uid="uid://drxrbvk47svrc" path="res://assets/heads_outlined/headforward.png" id="2_head"]
+
+[node name="Body01Front" type="Node2D"]
+
+[node name="Body" type="Sprite2D" parent="."]
+texture = ExtResource("1_body")
+metadata/_edit_lock_ = true
+
+[node name="Head" type="Sprite2D" parent="."]
+position = Vector2(-1, -97)
+scale = Vector2(0.188106, 0.184074)
+texture = ExtResource("2_head")
+region_enabled = true
+region_rect = Rect2(255, 133, 496, 496)

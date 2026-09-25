@@ -19,7 +19,12 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 @export var intelligence: int = 8
 
 @export var ability_id: String = ""
-@export var item_id: String = ""
+
+## One item slot per equipment category: items[i] holds his
+## ItemDB.CATEGORIES[i] item (helmet, gloves, cleats). Always exactly
+## ITEM_SLOTS entries long; "" is an empty slot.
+const ITEM_SLOTS := 3
+@export var items: Array[String] = ["", "", ""]
 
 ## Difficulty-scaled defender special power (see AuraDB, GameState.aura_count).
 ## Only ever set on generated opposing defenders, never on the player's roster.
@@ -38,6 +43,19 @@ const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
 ## named player's own unique head. "" means "not rolled yet"; callers should
 ## fall back to "1" rather than leaving it empty.
 @export var head_id: String = ""
+
+
+## The ids actually equipped, empty slots skipped.
+func equipped_items() -> Array[String]:
+	var out: Array[String] = []
+	for id in items:
+		if id != "":
+			out.append(id)
+	return out
+
+
+func has_item(id: String) -> bool:
+	return items.has(id)
 
 
 func pos_name() -> String:
@@ -100,7 +118,7 @@ func duplicate_player() -> PlayerData:
 	p.stamina = stamina
 	p.intelligence = intelligence
 	p.ability_id = ability_id
-	p.item_id = item_id
+	p.items = items.duplicate()
 	p.aura_id = aura_id
 	p.quality = quality
 	p.body = body

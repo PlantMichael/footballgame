@@ -43,6 +43,7 @@ scripts/
   ui/          ui_kit, field_view, route_thumb, play_diagram, one script per screen
 scenes/        one .tscn per screen; each is a bare Control that its script fills in
 data/          shop_players.json - the hardcoded shop roster as data, not code
+               items.json - every item (helmet/gloves/cleats); field list in item_db.gd
 tools/         headless test and tuning harnesses (not part of the game)
 ```
 
@@ -176,6 +177,8 @@ godot --headless --path . res://tools/sim_test.tscn   # balance stats per bracke
 godot --headless --path . res://tools/routesim.tscn   # the same, but for drawn routes
 godot --headless --path . res://tools/yac_check.tscn   # post-catch route-following check
 godot --headless --path . res://tools/ability_check.tscn  # does a passer ability reach the catch roll
+godot --headless --path . res://tools/prop_check.tscn  # peels/chains/kegs/slot machine + mid-play stat gainers fire
+godot --headless --path . res://tools/handoff_check.tscn  # yards per carry and who tackles, on Hand Off plays
 godot --headless --path . res://tools/sweep.tscn      # win rate vs roster quality
 godot --headless --path . res://tools/trace.tscn      # step-by-step trace of one play
 godot --path . res://tools/uiflow.tscn                # end-to-end match through the UI
@@ -235,6 +238,12 @@ defense wins comfortably, an even matchup wins roughly 40%.
   front-view aspect ratios run 0.57 to 1.39 - so box-fitting drew the wide ones
   as squat blobs and the narrow ones as tall slivers at visibly different
   sizes. Matching area instead evens them out without touching the art.
+- **Head placement is authored in rig scenes, not code**
+  (`assets/players/rigs/<view>/body_0N.tscn`, read by `BodyArtDB.head_rig`).
+  Each body/view is a Node2D with a locked "Body" sprite and a "Head" sprite:
+  open one in the editor, drag/scale/rotate the Head, save. The field and the
+  shop/book portraits both pick it up. Front-view `_dark`/`_pale` skin-tone
+  variants share the plain body's rig.
 - **The team disc is a rim, not a fill** (`field_view.DISC_ALPHA`). The jersey
   art is a fixed navy for both sides, so with the disc faded out the two teams
   became genuinely indistinguishable on the field. The fill stays near

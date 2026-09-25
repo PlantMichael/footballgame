@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Texture2D" path="res://assets/players/back/body_02.png" id="1_body"]
+[ext_resource type="Texture2D" path="res://assets/heads_outlined/headback.png" id="2_head"]
+
+[node name="Body02Back" type="Node2D"]
+
+[node name="Body" type="Sprite2D" parent="."]
+texture = ExtResource("1_body")
+metadata/_edit_lock_ = true
+
+[node name="Head" type="Sprite2D" parent="."]
+position = Vector2(0, -101.39)
+scale = Vector2(0.1895, 0.1895)
+texture = ExtResource("2_head")
+region_enabled = true
+region_rect = Rect2(255, 133, 496, 496)

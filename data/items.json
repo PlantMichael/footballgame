@@ -1,0 +1,169 @@
+[
+	{
+		"id": "oxygen_mask",
+		"name": "Oxygen Mask",
+		"category": "helmet",
+		"desc": "+5 Stamina. Fatigue sets in far later.",
+		"cost": 75,
+		"mods": {
+			"stamina": 5
+		}
+	},
+	{
+		"id": "shoulder_cannons",
+		"name": "Shoulder Cannons",
+		"category": "helmet",
+		"desc": "+2 Strength and +12% on contact rolls.",
+		"cost": 140,
+		"mods": {
+			"strength": 2
+		},
+		"contact": 0.12
+	},
+	{
+		"id": "visor_optics",
+		"name": "Visor Optics",
+		"category": "helmet",
+		"desc": "+2 Intelligence and +2 Dexterity.",
+		"cost": 150,
+		"mods": {
+			"intelligence": 2,
+			"dexterity": 2
+		}
+	},
+	{
+		"id": "war_paint",
+		"name": "War Paint",
+		"category": "helmet",
+		"desc": "+1 to every stat.",
+		"cost": 200,
+		"mods": {
+			"strength": 1,
+			"agility": 1,
+			"dexterity": 1,
+			"stamina": 1,
+			"intelligence": 1
+		}
+	},
+	{
+		"id": "wristband_script",
+		"name": "Wristband Script",
+		"category": "helmet",
+		"desc": "+3 Intelligence.",
+		"cost": 85,
+		"mods": {
+			"intelligence": 3
+		}
+	},
+	{
+		"id": "chain_gang_belt",
+		"name": "Chain Gang Belt",
+		"category": "gloves",
+		"desc": "+10% catch chance, -1 Agility.",
+		"cost": 120,
+		"mods": {
+			"agility": -1
+		},
+		"catch": 0.1
+	},
+	{
+		"id": "greased_jersey",
+		"name": "Greased Jersey",
+		"category": "gloves",
+		"desc": "+18% to break tackles while carrying.",
+		"cost": 130,
+		"mods": {},
+		"contact": 0.18,
+		"contact_roles": [
+			"carry"
+		]
+	},
+	{
+		"id": "lineman_mitts",
+		"name": "Lineman Mitts",
+		"category": "gloves",
+		"desc": "+20% on blocking contact rolls, -2 Dexterity.",
+		"cost": 110,
+		"mods": {
+			"dexterity": -2
+		},
+		"contact": 0.2,
+		"contact_roles": [
+			"block"
+		]
+	},
+	{
+		"id": "sacrificial_gloves",
+		"name": "Sacrificial Gloves",
+		"category": "gloves",
+		"desc": "At the end of the match, the player wearing these is sacrificed - you receive one random Cursed player in return.",
+		"cost": 300,
+		"mods": {}
+	},
+	{
+		"id": "stickum_gloves",
+		"name": "Stickum Gloves",
+		"category": "gloves",
+		"desc": "+2 Dexterity and +6% catch chance.",
+		"cost": 120,
+		"mods": {
+			"dexterity": 2
+		},
+		"catch": 0.06
+	},
+	{
+		"id": "weighted_ball",
+		"name": "Weighted Ball",
+		"category": "gloves",
+		"desc": "+4 Dexterity, -2 Intelligence. Big arm, questionable reads.",
+		"cost": 125,
+		"mods": {
+			"dexterity": 4,
+			"intelligence": -2
+		}
+	},
+	{
+		"id": "ankle_braces",
+		"name": "Ankle Braces",
+		"category": "cleats",
+		"desc": "+2 Agility and +2 Stamina.",
+		"cost": 115,
+		"mods": {
+			"agility": 2,
+			"stamina": 2
+		}
+	},
+	{
+		"id": "foam_pads",
+		"name": "Foam Pads",
+		"category": "cleats",
+		"desc": "+4 Agility, -3 Strength.",
+		"cost": 100,
+		"mods": {
+			"agility": 4,
+			"strength": -3
+		}
+	},
+	{
+		"id": "lead_vest",
+		"name": "Lead Vest",
+		"category": "cleats",
+		"desc": "+3 Strength, -1 Agility.",
+		"cost": 90,
+		"mods": {
+			"strength": 3,
+			"agility": -1
+		}
+	},
+	{
+		"id": "track_cleats",
+		"name": "Track Cleats",
+		"category": "cleats",
+		"desc": "+3 Agility, -1 Strength.",
+		"cost": 90,
+		"mods": {
+			"agility": 3,
+			"strength": -1
+		}
+	}
+]

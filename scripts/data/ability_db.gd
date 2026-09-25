@@ -109,6 +109,37 @@ extends RefCounted
 ##                            mutates PlayerData.dexterity directly rather than a per-play
 ##                            eff bonus, since it's meant to persist match to match.
 ##                            MatchSim._throw.
+##   drops_banana_peels()   -> int, default 0. Drops this many peels at random points along
+##                            his run each play; they stay on the field until the next drive
+##                            and trip any defender who steps on one. MatchSim._step_props.
+##   gain_per_second()      -> Dictionary {"stat": String, "amount": int}, default {}. Gains
+##                            the stat every second the play is live - gone again next play,
+##                            since `eff` is rebuilt at every snap. MatchSim._step_timed_gains.
+##   undrawn_route_bonus()  -> Dictionary of stat deltas granted at the snap when the coach
+##                            left his route blank (he's running a random stock route),
+##                            default {}. MatchSim._snap_gains.
+##   chains_defenders()     -> float chain length in yards, default 0.0. The 2 defenders
+##                            nearest his alignment are chained together for the play and
+##                            can never get further apart than this. MatchSim._apply_chain.
+##   zero_dex_in_endzone()  -> bool, default false. His Dexterity is 0 for any catch he
+##                            tries in the end zone, which always drops. MatchSim._resolve_catch.
+##   cripples_nearest_defender() -> float seconds, default 0.0. At the snap he shoots the
+##                            defender nearest him, who runs at half speed for this long.
+##                            MatchSim._snap_gains / SimPlayer.slowed.
+##   on_scramble_bonus()    -> Dictionary of stat deltas granted the moment he (a QB) takes
+##                            off running with the ball, default {}. MatchSim._qb_logic.
+##   on_handoff_bonus()     -> Dictionary of stat deltas granted when he takes a handoff
+##                            (not a catch), default {}. MatchSim._do_handoff.
+##   copies_team_gains()    -> bool, default false. Whenever a teammate gains stats mid-play,
+##                            he gains the same stats. MatchSim._gain_stat.
+##   random_stat_at_snap()  -> int, default 0. +this much to one random stat at every snap.
+##                            MatchSim._snap_gains.
+##   drops_keg_after_yards() -> float, default 0.0. Once he's run this far in a play he
+##                            drops a beer keg, and the 2 defenders nearest it abandon their
+##                            assignments to go stand at it. MatchSim._step_props.
+##   slot_machine_chance()  -> float [0-1], default 0.0. Drops a slot machine at the snap;
+##                            if it hits, every teammate gets +MatchSim.JACKPOT_BONUS to
+##                            every stat for the play. MatchSim._step_props.
 ##
 ## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
 ## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
@@ -417,6 +448,66 @@ const ABILITIES := {
 		"desc": "Permanently gains 1 Dexterity for every 10 air yards he throws.",
 		"dex_per_throw_yards": Callable(AbilityDB, "_dex_per_throw_yards_gunslinger_growth"),
 	},
+	"slippery_trail": {
+		"name": "Slippery Trail",
+		"desc": "Leaves 2 banana peels at random spots along his route every play. They stay on the field until the next drive, and any defender who steps on one goes down.",
+		"drops_banana_peels": Callable(AbilityDB, "_drops_banana_peels_slippery_trail"),
+	},
+	"warming_up": {
+		"name": "Warming Up",
+		"desc": "+1 Strength for every second the play goes on. Resets when the play is over.",
+		"gain_per_second": Callable(AbilityDB, "_gain_per_second_warming_up"),
+	},
+	"sigma_grindset": {
+		"name": "Sigma Grindset",
+		"desc": "+4 Agility if no route is drawn for him.",
+		"undrawn_route_bonus": Callable(AbilityDB, "_undrawn_route_bonus_sigma_grindset"),
+	},
+	"dark_chains": {
+		"name": "Dark Chains",
+		"desc": "Chains the 2 defenders nearest him together with a 5 yard chain for the play.",
+		"chains_defenders": Callable(AbilityDB, "_chains_defenders_dark_chains"),
+	},
+	"wasted_potential": {
+		"name": "Wasted Potential",
+		"desc": "Great hands everywhere except the end zone, where his Dexterity drops to 0 and he can't catch the ball at all.",
+		"zero_dex_in_endzone": Callable(AbilityDB, "_zero_dex_in_endzone_wasted_potential"),
+	},
+	"kneecapper": {
+		"name": "Kneecapper",
+		"desc": "At the snap, shoots the defender closest to him, who runs at half speed for 5 seconds.",
+		"cripples_nearest_defender": Callable(AbilityDB, "_cripples_nearest_defender_kneecapper"),
+	},
+	"power_scramble": {
+		"name": "Power Scramble",
+		"desc": "+4 Strength when he takes off running with the ball.",
+		"on_scramble_bonus": Callable(AbilityDB, "_on_scramble_bonus_power_scramble"),
+	},
+	"knock_knock": {
+		"name": "Knock Knock",
+		"desc": "+3 Agility when he takes a handoff.",
+		"on_handoff_bonus": Callable(AbilityDB, "_on_handoff_bonus_knock_knock"),
+	},
+	"copycat": {
+		"name": "Copycat",
+		"desc": "Whenever a teammate gains stats during a play, he gains them too.",
+		"copies_team_gains": Callable(AbilityDB, "_copies_team_gains_copycat"),
+	},
+	"tainted_blessing": {
+		"name": "Tainted Blessing",
+		"desc": "+4 to a random stat at the start of every play.",
+		"random_stat_at_snap": Callable(AbilityDB, "_random_stat_at_snap_tainted_blessing"),
+	},
+	"keg_stand": {
+		"name": "Keg Stand",
+		"desc": "10 yards into his route, drops a beer keg. The 2 defenders nearest it drop what they're doing and go to it.",
+		"drops_keg_after_yards": Callable(AbilityDB, "_drops_keg_after_yards_keg_stand"),
+	},
+	"jackpot": {
+		"name": "Jackpot",
+		"desc": "Drops a slot machine at the start of the play. If it hits (33%), every teammate gets +2 to every stat for the play.",
+		"slot_machine_chance": Callable(AbilityDB, "_slot_machine_chance_jackpot"),
+	},
 }
 
 
@@ -650,6 +741,67 @@ static func perfect_aim(id: String) -> bool:
 ## (no growth). E.g. 0.1 means +1 Dexterity every 10 air yards.
 static func dex_per_throw_yards(id: String) -> float:
 	return _dispatch(id, "dex_per_throw_yards", [], 0.0)
+
+
+## Banana peels dropped along his run each play, default 0.
+static func drops_banana_peels(id: String) -> int:
+	return _dispatch(id, "drops_banana_peels", [], 0)
+
+
+## {"stat": String, "amount": int} gained every live second, default {}.
+static func gain_per_second(id: String) -> Dictionary:
+	return _dispatch(id, "gain_per_second", [], {})
+
+
+## Stat deltas granted at the snap when his route was left undrawn.
+static func undrawn_route_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "undrawn_route_bonus", [], {})
+
+
+## Length in yards of the chain he puts between the 2 defenders nearest
+## him, default 0.0 (no chain).
+static func chains_defenders(id: String) -> float:
+	return _dispatch(id, "chains_defenders", [], 0.0)
+
+
+## True if his Dexterity is 0 for a catch attempted in the end zone.
+static func zero_dex_in_endzone(id: String) -> bool:
+	return _dispatch(id, "zero_dex_in_endzone", [], false)
+
+
+## Seconds the defender nearest him at the snap is slowed for, default 0.0.
+static func cripples_nearest_defender(id: String) -> float:
+	return _dispatch(id, "cripples_nearest_defender", [], 0.0)
+
+
+## Stat deltas granted the moment this QB takes off running.
+static func on_scramble_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "on_scramble_bonus", [], {})
+
+
+## Stat deltas granted when this player takes a handoff.
+static func on_handoff_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "on_handoff_bonus", [], {})
+
+
+## True if this player mirrors every mid-play stat gain his teammates get.
+static func copies_team_gains(id: String) -> bool:
+	return _dispatch(id, "copies_team_gains", [], false)
+
+
+## Amount added to one random stat at every snap, default 0.
+static func random_stat_at_snap(id: String) -> int:
+	return _dispatch(id, "random_stat_at_snap", [], 0)
+
+
+## Yards into a play at which he drops a beer keg, default 0.0 (never).
+static func drops_keg_after_yards(id: String) -> float:
+	return _dispatch(id, "drops_keg_after_yards", [], 0.0)
+
+
+## Chance the slot machine he drops at the snap hits, default 0.0 (no machine).
+static func slot_machine_chance(id: String) -> float:
+	return _dispatch(id, "slot_machine_chance", [], 0.0)
 
 
 # ============================================================================
@@ -954,3 +1106,51 @@ static func _perfect_aim_twohands_aim() -> bool:
 
 static func _dex_per_throw_yards_gunslinger_growth() -> float:
 	return 0.1
+
+
+static func _drops_banana_peels_slippery_trail() -> int:
+	return 2
+
+
+static func _gain_per_second_warming_up() -> Dictionary:
+	return {"stat": "strength", "amount": 1}
+
+
+static func _undrawn_route_bonus_sigma_grindset() -> Dictionary:
+	return {"agility": 4}
+
+
+static func _chains_defenders_dark_chains() -> float:
+	return 5.0
+
+
+static func _zero_dex_in_endzone_wasted_potential() -> bool:
+	return true
+
+
+static func _cripples_nearest_defender_kneecapper() -> float:
+	return 5.0
+
+
+static func _on_scramble_bonus_power_scramble() -> Dictionary:
+	return {"strength": 4}
+
+
+static func _on_handoff_bonus_knock_knock() -> Dictionary:
+	return {"agility": 3}
+
+
+static func _copies_team_gains_copycat() -> bool:
+	return true
+
+
+static func _random_stat_at_snap_tainted_blessing() -> int:
+	return 4
+
+
+static func _drops_keg_after_yards_keg_stand() -> float:
+	return 10.0
+
+
+static func _slot_machine_chance_jackpot() -> float:
+	return 0.33

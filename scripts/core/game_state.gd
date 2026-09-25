@@ -32,6 +32,11 @@ var losses: int = 0
 const MATCH_QUALITY_STEP := 0.15
 var matches_played: int = 0
 
+## Weather for the next match (WeatherDB id). Always clear for a run's first
+## match; rolled in finish_match for each one after, so the hub can show the
+## forecast. Dev mode changes it from the match screen.
+var next_weather: String = WeatherDB.CLEAR
+
 ## How many times the Ritual Site has been used this run. The sacrifice cost
 ## escalates with it (see RitualSite.SACRIFICE_COUNT) - 2 players the first
 ## visit, 3 the next, and so on - so repeat trips for cursed players cost
@@ -114,6 +119,7 @@ func new_run(seed_value: int = 0, qb_id: int = -1) -> void:
 	round_index = 0
 	losses = 0
 	matches_played = 0
+	next_weather = WeatherDB.CLEAR
 	rituals_completed = 0
 	run_active = true
 	last_result = {}
@@ -141,6 +147,7 @@ func start_dev_mode() -> void:
 	round_index = 0
 	losses = 0
 	matches_played = 0
+	next_weather = WeatherDB.CLEAR
 	rituals_completed = 0
 	run_active = true
 	last_result = {}
@@ -470,25 +477,34 @@ func clear_routes() -> void:
 
 # --- Items ------------------------------------------------------------------
 
+## Puts `item_id` from the bag on roster player `roster_index`, in the slot
+## for its category (ItemDB.slot_for) - a player wears one helmet, one pair
+## of gloves and one pair of cleats. Whatever he had in that slot goes back
+## in the bag.
 func equip_item(item_id: String, roster_index: int) -> void:
 	if roster_index < 0 or roster_index >= roster.size():
 		return
+	var slot_index := ItemDB.slot_for(item_id)
+	if slot_index < 0 or not inventory.has(item_id):
+		return
 	var p: PlayerData = roster[roster_index]
-	if p.item_id != "":
-		inventory.append(p.item_id)
+	if p.items[slot_index] != "":
+		inventory.append(p.items[slot_index])
 	inventory.erase(item_id)
-	p.item_id = item_id
+	p.items[slot_index] = item_id
 	roster_changed.emit()
 
 
-func unequip_item(roster_index: int) -> void:
+func unequip_item(roster_index: int, slot_index: int) -> void:
 	if roster_index < 0 or roster_index >= roster.size():
 		return
-	var p: PlayerData = roster[roster_index]
-	if p.item_id == "":
+	if slot_index < 0 or slot_index >= PlayerData.ITEM_SLOTS:
 		return
-	inventory.append(p.item_id)
-	p.item_id = ""
+	var p: PlayerData = roster[roster_index]
+	if p.items[slot_index] == "":
+		return
+	inventory.append(p.items[slot_index])
+	p.items[slot_index] = ""
 	roster_changed.emit()
 
 
@@ -515,8 +531,7 @@ func cut_player(roster_index: int) -> void:
 	if roster_index < 0 or roster_index >= roster.size():
 		return
 	var p: PlayerData = roster[roster_index]
-	if p.item_id != "":
-		inventory.append(p.item_id)
+	inventory.append_array(p.equipped_items())
 	roster.remove_at(roster_index)
 	# Rebuild the lineup because every index above the cut shifted down.
 	var rebuilt := {}
@@ -533,6 +548,7 @@ func cut_player(roster_index: int) -> void:
 
 func finish_match(won: bool) -> void:
 	matches_played += 1
+	next_weather = WeatherDB.roll(rng)
 	if round_index < bracket.size():
 		bracket[round_index]["result"] = "W" if won else "L"
 	if won:

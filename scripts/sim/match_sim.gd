@@ -86,6 +86,15 @@ var opponent_name: String = "Opponent"
 ## is_bowl_game ctx key. Never true in dev mode.
 var is_bowl_game: bool = false
 
+## This match's weather (a WeatherDB id) - see set_weather. Stat effects land
+## in _apply_modifiers; rain puddles live in `puddles`.
+var weather: String = WeatherDB.CLEAR
+
+## Rain puddles: {"pos": Vector2 (yards), "r": float radius, "stretch": float
+## ellipse aspect for the renderer}. Anyone standing in one runs at
+## WeatherDB.PUDDLE_SPEED_MULT speed.
+var puddles: Array = []
+
 # --- Play state -------------------------------------------------------------
 
 var offense: Array[SimPlayer] = []   # index 0..10, matching GameState.SLOT_ORDER
@@ -103,6 +112,38 @@ var catch_shakes: Array = []
 ## big multi-directional shake each, bigger than an ordinary catch_shakes
 ## entry. Purely presentational.
 var big_shakes: Array = []
+
+# --- Ability props on the field (field_view.gd draws these) ------------------
+
+## "slippery_trail" peels, in field yards. Unlike everything else below these
+## outlive the play - they're only swept up in begin_drive.
+var banana_peels: Array[Vector2] = []
+const PEEL_RADIUS := 0.9
+const SLIP_STUN := 1.2
+const SLIP_COOLDOWN := 2.5
+
+## "dark_chains": [SimPlayer, SimPlayer, float length] per chained pair. Set
+## in _align_defense so the chain is visible before the snap.
+var chains: Array = []
+
+## "keg_stand" kegs dropped this play, in field yards.
+var kegs: Array[Vector2] = []
+const KEG_LURE_COUNT := 2
+## A lured defender still reacts to a ball carrier who comes this close.
+const KEG_BREAK_DIST := 3.0
+
+## "jackpot": {} when nobody dropped one this play, otherwise {"pos": Vector2,
+## "owner": SimPlayer, "chance": float, "resolved": bool, "hit": bool}. It
+## spins for SLOT_SPIN_TIME after the snap before paying out (or not).
+var slot_machine: Dictionary = {}
+const SLOT_SPIN_TIME := 1.0
+const JACKPOT_BONUS := 2
+
+## "kneecapper" shots fired this play: {"from": SimPlayer, "to": SimPlayer}.
+## Purely for field_view.gd's muzzle-flash tracer.
+var shots: Array = []
+
+const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
 
 ## For flexes nobody drew a route for: slot -> the RouteBook.STOCK id they
 ## were handed this snap, so the chalkboard can name it instead of just
@@ -229,6 +270,14 @@ func regenerate_defense(rng_src: RandomNumberGenerator, quality: float) -> void:
 	opponent_quality = quality
 	_roster_defense = Generator.make_defense(rng_src, quality, GameState.aura_count(rng_src))
 	_build_defense()
+	# Nobody may keep blocking (or be locked onto) a defender who no longer
+	# exists. _assign_blocks keeps any mark that still looks like a threat,
+	# and a replaced defender's last role usually still does - so without
+	# this every lineman stayed pinned to a ghost while the new front four
+	# ran through untouched.
+	for sp in offense:
+		sp.mark = _pick_dedicated_target() if AbilityDB.dedicated_blocker(sp.data.ability_id) else null
+		sp.engaged = false
 	if not play.is_empty():
 		_align_defense()
 		for sp in defense:
@@ -377,6 +426,10 @@ func begin_drive() -> void:
 	priority_targets.clear()
 	planned_action = ""
 	planned_handoff_slot = ""
+	banana_peels.clear()
+	# The rain keeps coming: a few more puddles every drive after the first.
+	if weather == WeatherDB.RAINY and drive_num > 1:
+		_spawn_puddles(WeatherDB.PUDDLES_PER_DRIVE)
 	# Everybody catches their breath between drives.
 	for sp in offense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
@@ -384,6 +437,35 @@ func begin_drive() -> void:
 	for sp in defense:
 		sp.energy = minf(1.0, sp.energy + 0.55)
 	log_line("--- Drive %d of %d, ball on the %s ---" % [drive_num, total_drives, yard_line_text(los)])
+
+
+## Sets the match's weather. Call before start_match (or, in dev mode,
+## between plays - the caller re-aligns so the stat effects take hold).
+func set_weather(id: String) -> void:
+	weather = id
+	puddles.clear()
+	if weather == WeatherDB.RAINY:
+		_spawn_puddles(WeatherDB.PUDDLES_AT_START)
+
+
+func _spawn_puddles(count: int) -> void:
+	for i in count:
+		puddles.append({
+			"pos": Vector2(rng.randf_range(OWN_GOAL - 5.0, GOAL_LINE + 5.0), rng.randf_range(3.0, FIELD_W - 3.0)),
+			"r": rng.randf_range(WeatherDB.PUDDLE_RADIUS_MIN, WeatherDB.PUDDLE_RADIUS_MAX),
+			"stretch": rng.randf_range(0.6, 1.0),
+		})
+
+
+## Every player's footing this frame - slowed while standing in a puddle.
+func _update_terrain() -> void:
+	for group in [offense, defense]:
+		for sp in group:
+			sp.terrain_mult = 1.0
+			for pd in puddles:
+				if sp.pos.distance_to(pd["pos"]) <= float(pd["r"]):
+					sp.terrain_mult = WeatherDB.PUDDLE_SPEED_MULT
+					break
 
 
 func yard_line_text(x: float) -> String:
@@ -485,6 +567,9 @@ func _begin_call(instant: bool) -> void:
 	# rather than letting a batch harness grow it for thousands of snaps.
 	catch_shakes.clear()
 	big_shakes.clear()
+	kegs.clear()
+	slot_machine = {}
+	shots.clear()
 	carrier = null
 	thrown_to = null
 	ball_in_air = false
@@ -594,12 +679,14 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(pd.ability_id), 15)
 		for key in base:
 			base[key] = decayed
-	for key in ItemDB.stat_mods(pd.item_id):
-		base[key] = int(base[key]) + int(ItemDB.stat_mods(pd.item_id)[key])
+	var item_mods := ItemDB.total_stat_mods(pd.items)
+	for key in item_mods:
+		base[key] = int(base[key]) + int(item_mods[key])
 	for key in match_bonus_for(pd):
 		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
 	for key in AbilityDB.snap_bonus(pd.ability_id, pd, ctx):
 		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(pd.ability_id, pd, ctx)[key])
+	_apply_weather(sp, base)
 	var agi_cap := AbilityDB.speed_cap(pd.ability_id)
 	if agi_cap < 99:
 		base["agility"] = mini(int(base["agility"]), agi_cap)
@@ -607,6 +694,21 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		base[key] = clampi(int(base[key]), 1, 15)
 	sp.eff = base
 	sp.fatigue_floor = AbilityDB.fatigue_floor(pd.ability_id)
+
+
+## This match's weather, applied to one player's stat line (both teams).
+## Wind only bothers a passer - our QB - and never takes him below
+## WINDY_QB_DEX_FLOOR (a QB already under it keeps what he has).
+func _apply_weather(sp: SimPlayer, base: Dictionary) -> void:
+	match weather:
+		WeatherDB.WINDY:
+			if sp.is_offense and sp.slot == "QB":
+				var dex := int(base["dexterity"])
+				base["dexterity"] = mini(dex, maxi(dex + WeatherDB.WINDY_QB_DEX, WeatherDB.WINDY_QB_DEX_FLOOR))
+		WeatherDB.RAINY:
+			base["agility"] = int(base["agility"]) + WeatherDB.RAINY_AGILITY
+		WeatherDB.SNOWY:
+			base["strength"] = int(base["strength"]) + WeatherDB.SNOWY_STRENGTH
 
 
 ## True if the offense should be treated as running the ball for blocking
@@ -731,11 +833,16 @@ func _align_offense() -> void:
 		# is what let two rushers come free simultaneously and overwhelm the
 		# one spare blocker who could otherwise have picked either one up.
 		sp.next_contact = FIRST_CONTACT + rng.randf_range(-0.2, 0.2)
+		sp.drive_time = 0.0
 		sp.tackle_cd = 0.0
 		sp.has_ball = (sp.slot == "QB")
 		sp.trail = PackedVector2Array([sp.pos])
 		sp.dodge_used = false
 		sp.carry_seconds = 0.0
+		sp.run_bonus_used = false
+		sp.run_lane_y = -1.0
+		sp.keg_dropped = false
+		sp.peel_drops.clear()
 		sp.pending_stat_gains.clear()
 		sp.pending_events.clear()
 		_apply_modifiers(sp, ctx)
@@ -828,6 +935,11 @@ func _align_defense() -> void:
 		sp.trail = PackedVector2Array()
 		sp.aura_timer = 0.0
 		sp.turned = false
+		sp.slowed = 0.0
+		sp.slip_cd = 0.0
+		sp.lured = false
+		sp.pending_stat_gains.clear()
+		sp.pending_events.clear()
 		_apply_modifiers(sp, ctx)
 		sp.reaction = maxf(0.15, 0.75 - float(sp.stat("intelligence")) * 0.035)
 
@@ -902,6 +1014,59 @@ func _align_defense() -> void:
 	_apply_taunt()
 	_apply_snap_push()
 	_apply_curse()
+	_apply_chain()
+
+
+## "Dark Chains": the 2 defenders nearest the holder's alignment spot are
+## chained together for the play. Their presnap spots are pulled in to fit
+## inside the chain so the snap doesn't yank anyone across the field; from
+## then on _enforce_chains keeps them within reach of each other.
+func _apply_chain() -> void:
+	chains.clear()
+	for sp in offense:
+		var length := AbilityDB.chains_defenders(sp.data.ability_id)
+		if length <= 0.0:
+			continue
+		var by_dist := defense.duplicate()
+		by_dist.sort_custom(func(a, b):
+			return a.target_pos.distance_to(sp.target_pos) < b.target_pos.distance_to(sp.target_pos))
+		if by_dist.size() < 2:
+			return
+		var a: SimPlayer = by_dist[0]
+		var b: SimPlayer = by_dist[1]
+		var gap := a.target_pos.distance_to(b.target_pos)
+		var fit := length * 0.8
+		if gap > fit:
+			var mid := (a.target_pos + b.target_pos) * 0.5
+			var dir := (a.target_pos - b.target_pos).normalized()
+			a.target_pos = mid + dir * fit * 0.5
+			b.target_pos = mid - dir * fit * 0.5
+		chains.append([a, b, length])
+		log_line("%s chains %s to %s!" % [sp.data.pname, a.data.pname, b.data.pname])
+		return
+
+
+## Pulls chained defenders back within their chain's length. The correction
+## is split between the two, so one sprinting after a receiver drags his
+## partner along - and gets held back by him in turn. A downed/stunned
+## partner is dead weight: the one still on his feet takes the whole pull.
+func _enforce_chains() -> void:
+	for c in chains:
+		var a: SimPlayer = c[0]
+		var b: SimPlayer = c[1]
+		var length: float = c[2]
+		var gap := a.pos - b.pos
+		var dist := gap.length()
+		if dist <= length or dist < 0.001:
+			continue
+		var excess := gap / dist * (dist - length)
+		var a_share := 0.5
+		if a.stunned > 0.0 and b.stunned <= 0.0:
+			a_share = 0.0
+		elif b.stunned > 0.0 and a.stunned <= 0.0:
+			a_share = 1.0
+		a.pos -= excess * a_share
+		b.pos += excess * (1.0 - a_share)
 
 
 ## "Drive Block"-style abilities (AbilityDB.pushes_defense_at_snap): shoves
@@ -1017,8 +1182,163 @@ func snap() -> void:
 		if sp.role == SimPlayer.Role.BLOCK and AbilityDB.locks_dl_at_snap(sp.data.ability_id):
 			sp.mark = _closest_lineman(sp)
 		sp.trail = PackedVector2Array([sp.pos])
+		sp.odometer = 0.0
+		sp.gain_timer = 0.0
 	phase = Phase.LIVE
 	time = 0.0
+	_snap_gains()
+
+
+## Abilities that fire the instant the ball is snapped. Unlike `snap` hooks
+## (baked silently into `eff` presnap) these happen on a live field, so their
+## stat gains pop up and count as gains for "copycat".
+func _snap_gains() -> void:
+	for sp in offense:
+		var id := sp.data.ability_id
+		if auto_route_ids.has(sp.slot):
+			var bonus := AbilityDB.undrawn_route_bonus(id)
+			for stat in bonus:
+				_gain_stat(sp, stat, int(bonus[stat]))
+		var rand_amount := AbilityDB.random_stat_at_snap(id)
+		if rand_amount != 0:
+			_gain_stat(sp, STAT_KEYS[rng.randi_range(0, STAT_KEYS.size() - 1)], rand_amount)
+		var cripple := AbilityDB.cripples_nearest_defender(id)
+		if cripple > 0.0:
+			_shoot_nearest_defender(sp, cripple)
+		var peels := AbilityDB.drops_banana_peels(id)
+		if peels > 0:
+			_roll_peel_drops(sp, peels)
+		var chance := AbilityDB.slot_machine_chance(id)
+		if chance > 0.0 and slot_machine.is_empty():
+			slot_machine = {"pos": sp.pos + Vector2(-1.2, 0.0), "owner": sp,
+				"chance": chance, "resolved": false, "hit": false}
+			log_line("%s drops a slot machine..." % sp.data.pname)
+
+
+## "Kneecapper": the defender nearest `sp` right now runs at half speed for
+## `seconds`.
+func _shoot_nearest_defender(sp: SimPlayer, seconds: float) -> void:
+	var best: SimPlayer = null
+	var best_dist := 1e9
+	for d in defense:
+		var dist := d.pos.distance_to(sp.pos)
+		if dist < best_dist:
+			best_dist = dist
+			best = d
+	if best == null:
+		return
+	best.slowed = maxf(best.slowed, seconds)
+	shots.append({"from": sp, "to": best})
+	_grant_event(best, "CRIPPLED")
+	log_line("%s shoots %s in the knee!" % [sp.data.pname, best.data.pname])
+
+
+## "Slippery Trail": pick `count` odometer readings somewhere along the run
+## he's about to make (his route's length, or a generic 15 yards for a man
+## without one) at which a peel falls off him.
+func _roll_peel_drops(sp: SimPlayer, count: int) -> void:
+	var length := 0.0
+	var prev := sp.pos
+	for wp in sp.route:
+		length += prev.distance_to(wp)
+		prev = wp
+	if length < 4.0:
+		length = 15.0
+	var drops: Array[float] = []
+	for i in count:
+		drops.append(rng.randf_range(0.15, 0.95) * length)
+	drops.sort()
+	sp.peel_drops = drops
+
+
+## Per-frame upkeep for the ability props: dropping peels and kegs as their
+## owners run, tripping defenders on peels, and paying out the slot machine.
+func _step_props(delta: float) -> void:
+	for sp in offense:
+		while not sp.peel_drops.is_empty() and sp.odometer >= sp.peel_drops[0]:
+			sp.peel_drops.remove_at(0)
+			banana_peels.append(sp.pos)
+		var keg_at := AbilityDB.drops_keg_after_yards(sp.data.ability_id)
+		if keg_at > 0.0 and not sp.keg_dropped and sp.odometer >= keg_at:
+			sp.keg_dropped = true
+			_drop_keg(sp)
+
+	for d in defense:
+		if d.slowed > 0.0:
+			d.slowed -= delta
+		if d.slip_cd > 0.0:
+			d.slip_cd -= delta
+			continue
+		for peel in banana_peels:
+			if d.pos.distance_to(peel) <= PEEL_RADIUS:
+				d.slip_cd = SLIP_COOLDOWN
+				d.stunned = maxf(d.stunned, SLIP_STUN)
+				d.downed = 0.0001
+				d.engaged = false
+				_grant_event(d, "SLIP!")
+				log_line("%s slips on a banana peel!" % d.data.pname)
+				break
+
+	if not slot_machine.is_empty() and not slot_machine["resolved"] and time >= SLOT_SPIN_TIME:
+		slot_machine["resolved"] = true
+		var owner: SimPlayer = slot_machine["owner"]
+		if rng.randf() < float(slot_machine["chance"]):
+			slot_machine["hit"] = true
+			big_shakes.append(1)
+			# Everybody gets it once, including the owner - not copyable,
+			# or a "copycat" would collect it ten times over.
+			for o in offense:
+				for stat in STAT_KEYS:
+					_gain_stat(o, stat, JACKPOT_BONUS, false)
+			_award(10, "JACKPOT! %s's slot machine pays out!" % owner.data.pname)
+		else:
+			log_line("%s's slot machine comes up empty." % owner.data.pname)
+
+
+## "Keg Stand": a keg lands at `sp`'s feet and the KEG_LURE_COUNT defenders
+## nearest it go to it - see _lured_logic.
+func _drop_keg(sp: SimPlayer) -> void:
+	var keg := sp.pos
+	kegs.append(keg)
+	var by_dist: Array = []
+	for d in defense:
+		if not d.turned and not d.lured:
+			by_dist.append(d)
+	by_dist.sort_custom(func(a, b): return a.pos.distance_to(keg) < b.pos.distance_to(keg))
+	for i in mini(KEG_LURE_COUNT, by_dist.size()):
+		var d: SimPlayer = by_dist[i]
+		d.lured = true
+		d.lure_point = keg + Vector2(0.0, -0.9 if i == 0 else 0.9)
+		d.engaged = false
+		_grant_event(d, "FREE BEER")
+	log_line("%s drops a keg! Free beer!" % sp.data.pname)
+
+
+## A defender lured to a keg ("keg_stand") walks over and stays there -
+## unless the ball carrier comes right to him, in which case he remembers
+## he's playing football. Returns false when he should play normally.
+func _lured_logic(d: SimPlayer, delta: float) -> bool:
+	if carrier != null and carrier.pos.distance_to(d.pos) < KEG_BREAK_DIST:
+		return false
+	if d.pos.distance_to(d.lure_point) > 0.3:
+		d.move_toward_point(d.lure_point, delta, 1.0)
+	else:
+		d.hold(delta)
+	return true
+
+
+## "Warming Up"-style abilities: +amount of a stat every live second.
+func _step_timed_gains(delta: float) -> void:
+	for sp in offense:
+		var gain := AbilityDB.gain_per_second(sp.data.ability_id)
+		if gain.is_empty():
+			continue
+		sp.gain_timer += delta
+		while sp.gain_timer >= 1.0:
+			sp.gain_timer -= 1.0
+			if sp.stat(String(gain["stat"])) >= 15:
+				continue
+			_gain_stat(sp, String(gain["stat"]), int(gain["amount"]))
 
 
 ## Nearest defensive lineman to `sp`, for abilities that claim a block
@@ -1040,11 +1360,16 @@ func step(delta: float) -> void:
 	if phase != Phase.LIVE:
 		return
 	time += delta
+	_update_terrain()
+	_step_timed_gains(delta)
 	_step_offense(delta)
 	_step_defense(delta)
+	_step_props(delta)
 	_step_ball(delta)
 	_step_contacts(delta)
 	_clamp_inbounds()
+	# After contacts: a block's push-back must not stretch a chain either.
+	_enforce_chains()
 	_record_trails()
 	_check_dead()
 
@@ -1094,6 +1419,20 @@ func _step_offense(delta: float) -> void:
 		if sp.disrupted > 0.0:
 			sp.disrupted -= delta
 		if sp == carrier and sp.slot != "QB":
+			# A handed-off back reads the line for a gap before anything else -
+			# following a route blindly ran him straight into the pile. A
+			# route the coach DREW sets which side he looks for that gap on;
+			# an undrawn one is just a random pass route, so he ignores it.
+			# Either way, once through the line he runs to daylight: a pass
+			# route's cuts (a slant's break back across the formation) sent
+			# him right back along the line into the linemen he'd just
+			# slipped past.
+			if handoff_done:
+				var drawn := sp.role == SimPlayer.Role.ROUTE and not auto_route_ids.has(sp.slot)
+				if not _run_to_hole(sp, delta, _route_lane_y(sp) if drawn else sp.pos.y,
+						HOLE_LATERAL_COST_DRAWN if drawn else HOLE_LATERAL_COST):
+					_carry_logic(sp, delta)
+				continue
 			# The route he was given gets first refusal - only once it is
 			# used up does he become an ordinary ball carrier.
 			if not _carry_route_logic(sp, delta):
@@ -1126,6 +1465,11 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 		request_scramble()
 
 	if qb_scrambling:
+		if not qb.run_bonus_used:
+			qb.run_bonus_used = true
+			var run_bonus := AbilityDB.on_scramble_bonus(qb.data.ability_id)
+			for stat in run_bonus:
+				_gain_stat(qb, stat, int(run_bonus[stat]))
 		_carry_logic(qb, delta)
 		return
 
@@ -1300,6 +1644,9 @@ func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 	qb.has_ball = false
 	rb.has_ball = true
 	_set_carrier(rb)
+	var handoff_bonus := AbilityDB.on_handoff_bonus(rb.data.ability_id)
+	for stat in handoff_bonus:
+		_gain_stat(rb, stat, int(handoff_bonus[stat]))
 	_trigger_pursuit()
 	_apply_misdirection(rb)
 	_block_for_handoff(rb)
@@ -1328,9 +1675,7 @@ func _set_carrier(sp: SimPlayer) -> void:
 	carrier = sp
 	var bonus := AbilityDB.on_carry_bonus(sp.data.ability_id)
 	for stat in bonus:
-		var amount := int(bonus[stat])
-		sp.eff[stat] = clampi(sp.stat(stat) + amount, 1, 15)
-		_grant_stat_gain(sp, stat, amount)
+		_gain_stat(sp, stat, int(bonus[stat]))
 
 
 ## Abilities that specifically trigger on RECEIVING the ball (a catch, not a
@@ -1341,8 +1686,7 @@ func _on_receive(sp: SimPlayer) -> void:
 	if AbilityDB.max_agility_on_catch(sp.data.ability_id):
 		var delta := 15 - sp.stat("agility")
 		if delta > 0:
-			sp.eff["agility"] = 15
-			_grant_stat_gain(sp, "agility", delta)
+			_gain_stat(sp, "agility", delta)
 	if AbilityDB.earthquake_on_catch(sp.data.ability_id):
 		_trigger_earthquake(sp)
 
@@ -1358,6 +1702,20 @@ func _trigger_earthquake(sp: SimPlayer) -> void:
 	for d in defense:
 		d.stunned = maxf(d.stunned, 1.0)
 	log_line("%s TRIGGERS AN EARTHQUAKE!" % sp.data.pname)
+
+
+## A mid-play stat change on an offensive player: applies it to `eff` and
+## pops it up. A gain (not a loss) is also mirrored onto any "copycat"
+## teammate, unless `copyable` is false (a team-wide gain like the jackpot,
+## which he already gets directly). A copied gain is never re-copied.
+func _gain_stat(sp: SimPlayer, stat: String, amount: int, copyable: bool = true) -> void:
+	sp.eff[stat] = clampi(sp.stat(stat) + amount, 1, 15)
+	_grant_stat_gain(sp, stat, amount)
+	if not copyable or amount <= 0 or not sp.is_offense:
+		return
+	for o in offense:
+		if o != sp and AbilityDB.copies_team_gains(o.data.ability_id):
+			_gain_stat(o, stat, amount, false)
 
 
 ## Queue one popup per point of `amount` (positive or negative) so the
@@ -1437,6 +1795,10 @@ func _open_drift(sp: SimPlayer) -> Vector2:
 	return away.normalized()
 
 
+## How close an unengaged blocker must be to keep his existing assignment
+## from frame to frame - see _assign_blocks.
+const BLOCK_CLAIM_DIST := 3.0
+
 ## One blocker per rusher. Assignments are made for the whole line at once so
 ## two linemen never claim the same defender while a third goes unblocked.
 func _assign_blocks() -> void:
@@ -1457,8 +1819,11 @@ func _assign_blocks() -> void:
 		if sp.shed_cooldown > 0.0:
 			sp.mark = null
 			continue
-		# Keep a valid existing assignment so blocks do not flicker.
-		if sp.mark != null and _is_threat(sp.mark) and sp.mark.stunned <= 0.0 and not claimed.has(sp.mark):
+		# Keep a valid existing assignment so blocks do not flicker - but only
+		# while he's actually on his man. A claim held from across the field
+		# (a receiver who flipped to blocking on a handoff) otherwise stopped
+		# a free lineman right there from picking that defender up.
+		if sp.mark != null and _is_threat(sp.mark) and sp.mark.stunned <= 0.0 and not claimed.has(sp.mark) 				and (sp.engaged or sp.pos.distance_to(sp.mark.pos) <= BLOCK_CLAIM_DIST):
 			claimed[sp.mark] = true
 			continue
 		sp.mark = null
@@ -1531,7 +1896,9 @@ func _block_logic(sp: SimPlayer, delta: float) -> void:
 
 
 func _is_threat(d: SimPlayer) -> bool:
-	if d == null:
+	# A "corruption"-cursed defender is on our side for the play - blocking
+	# him just takes a lineman off somebody real.
+	if d == null or d.turned:
 		return false
 	if d.role == SimPlayer.Role.RUSH or d.role == SimPlayer.Role.PURSUE:
 		return true
@@ -1604,12 +1971,91 @@ func _carry_route_logic(sp: SimPlayer, delta: float) -> bool:
 	return true
 
 
+## Handed-off back still behind the line: pick the lane through the line of
+## scrimmage with the most room around it and hit it, instead of running
+## straight into whoever's there. Engaged defenders still count as bodies in
+## the way - a blocked lineman can make the tackle if the runner comes right
+## to him. Sticks with his current lane unless another is clearly better, so
+## he doesn't dither between two. Returns false once he's through the line
+## and should just run (_carry_logic).
+const HOLE_DEPTH := 2.5          # yards past the LOS the lane aims for
+const HOLE_SWITCH_MARGIN := 0.4  # how much better a new lane must be to switch
+const HOLE_ENOUGH := 1.0         # clearance past tackle reach that counts as open
+const HOLE_LATERAL_COST := 0.12  # per yard of lateral cut to reach a lane
+## Same, measured from where the coach's drawn route crosses the line: a
+## lighter pull, so a jammed-up side sends him to the nearest daylight
+## instead of into the pile - the drawing says which way to lean, not that
+## he has to run into a wall.
+const HOLE_LATERAL_COST_DRAWN := 0.05
+const HOLE_CLOSED_MULT := 3.0    # how much worse a lane with no room scores
+
+## `aim_y` is the lateral spot he'd like to hit the line at - lanes further
+## from it cost `lateral_cost` per yard.
+func _run_to_hole(sp: SimPlayer, delta: float, aim_y: float, lateral_cost: float) -> bool:
+	if sp.pos.x >= los + HOLE_DEPTH - 0.5:
+		return false
+	var lane_score := func(y: float) -> float:
+		var aim := Vector2(los + HOLE_DEPTH, y)
+		# Room left past each defender's tackle reach (_tackle_reach - how
+		# well his block is holding up decides how far he can get off it).
+		# Capped, so any
+		# hole he can actually get through is as good as a wide-open one
+		# and he takes the nearest rather than bouncing to the sideline.
+		var room := HOLE_ENOUGH
+		for d in defense:
+			if d.stunned > 0.0 or d.turned:
+				continue
+			room = minf(room, _dist_to_segment(d.pos, sp.pos, aim) - _tackle_reach(d))
+		# A lane he can't actually fit through is far worse than one a
+		# couple of yards over, so he bounces to the nearest open gap
+		# rather than plowing into a closed one because it's closest.
+		if room < 0.0:
+			room *= HOLE_CLOSED_MULT
+		# Prefer the hole where he's headed over one across the formation.
+		return room - absf(y - aim_y) * lateral_cost
+	var best_y := sp.run_lane_y
+	var best := -1e9
+	if best_y >= 0.0:
+		best = lane_score.call(best_y) + HOLE_SWITCH_MARGIN
+	for i in range(-10, 11):
+		var y := clampf(aim_y + float(i), 2.0, FIELD_W - 2.0)
+		var s: float = lane_score.call(y)
+		if s > best:
+			best = s
+			best_y = y
+	sp.run_lane_y = best_y
+	sp.move_toward_point(Vector2(los + HOLE_DEPTH + 1.0, best_y), delta, 0.92)
+	return true
+
+
+## Where a drawn route crosses the hole depth (HOLE_DEPTH past the LOS) -
+## the side of the formation the coach meant this run to go. A route that
+## never gets that deep just uses where it ends.
+func _route_lane_y(sp: SimPlayer) -> float:
+	var depth := los + HOLE_DEPTH
+	var prev := sp.target_pos
+	for wp in sp.route:
+		if (prev.x - depth) * (wp.x - depth) <= 0.0 and absf(wp.x - prev.x) > 0.001:
+			return lerpf(prev.y, wp.y, (depth - prev.x) / (wp.x - prev.x))
+		prev = wp
+	return prev.y
+
+
+func _dist_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 < 0.0001:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
 func _carry_logic(sp: SimPlayer, delta: float) -> void:
 	# Head for the end zone while bending away from nearby defenders.
 	var forward := Vector2(1.0, 0.0)
 	var avoid := Vector2.ZERO
 	for d in defense:
-		if d.stunned > 0.0:
+		if d.stunned > 0.0 or d.turned:
 			continue
 		var to := sp.pos - d.pos
 		var dist := to.length()
@@ -1820,6 +2266,10 @@ func _step_defense(delta: float) -> void:
 			_turned_logic(d, delta)
 			continue
 
+		# "Keg Stand": off to the keg instead of his assignment.
+		if d.lured and _lured_logic(d, delta):
+			continue
+
 		if pursuit_triggered and carrier != null:
 			d.reaction -= delta
 			if d.reaction <= 0.0 and d.role != SimPlayer.Role.RUSH:
@@ -1855,7 +2305,9 @@ func _step_defense(delta: float) -> void:
 
 func _rush_logic(d: SimPlayer, delta: float) -> void:
 	var target := _rush_target(d)
-	if d.engaged:
+	if d.driven:
+		d.hold(delta)
+	elif d.engaged:
 		# Fighting through a block: heavy speed penalty until the shed roll wins.
 		d.move_toward_point(target, delta, 0.20)
 	else:
@@ -1968,7 +2420,9 @@ func _pursue_logic(d: SimPlayer, delta: float) -> void:
 	# Poor decision makers take worse angles and under-lead the runner.
 	var skill := clampf(float(d.stat("intelligence")) / 11.0, 0.35, 1.0)
 	var aim := carrier.pos + carrier.vel * t * skill
-	if d.engaged:
+	if d.driven:
+		d.hold(delta)
+	elif d.engaged:
 		d.move_toward_point(aim, delta, 0.2)
 	else:
 		d.move_toward_point(aim, delta, 1.0)
@@ -2035,8 +2489,14 @@ func _resolve_catch() -> void:
 	if qb != null:
 		var dex_bonus := AbilityDB.passer_dex_bonus(qb.data.ability_id, rec.data.pos)
 		if dex_bonus != 0:
-			rec.eff["dexterity"] = clampi(rec.stat("dexterity") + dex_bonus, 1, 15)
-			_grant_stat_gain(rec, "dexterity", dex_bonus)
+			_gain_stat(rec, "dexterity", dex_bonus)
+
+	# "Wasted Potential": no hands at all in the end zone - the catch roll
+	# below turns 0 Dexterity into a guaranteed drop. Set directly rather
+	# than through _gain_stat, whose 1..15 clamp would never let it hit 0.
+	if AbilityDB.zero_dex_in_endzone(rec.data.ability_id) and spot.x >= GOAL_LINE:
+		rec.eff["dexterity"] = 0
+		_grant_event(rec, "0 DEX")
 
 	# Air yards, not straight-line QB-to-target distance: a receiver split
 	# wide on a short out is a short, safe throw even though he might be 20
@@ -2044,7 +2504,7 @@ func _resolve_catch() -> void:
 	var air_yards := maxf(0.0, spot.x - los)
 	var p := rec.catch_chance_base(air_yards)
 	p += AbilityDB.catch_mod(rec.data.ability_id, ctx)
-	p += ItemDB.catch_mod(rec.data.item_id)
+	p += ItemDB.total_catch_mod(rec.data.items)
 	# Kept deliberately small: the distance/Dexterity curve above is the
 	# design contract, and heavy coverage penalties on top of it made every
 	# covered pass a drop regardless of how the curve was tuned.
@@ -2056,6 +2516,11 @@ func _resolve_catch() -> void:
 	p = clampf(p, 0.03, 0.97)
 	if AbilityDB.guarantees_catch(rec.data.ability_id):
 		p = 1.0
+	# "Wasted Potential": 0 Dexterity in the end zone means no catch at all,
+	# not merely a bad catch roll. (A teammate can still bail him out - see
+	# _find_catch_savior.)
+	if int(rec.eff.get("dexterity", 1)) <= 0:
+		p = 0.0
 
 	if rng.randf() < p:
 		rec.has_ball = true
@@ -2130,8 +2595,27 @@ func _interception(d: SimPlayer) -> void:
 ## An engaged blocker displaces his man away from the ball. This is what
 ## makes Strength matter on the line: an immovable blocker opens a hole,
 ## a weak one gets driven back into his own backfield.
+## Run-block shove, yards/second: RUN_PUSH_BASE at an even Strength matchup,
+## plus RUN_PUSH_PER_STR per point of edge, clamped.
+const RUN_PUSH_BASE := 0.4
+const RUN_PUSH_PER_STR := 0.3
+const RUN_PUSH_MIN := 0.0
+const RUN_PUSH_MAX := 3.5
+
+## A run blocker who's been driving his man for SEAL_MIN_DRIVE seconds and
+## has him SEAL_DIST yards to the side of the back's lane releases him -
+## staggered for SEAL_STAGGER_BASE plus SEAL_STAGGER_PER_STR per point of
+## Strength edge - and climbs to the next level.
+const SEAL_DIST := 2.5
+const SEAL_MIN_DRIVE := 0.4
+const SEAL_STAGGER_BASE := 0.6
+const SEAL_STAGGER_PER_STR := 0.15
+
+
 func _resolve_engagements(delta: float) -> void:
 	var ball_point := carrier.pos if carrier != null else Vector2(los - 5.0, FIELD_W * 0.5)
+	for d in defense:
+		d.driven = false
 	for b in offense:
 		if not b.engaged or b.mark == null:
 			continue
@@ -2140,14 +2624,43 @@ func _resolve_engagements(delta: float) -> void:
 		if away.length() < 0.01:
 			away = Vector2(1.0, 0.0)
 		var diff := float(b.stat("strength") - d.stat("strength"))
+		if _is_run_play():
+			# Run blocking: shove him sideways out of the lane the back is
+			# hitting (and a little downfield), harder the bigger the Strength
+			# edge - a strong line opens real holes. A blocker losing the
+			# matchup just holds his man where he is (he can still be shed -
+			# see _step_contacts) rather than walking him into the lane.
+			var lane_y := ball_point.y
+			if carrier != null and carrier.run_lane_y >= 0.0:
+				lane_y = carrier.run_lane_y
+			var side := signf(d.pos.y - lane_y)
+			if side == 0.0:
+				side = 1.0
+			var run_push := clampf(RUN_PUSH_BASE + diff * RUN_PUSH_PER_STR, RUN_PUSH_MIN, RUN_PUSH_MAX)
+			d.pos += Vector2(0.4, side).normalized() * run_push * delta
+			# Out-muscled, he goes where he's shoved rather than still
+			# working toward the runner underneath it (_rush_logic/
+			# _pursue_logic hold him), or his own steps cancel the push.
+			d.driven = diff > 0.0
+			# Sealed: shoved far enough out of the lane that he's no longer in
+			# the way. Leave him staggered and climb - _assign_blocks sends
+			# the blocker up to the next defender in the box, usually a
+			# linebacker. A stronger blocker gets there sooner, which is how
+			# the line's Strength turns into yards past the first level.
+			b.drive_time = b.drive_time + delta if d.driven else 0.0
+			if b.drive_time >= SEAL_MIN_DRIVE and absf(d.pos.y - lane_y) >= SEAL_DIST:
+				d.stunned = maxf(d.stunned, SEAL_STAGGER_BASE + diff * SEAL_STAGGER_PER_STR)
+				d.engaged = false
+				d.driven = false
+				b.engaged = false
+				b.mark = null
+				b.drive_time = 0.0
+			continue
 		# Yards per second of displacement; a losing blocker gets driven back.
 		# The lower clamp matters: a blocker losing the strength matchup should
 		# give ground slowly, not get driven into his own backfield, or an
 		# outmatched line gives up a sack on nearly every drop back.
 		var push := clampf(0.35 + diff * 0.16, -0.20, 2.4)
-		# On a run the line fires out and drive blocks rather than pass sets.
-		if _is_run_play():
-			push += 0.40
 		d.pos += away.normalized() * push * delta
 
 
@@ -2197,13 +2710,14 @@ func _step_contacts(delta: float) -> void:
 	if carrier == null:
 		return
 	for d in defense:
-		if d.stunned > 0.0 or d.tackle_cd > 0.0:
+		# A cursed defender (see _turned_logic) is blocking for the carrier,
+		# usually from right beside him - he never tackles him.
+		if d.stunned > 0.0 or d.tackle_cd > 0.0 or d.turned:
 			continue
 		var reach: float = d.pos.distance_to(carrier.pos)
 		# A defender being blocked can only make the play if the runner comes
-		# right to him; otherwise the blocker has him walled off.
-		var limit := 0.9 if d.engaged else 1.8
-		if reach > limit:
+		# close to him; otherwise the blocker has him walled off.
+		if reach > _tackle_reach(d):
 			continue
 		d.tackle_cd = 0.4
 
@@ -2217,7 +2731,7 @@ func _step_contacts(delta: float) -> void:
 
 		var chance := 0.88 + float(d.stat("strength") - carrier.stat("strength")) * 0.020
 		chance -= AbilityDB.contact_mod(carrier.data.ability_id, "carry")
-		chance -= ItemDB.contact_mod(carrier.data.item_id, "carry")
+		chance -= ItemDB.total_contact_mod(carrier.data.items, "carry")
 		if d.data.aura_id == AuraDB.BIG_BLOCKER:
 			chance += AuraDB.BIG_BLOCKER_TACKLE_BONUS
 		chance = clampf(chance, 0.12, 0.95)
@@ -2234,6 +2748,28 @@ func _step_contacts(delta: float) -> void:
 			_award(8, "%s breaks the tackle!" % carrier.data.pname)
 
 
+## How close the ball carrier has to come for `d` to get a hand on him.
+## Free, that's TACKLE_REACH_FREE. Tied up in a block it depends on who's
+## winning it: TACKLE_REACH_BLOCKED at an even Strength matchup, plus
+## TACKLE_REACH_PER_STR per point he's stronger than his blocker (reaching
+## off a weak block) or minus it per point weaker (walled off by a strong
+## one). This is how the line's Strength opens or closes running lanes.
+const TACKLE_REACH_FREE := 1.8
+const TACKLE_REACH_BLOCKED := 0.9
+const TACKLE_REACH_PER_STR := 0.12
+const TACKLE_REACH_MIN := 0.3
+
+func _tackle_reach(d: SimPlayer) -> float:
+	if not d.engaged:
+		return TACKLE_REACH_FREE
+	for b in offense:
+		if b.engaged and b.mark == d:
+			var edge := float(d.stat("strength") - b.stat("strength"))
+			return clampf(TACKLE_REACH_BLOCKED + edge * TACKLE_REACH_PER_STR,
+				TACKLE_REACH_MIN, TACKLE_REACH_FREE)
+	return TACKLE_REACH_BLOCKED
+
+
 ## Doc rule: the bigger the strength gap, the better the chance of a push-off,
 ## capped at 25% per contact. Ability and item modifiers stack on top.
 func _contact_roll(winner: SimPlayer, loser: SimPlayer, role: String) -> bool:
@@ -2242,9 +2778,9 @@ func _contact_roll(winner: SimPlayer, loser: SimPlayer, role: String) -> bool:
 	var diff := float(winner.stat("strength") - loser.stat("strength"))
 	var chance := clampf(0.06 + diff * 0.024, 0.0, 0.25)
 	chance += AbilityDB.contact_mod(winner.data.ability_id, role)
-	chance += ItemDB.contact_mod(winner.data.item_id, role)
+	chance += ItemDB.total_contact_mod(winner.data.items, role)
 	chance -= AbilityDB.contact_mod(loser.data.ability_id, role)
-	chance -= ItemDB.contact_mod(loser.data.item_id, role)
+	chance -= ItemDB.total_contact_mod(loser.data.items, role)
 	return rng.randf() < clampf(chance, 0.0, 0.85)
 
 
