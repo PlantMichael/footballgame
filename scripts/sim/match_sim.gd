@@ -2758,12 +2758,12 @@ func _step_contacts(delta: float) -> void:
 		else:
 			# He stays up, but the contact costs him his momentum and gives
 			# the rest of the pursuit time to close.
-			d.stunned = 0.5
+			d.stunned = _broken_tackle_stun(d)
 			d.downed = 0.0001
 			# The man who just got run through doesn't get a second grab at
 			# the same spot: he has to get up and chase like everyone else.
 			# (His cooldown doesn't tick while he's down, so it's this on top
-			# of the 0.5s stun.)
+			# of the time he spends on the ground.)
 			d.tackle_cd = BROKEN_TACKLE_RETRY
 			carrier.vel *= 0.5
 			carrier.disrupted = maxf(carrier.disrupted, 0.6)
@@ -2798,7 +2798,23 @@ func _tackle_reach(d: SimPlayer) -> float:
 ## three.
 const HANDOFF_BREAK_BONUS := 0.25
 
-## Seconds (after his 0.5s stun) before a defender whose tackle was just
+## How long a defender stays on the ground after the ball carrier breaks his
+## tackle: BROKEN_TACKLE_STUN normally. A running back who's stronger than
+## him puts him down for longer - BROKEN_TACKLE_STUN_PER_STR more per point
+## of Strength edge, up to BROKEN_TACKLE_STUN_MAX.
+const BROKEN_TACKLE_STUN := 0.5
+const BROKEN_TACKLE_STUN_PER_STR := 0.25
+const BROKEN_TACKLE_STUN_MAX := 3.0
+
+func _broken_tackle_stun(d: SimPlayer) -> float:
+	if carrier == null or not plays_rb(carrier):
+		return BROKEN_TACKLE_STUN
+	var edge := float(carrier.stat("strength") - d.stat("strength"))
+	return clampf(BROKEN_TACKLE_STUN + maxf(edge, 0.0) * BROKEN_TACKLE_STUN_PER_STR,
+		BROKEN_TACKLE_STUN, BROKEN_TACKLE_STUN_MAX)
+
+
+## Seconds (after his stun) before a defender whose tackle was just
 ## broken may try that again - see _step_contacts.
 const BROKEN_TACKLE_RETRY := 1.0
 
