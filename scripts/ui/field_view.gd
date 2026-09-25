@@ -137,13 +137,16 @@ const POP_RISE := 30.0             # pixels risen over its lifetime; older pops 
 var bottom_inset: float = 0.0
 
 ## Body sprite lookups, cached so _draw doesn't hit ResourceLoader every
-## frame for every player on the field. "view:body_id" -> Texture2D (or null
-## if that player has no body art yet, e.g. a hand-picked QB not assigned
-## one - those fall back to the old plain capsule).
+## frame for every player on the field. "view:body_id:head_id" -> Texture2D
+## (or null if that player has no body art yet, e.g. a hand-picked QB not
+## assigned one - those fall back to the old plain capsule). head_id is part
+## of the key because UIKit.body_texture picks a collar-skin-tone variant
+## from it for the front view - two players sharing a body id but not a head
+## id must not collide on the same cached texture.
 var _tex_cache: Dictionary = {}
 
 func _body_tex(data: PlayerData, view: String) -> Texture2D:
-	var key := "%s:%s" % [view, data.body]
+	var key := "%s:%s:%s" % [view, data.body, data.head_id]
 	if not _tex_cache.has(key):
 		_tex_cache[key] = UIKit.body_texture(data, view)
 	return _tex_cache[key]

@@ -35,6 +35,11 @@ func _ready() -> void:
 	quit.pressed.connect(func(): get_tree().quit())
 	row.add_child(quit)
 
+	var book := UIKit.button("  Player Book  ", 16)
+	book.custom_minimum_size = Vector2(180, 40)
+	book.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/player_book.tscn"))
+	row.add_child(book)
+
 	var dev := UIKit.button("  Dev mode  ", 14)
 	dev.custom_minimum_size = Vector2(140, 34)
 	dev.pressed.connect(_on_dev_mode)

@@ -8,6 +8,7 @@ extends Node
 const OUT_DIR := "user://shots"
 const SCREENS := [
 	["main_menu", "res://scenes/main_menu.tscn"],
+	["player_book", "res://scenes/player_book.tscn"],
 	["hub", "res://scenes/hub.tscn"],
 	["lineup", "res://scenes/lineup.tscn"],
 	["playbook", "res://scenes/playbook.tscn"],

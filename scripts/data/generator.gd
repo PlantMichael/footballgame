@@ -171,7 +171,8 @@ static func _pick_ability(rng: RandomNumberGenerator, pos: PlayerData.Pos) -> St
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
 
-## A full starting roster: 1 QB, 1 C, 4 T, and 8 flex bodies plus a backup QB.
+## A full starting roster: the 11 starters (1 QB, 1 C, 4 T, 5 flex) plus
+## exactly one backup QB and one backup flex body - 13 players total.
 ## Rookies land in the 2-4 stat band and have no special ability yet; both are
 ## things the shop is meant to fix over the course of a run.
 const ROOKIE_QUALITY := 3.0
@@ -183,8 +184,8 @@ static func starting_roster(rng: RandomNumberGenerator, quality: float = ROOKIE_
 	var roster: Array[PlayerData] = []
 	var q := quality
 	var counts := {
-		PlayerData.Pos.QB: 2, PlayerData.Pos.C: 1, PlayerData.Pos.T: 5,
-		PlayerData.Pos.WR: 4, PlayerData.Pos.RB: 2, PlayerData.Pos.TE: 2,
+		PlayerData.Pos.QB: 2, PlayerData.Pos.C: 1, PlayerData.Pos.T: 4,
+		PlayerData.Pos.WR: 3, PlayerData.Pos.RB: 2, PlayerData.Pos.TE: 1,
 	}
 	for pos in counts:
 		for i in int(counts[pos]):
@@ -281,12 +282,14 @@ static func _make_defender(rng: RandomNumberGenerator, role: String, quality: fl
 ## Roguelike-style pricing: driven mostly by rarity tier, so a single All
 ## Star costs most of what one win pays out, with a smaller nudge from the
 ## player's own stat line so two players of the same tier aren't identical.
-const TIER_BASE_PRICE := {0: 60, 1: 80, 2: 160, 3: 300, 4: 500}
+## Every tier costs $100 more than the old baseline, and All Star costs $200
+## more, so the top tier stays a bigger step above Veteran than before.
+const TIER_BASE_PRICE := {0: 160, 1: 180, 2: 260, 3: 400, 4: 700}
 const TIER_OVERALL_MULT := 10
 
 static func player_price(p: PlayerData) -> int:
 	if p.quality > 0:
 		var base: int = TIER_BASE_PRICE.get(p.quality, 300)
-		return int(clampi(base + p.overall() * TIER_OVERALL_MULT, base, 900))
+		return int(clampi(base + p.overall() * TIER_OVERALL_MULT, base, 1100))
 	var ovr := p.overall()
 	return int(clampi(60 + ovr * ovr * 2, 80, 600))

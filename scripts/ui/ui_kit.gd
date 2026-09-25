@@ -143,6 +143,16 @@ static func stat_row(p: PlayerData, size: int = 13) -> HBoxContainer:
 	return box
 
 
+## Which collar-skin-tone variant of the front body art goes with a given
+## head_id (HeadArtDB), so the sliver of neck the jersey shows off matches
+## the head sitting on top of it. Unlisted head ids (the default "1" roll,
+## and any other named head) fall back to the plain, no-suffix file - the
+## original tone the body art shipped with.
+const HEAD_SKIN_TONE_SUFFIX := {
+	"2": "_dark",
+	"cursed": "_pale",
+}
+
 ## Body sprite for `p`, or null if its `body` id doesn't resolve to one of
 ## the extracted assets/players/<view>/body_0N.png files (e.g. hardcoded
 ## QBDB entries that haven't had a body picked yet).
@@ -150,7 +160,10 @@ static func body_texture(p: PlayerData, view: String = "front") -> Texture2D:
 	var n := int(p.body)
 	if n < 1 or n > 9:
 		return null
-	var path := "res://assets/players/%s/body_%02d.png" % [view, n]
+	var suffix: String = HEAD_SKIN_TONE_SUFFIX.get(p.head_id, "") if view == "front" else ""
+	var path := "res://assets/players/%s/body_%02d%s.png" % [view, n, suffix]
+	if not ResourceLoader.exists(path):
+		path = "res://assets/players/%s/body_%02d.png" % [view, n]
 	if not ResourceLoader.exists(path):
 		return null
 	return load(path)
