@@ -1,0 +1,43 @@
+Agenda for today. 
+
+
+1. I want to implement an alternative to the cult sacrifice shop known as the laboratory. In the laboratory, you can pay $500 for an oddity player, a new type. Oddity players will have unique abilites and their stats will be randomized. If each stat goes to 15, lets say their total stat block will be 30, divided between all 4 stats randomly. You will only get the chance to go to the lab if you have a player rec or rush over 200 yards during a match. Oddity players will have a bright green outline and i will give examples of some below to implement.
+
+Mickey Mitosis - Oddity WR
+At the start of the play, splits in half. both players run the route with a 1 second delay between them. Their stats are divided up evenly. 
+
+Ricky Dooper IV - Oddity T
+Has a 50% chance to abandon the line and run a randomized route. If he does, gives all his strength to the lineman next to him, who then takes his lineman as well.
+
+Flixian Flopper - Oddity WR
+Has a 50% chance to not run his route and run a randomized one. If he does, gain +3 to all stats.
+
+Sfdsvd Kytgseg - Oddity TE
+Has unusually high stats. Has a 15% chance every second of melting and being out for the rest of the play. 
+
+Midas Jr. - Oddity RB
+Has slightly lower stats than normal. All actions by this character reward 2x cash 
+
+
+When thats done here are some more things to implement. 
+
+1. Make a UI that says win or lose when a match is over and gives the score, then starts a 5 second countdown which then goes back to the team screen. 
+
+2. Give players a set of small animations they can do when the game is over. Jumping up and down when they win, lying on the ground when they lose.
+
+3. Here are some players to implement:
+
+Ricky Dooper I - Veteran WR
+Give +1 to all stats for every other WR on the field, and +2 to all stats for each other Ricky Dooper on the field.
+
+Ricky Dooper II - Veteran TE
+Give +1 to all stats for every other TE on the field, and +2 to all stats for each other Ricky Dooper on the field.
+
+Ricky Dooper III - Veteran RB
+Give +1 to all stats for every other RB on the field, and +2 to all stats for each other Ricky Dooper on the field.
+
+Gaya Livingston - All star QB
+Immune to weather effects
+
+Timmy Toughknuckles - All Star T
+Immune to the snow weather effect, your entire defensive line is also immune to the snow weather effect. 
