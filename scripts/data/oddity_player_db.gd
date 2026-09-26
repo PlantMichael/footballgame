@@ -9,8 +9,8 @@ extends RefCounted
 ## hidden from the coach anyway, so it's rolled on its own rather than eating
 ## into the pool.
 ##
-## They're their own tier, ShopPlayerDB.QUALITY_ODDITY, and draw with a bright
-## green outline on the field (field_view.gd).
+## They're their own tier, ShopPlayerDB.QUALITY_ODDITY, with COLOR (bright
+## green) as their tier color - e.g. the Player Book's card outline.
 
 const COLOR := Color("39ff5a")
 

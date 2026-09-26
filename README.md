@@ -185,7 +185,7 @@ shown as buttons on the hub and forfeited at the next kickoff
   (`OddityPlayerDB`, tier `ShopPlayerDB.QUALITY_ODDITY`): a fixed name and
   bespoke ability, but a stat line rolled fresh on the spot - 30 points split
   at random over Strength/Agility/Dexterity/Intelligence (Sfdsvd Kytgseg gets
-  44, Midas Jr. 25). Oddities wear a bright green outline on the field. Their
+  44, Midas Jr. 25). Their tier color is bright green (Player Book cards). Their
   abilities (split in two, abandon the line, freelance, melt, double cash)
   are decided at the snap in `MatchSim._apply_oddities_at_snap` and
   `_step_melts`; a Mitosis half is a second `SimPlayer` sharing the original's

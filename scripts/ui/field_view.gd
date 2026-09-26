@@ -1166,11 +1166,6 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var shadow_r := r * lerpf(0.92, 0.78, fall) * (1.0 - 0.3 * hop / maxf(r * JUMP_HEIGHT, 0.01))
 	draw_circle(center + Vector2(2.0, 4.0 + hop), shadow_r, Color(0, 0, 0, 0.16))
 
-	# Laboratory Oddities (OddityPlayerDB) always wear a bright green outline,
-	# presnap included, so the coach can pick them out at a glance.
-	if sp.is_offense and sp.data.quality == ShopPlayerDB.QUALITY_ODDITY and fall < 0.5:
-		draw_arc(center, r * 1.22, 0, TAU, 30, OddityPlayerDB.COLOR, 3.5)
-
 	# Aura'd defenders (see AuraDB/GameState.aura_count) get a pulsing colored
 	# ring so the "colored enemy" reads at a glance on the field.
 	if not sp.is_offense and sp.data.aura_id != "" and fall <= 0.0:
