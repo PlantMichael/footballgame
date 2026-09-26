@@ -282,6 +282,8 @@ static func player_card(p: PlayerData, show_item: bool = true) -> HBoxContainer:
 	head.add_child(label("#%d" % p.number, 13, MUTED))
 	head.add_child(label(p.pname, 16, TEXT))
 	head.add_child(label(p.pos_name(), 13, ACCENT))
+	if p.quality == ShopPlayerDB.QUALITY_ODDITY:
+		head.add_child(label("ODDITY", 12, OddityPlayerDB.COLOR))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(spacer)

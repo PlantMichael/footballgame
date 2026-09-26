@@ -53,6 +53,21 @@ var _side_panel_mode: String = ""
 ## coach picks one and then a player to give it to.
 var pending_upgrades: Array = []
 
+## End of the match: the result panel counts down from END_COUNTDOWN and
+## then leaves for the team screen (hub) on its own - or the post-match
+## screen if the run just ended. The field keeps rendering underneath, with
+## the winners jumping and the losers flat on the turf (field_view.end_pose).
+const END_COUNTDOWN := 5.0
+var end_panel: PanelContainer
+var _end_countdown_label: Label
+var _match_ended: bool = false
+var _end_countdown: float = 0.0
+var _leaving: bool = false
+
+## "The Laboratory": one of your players has to go over this many receiving
+## or rushing yards in a single match to unlock a visit.
+const LAB_YARDS := 200.0
+
 
 func _ready() -> void:
 	UIKit.background(self)
@@ -62,6 +77,10 @@ func _ready() -> void:
 
 
 func _start_match() -> void:
+	# A Ritual Site / Laboratory visit unlocked by the last match has to be
+	# taken before this one - kicking off forfeits it.
+	GameState.ritual_available = false
+	GameState.lab_available = false
 	var opp := GameState.current_opponent()
 	var quality := GameState.current_match_quality()
 	sim = MatchSim.new()
@@ -101,6 +120,7 @@ func _build_layout() -> void:
 	_build_card()
 	_build_upgrade_panel()
 	_build_examples_panel()
+	_build_end_panel()
 
 
 func _overlay_style(alpha: float = 0.92) -> StyleBoxFlat:
@@ -244,6 +264,20 @@ func _build_upgrade_panel() -> void:
 	add_child(upgrade_panel)
 
 
+func _build_end_panel() -> void:
+	end_panel = PanelContainer.new()
+	var sb := UIKit.stylebox(Color(UIKit.PANEL_HI, 0.97), 12, 3, UIKit.ACCENT)
+	sb.content_margin_left = 36
+	sb.content_margin_right = 36
+	sb.content_margin_top = 22
+	sb.content_margin_bottom = 22
+	end_panel.add_theme_stylebox_override("panel", sb)
+	end_panel.custom_minimum_size = Vector2(520, 0)
+	end_panel.visible = false
+	end_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(end_panel)
+
+
 # ============================================================================
 # Frame update
 # ============================================================================
@@ -251,6 +285,10 @@ func _build_upgrade_panel() -> void:
 func _process(delta: float) -> void:
 	_update_top_bar()
 	_update_log()
+
+	if _match_ended:
+		_tick_end_countdown(delta)
+		return
 
 	if sim.phase != _last_phase:
 		_last_phase = sim.phase
@@ -376,7 +414,11 @@ func _refresh_bar() -> void:
 		MatchSim.Phase.DEAD:
 			bar_host.add_child(_result_bar())
 		MatchSim.Phase.DRIVE_OVER:
-			bar_host.add_child(_drive_over_bar())
+			if _match_is_over():
+				bar_host.add_child(_final_bar())
+				_begin_match_end()
+			else:
+				bar_host.add_child(_drive_over_bar())
 		_:
 			bar_host.add_child(_live_bar())
 
@@ -872,12 +914,9 @@ func _drive_over_bar() -> Control:
 			field.snap_camera()
 			_refresh_bar())
 		v.add_child(ot)
-	elif last_drive:
-		var finish := UIKit.primary_button("FINAL WHISTLE", 18)
-		finish.custom_minimum_size = Vector2(0, 40)
-		finish.pressed.connect(_finish_match)
-		v.add_child(finish)
 	else:
+		# (The match's actual last drive never gets here - _refresh_bar hands
+		# that straight to _begin_match_end instead.)
 		var next := UIKit.primary_button("NEXT DRIVE", 18)
 		next.custom_minimum_size = Vector2(0, 40)
 		next.pressed.connect(func():
@@ -915,11 +954,15 @@ func _start_upgrade_choice() -> void:
 ## trenches - and later combos avoid repeating an already-chosen player
 ## while a fresh one is still available.
 func _assign_recipients(rolled: Array) -> Array:
-	var flexes := sim.flex_players()
+	# A "Mitosis" half from the scoring play is still standing on the field -
+	# it's the same player, so it mustn't show up as a second option.
+	var not_clone := func(sp: SimPlayer) -> bool: return sp.clone_of == null
+	var flexes: Array = sim.flex_players().filter(not_clone)
+	var everyone: Array = sim.offense.filter(not_clone)
 	var chosen: Array = []
 	var out: Array = []
 	for i in rolled.size():
-		var pool: Array = flexes if (i == 0 and not flexes.is_empty()) else sim.offense
+		var pool: Array = flexes if (i == 0 and not flexes.is_empty()) else everyone
 		var avail: Array = pool.filter(func(sp): return not chosen.has(sp))
 		if avail.is_empty():
 			avail = pool
@@ -1003,7 +1046,154 @@ func _center_panel(panel: PanelContainer) -> void:
 	panel.position = (size - panel.size) * 0.5
 
 
-func _finish_match() -> void:
+## True once the final drive (regulation, or overtime) is done and nothing is
+## left to play. Dev mode's scrimmage never ends.
+func _match_is_over() -> bool:
+	return not GameState.dev_mode and sim.match_finished() and not sim.needs_overtime()
+
+
+## The final whistle: bank the result, set the players celebrating (or not),
+## and put up the result panel with its countdown back to the team screen.
+func _begin_match_end() -> void:
+	if _match_ended:
+		return
+	_match_ended = true
+	_dismiss_overlays()
+	field.draw_enabled = false
+	field.cancel_stroke()
+
+	var won := sim.won()
+	var tied := sim.tied()
+	var unlocks := _finish_match()
+
+	var us_pose := ""
+	var them_pose := ""
+	if not tied:
+		us_pose = "jump" if won else "lie"
+		them_pose = "lie" if won else "jump"
+	field.set_end_pose(us_pose, them_pose)
+
+	_show_end_panel(won, tied, unlocks)
+	_end_countdown = END_COUNTDOWN
+
+
+func _show_end_panel(won: bool, tied: bool, unlocks: Array) -> void:
+	for c in end_panel.get_children():
+		c.queue_free()
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	end_panel.add_child(v)
+
+	var champion := won and GameState.is_run_over()
+	var out_of_lives := not won and not tied and not GameState.run_active
+	var headline := "YOU WIN"
+	var col := UIKit.GOOD
+	if champion:
+		headline = "%s CHAMPIONS" % BowlDB.bowl_name(GameState.chosen_bowl).to_upper()
+		col = UIKit.ACCENT
+	elif won:
+		pass
+	elif tied:
+		headline = "TIE GAME"
+		col = UIKit.ACCENT
+	elif out_of_lives:
+		headline = "SEASON OVER"
+		col = UIKit.BAD
+	else:
+		headline = "YOU LOSE"
+		col = UIKit.BAD
+
+	var h := UIKit.label(headline, 52, col)
+	h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(h)
+
+	var score := UIKit.label("%s  %d  -  %d  %s" % [
+		GameState.team_name, sim.score_us, sim.score_them, sim.opponent_name], 24)
+	score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(score)
+	if sim.in_overtime:
+		var ot := UIKit.label("after overtime", 14, UIKit.MUTED)
+		ot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(ot)
+
+	var earned := UIKit.label("+$%d football bucks" % bucks_earned, 16, UIKit.ACCENT)
+	earned.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(earned)
+
+	# What the result costs the run, since a continuing run skips the
+	# post-match screen that used to say this.
+	var stakes := ""
+	if tied:
+		stakes = "No loss counted - but you'll have to play this round again."
+	elif not won and not out_of_lives:
+		var lives_left := GameState.MAX_LOSSES - GameState.losses
+		stakes = "%d loss%s left before the season is over." % [lives_left, "" if lives_left == 1 else "es"]
+	if stakes != "":
+		var s := UIKit.label(stakes, 14, UIKit.MUTED)
+		s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(s)
+
+	for line in unlocks:
+		var u := UIKit.label(String(line["text"]), 15, line["color"])
+		u.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		u.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(u)
+
+	v.add_child(UIKit.rule())
+
+	var dest_name := "the results" if _run_just_ended() else "the team screen"
+	_end_countdown_label = UIKit.label("", 15, UIKit.MUTED)
+	_end_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_end_countdown_label.set_meta("dest", dest_name)
+	v.add_child(_end_countdown_label)
+
+	var go := UIKit.primary_button("CONTINUE", 16)
+	go.custom_minimum_size = Vector2(0, 38)
+	go.pressed.connect(_leave_match)
+	v.add_child(go)
+
+	_update_end_countdown_label()
+	end_panel.visible = true
+	_center_panel(end_panel)
+
+
+func _tick_end_countdown(delta: float) -> void:
+	if _leaving:
+		return
+	_end_countdown -= delta
+	_update_end_countdown_label()
+	if _end_countdown <= 0.0:
+		_leave_match()
+
+
+func _update_end_countdown_label() -> void:
+	if _end_countdown_label == null:
+		return
+	_end_countdown_label.text = "Back to %s in %d..." % [
+		String(_end_countdown_label.get_meta("dest", "the team screen")),
+		maxi(1, int(ceil(_end_countdown)))]
+
+
+func _run_just_ended() -> bool:
+	return not GameState.run_active or GameState.is_run_over()
+
+
+func _leave_match() -> void:
+	if _leaving:
+		return
+	_leaving = true
+	# A finished run still gets the full post-match screen (champion's bowl
+	# badge, "start a new run"); anything else goes straight back to the hub,
+	# which already routes to the path/bowl choice, the shop, and any Ritual
+	# Site or Laboratory visit this match unlocked.
+	var dest := "res://scenes/post_match.tscn" if _run_just_ended() else "res://scenes/hub.tscn"
+	get_tree().change_scene_to_file(dest)
+
+
+## Banks the match into GameState. Returns the special visits it unlocked, as
+## [{"text", "color"}] lines for the result panel.
+func _finish_match() -> Array:
 	var won := sim.won()
 	var tied := sim.tied()
 	# The bowl game (the bracket's last entry) pays out per the chosen bowl's
@@ -1026,7 +1216,43 @@ func _finish_match() -> void:
 	}
 	GameState.finish_match(won, tied)
 	_check_sacrificial_gloves()
-	get_tree().change_scene_to_file("res://scenes/post_match.tscn")
+
+	# Special visits only matter to a run that's still going.
+	var unlocks: Array = []
+	if _run_just_ended():
+		return unlocks
+	if absi(sim.score_us - sim.score_them) >= 10:
+		GameState.ritual_available = true
+		unlocks.append({"text": "The Ritual Site has opened.", "color": Color("b060e0")})
+	var lab_by := _lab_trigger()
+	if lab_by != "":
+		GameState.lab_available = true
+		unlocks.append({"text": "%s - the Laboratory has opened." % lab_by, "color": OddityPlayerDB.COLOR})
+	return unlocks
+
+
+## "" unless somebody went over LAB_YARDS receiving or rushing this match, in
+## which case a short "Name: 214 receiving yards" line for the result panel.
+func _lab_trigger() -> String:
+	for pd in sim.game_stats:
+		var line: Dictionary = sim.game_stats[pd]
+		var rec := float(line.get("rec_yards", 0.0))
+		var rush := float(line.get("rush_yards", 0.0))
+		if rec > LAB_YARDS:
+			return "%s: %d receiving yards" % [(pd as PlayerData).pname, int(rec)]
+		if rush > LAB_YARDS:
+			return "%s: %d rushing yards" % [(pd as PlayerData).pname, int(rush)]
+	return ""
+
+
+func _final_bar() -> Control:
+	var v := VBoxContainer.new()
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	var t := UIKit.label("FINAL   %s %d  -  %d %s" % [
+		GameState.team_name, sim.score_us, sim.score_them, sim.opponent_name], 20, UIKit.ACCENT)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	return v
 
 
 ## "Sacrificial Gloves": whoever's wearing them at the end of the match is
@@ -1055,6 +1281,8 @@ func _can_substitute() -> bool:
 
 
 func _on_player_clicked(sp: SimPlayer) -> void:
+	if _match_ended:
+		return
 	card_player = sp
 	field.selected = sp
 	side_panel.visible = false

@@ -2,11 +2,13 @@ extends Control
 
 ## Browsable reference of every hardcoded player in the game: the shop's
 ## draft board (ShopPlayerDB) plus the Ritual Site's Cursed roster
-## (CursedPlayerDB). Read-only - no signing or sacrificing happens here, just
-## a sortable catalog so a coach can plan a run around who's out there.
+## (CursedPlayerDB) and the Laboratory's Oddities (OddityPlayerDB).
+## Read-only - no signing or sacrificing happens here, just a sortable
+## catalog so a coach can plan a run around who's out there.
 
 const CURSED_COLOR := Color("b060e0")
 const CURSED_TIER_RANK := 5
+const ODDITY_TIER_RANK := 6
 
 var _sort_mode: String = "rarity"   # "rarity" or "position"
 var _rng := RandomNumberGenerator.new()
@@ -109,6 +111,17 @@ func _entries() -> Array:
 			"tier_color": CURSED_COLOR,
 			"price": -1,
 		})
+	# Oddities' stats are rolled fresh every time one is made, so the OVR
+	# shown is just one sample roll - the price line says as much.
+	for oddity_name in OddityPlayerDB.all_names():
+		var p := OddityPlayerDB.make_named(_rng, oddity_name)
+		out.append({
+			"player": p,
+			"tier_rank": ODDITY_TIER_RANK,
+			"tier_label": "Oddity",
+			"tier_color": OddityPlayerDB.COLOR,
+			"price": Laboratory.PRICE,
+		})
 
 	if _sort_mode == "position":
 		out.sort_custom(func(a, b):
@@ -175,9 +188,13 @@ func _card(entry: Dictionary) -> Control:
 	v.add_child(desc)
 
 	var price: int = entry["price"]
-	var price_label := UIKit.label(
-		"Ritual Site only" if price < 0 else "$%d" % price,
-		13, CURSED_COLOR if price < 0 else UIKit.ACCENT)
+	var price_text := "Ritual Site only" if price < 0 else "$%d" % price
+	var price_color := CURSED_COLOR if price < 0 else UIKit.ACCENT
+	if int(entry["tier_rank"]) == ODDITY_TIER_RANK:
+		price_text = "Laboratory - $%d, random stats" % price
+		price_color = OddityPlayerDB.COLOR
+	var price_label := UIKit.label(price_text, 13, price_color)
+	price_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	price_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(price_label)
 

@@ -44,6 +44,15 @@ var next_weather: String = WeatherDB.CLEAR
 ## trade.
 var rituals_completed: int = 0
 
+## Special visits unlocked by the last match, open until the next kickoff
+## (match.gd clears both when a match starts, and sets them at the final
+## whistle). The hub shows a button for each while it's open.
+##   ritual_available - won or lost by 10+ (see ritual_site.gd)
+##   lab_available    - someone went over 200 receiving or rushing yards
+##                      (see laboratory.gd)
+var ritual_available: bool = false
+var lab_available: bool = false
+
 var rng := RandomNumberGenerator.new()
 
 var team_name: String = "Your Team"
@@ -121,6 +130,8 @@ func new_run(seed_value: int = 0, qb_id: int = -1) -> void:
 	matches_played = 0
 	next_weather = WeatherDB.CLEAR
 	rituals_completed = 0
+	ritual_available = false
+	lab_available = false
 	run_active = true
 	last_result = {}
 	_build_bracket()
@@ -142,6 +153,12 @@ func start_dev_mode() -> void:
 	for p in ShopPlayerDB.all_players(rng):
 		roster.append(p)
 		_ensure_unique_number(p)
+	# The Laboratory's Oddities too - their abilities are just as untestable
+	# without a lucky 200-yard game otherwise.
+	for oddity_name in OddityPlayerDB.all_names():
+		var oddity := OddityPlayerDB.make_named(rng, oddity_name)
+		roster.append(oddity)
+		_ensure_unique_number(oddity)
 	drawn_routes.clear()
 	inventory.assign(ItemDB.all_ids())
 	round_index = 0
@@ -149,6 +166,8 @@ func start_dev_mode() -> void:
 	matches_played = 0
 	next_weather = WeatherDB.CLEAR
 	rituals_completed = 0
+	ritual_available = false
+	lab_available = false
 	run_active = true
 	last_result = {}
 	bracket = [{

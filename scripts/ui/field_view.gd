@@ -169,6 +169,15 @@ const POP_RISE := 30.0             # pixels risen over its lifetime; older pops 
 ## on what is actually visible rather than on the whole control.
 var bottom_inset: float = 0.0
 
+## End-of-match celebration, set once by match.gd at the final whistle:
+## is_offense (bool) -> "jump" (won - bouncing up and down), "lie" (lost -
+## flat on the turf), or "" (a tie - they just stand there). Empty until then.
+var end_pose: Dictionary = {}
+var _end_t: float = 0.0
+const JUMP_HEIGHT := 0.9      # times the player radius
+const JUMP_RATE := 6.5        # radians/second of the hop cycle
+const LIE_DOWN_TIME := 0.55   # seconds to settle onto the turf
+
 ## Body sprite lookups, cached so _draw doesn't hit ResourceLoader every
 ## frame for every player on the field. "view:body_id:head_id" -> Texture2D
 ## (or null if that player has no body art yet, e.g. a hand-picked QB not
@@ -244,6 +253,8 @@ func _process(delta: float) -> void:
 			_handle_pan_keys(delta)
 		_clamp_camera()
 		_zoom_pulse_t = maxf(0.0, _zoom_pulse_t - delta)
+		if not end_pose.is_empty():
+			_end_t += delta
 		for sp in sim.offense:
 			_advance_anim(sp, delta)
 			_advance_pops(sp, delta)
@@ -349,6 +360,36 @@ func glide_camera() -> void:
 
 func toggle_camera_lock() -> void:
 	camera_locked = not camera_locked
+
+
+## Starts the end-of-match animation - see `end_pose`. Everyone stops where
+## they are; the jumpers get back up first if the last play had them down.
+func set_end_pose(offense_pose: String, defense_pose: String) -> void:
+	end_pose = {true: offense_pose, false: defense_pose}
+	_end_t = 0.0
+	for group in [sim.offense, sim.defense]:
+		for sp in group:
+			if _pose_of(sp) == "jump":
+				sp.downed = 0.0
+			# A man already on the ground keeps his velocity - _fall_dir reads
+			# it to know which way he went down.
+			if sp.downed <= 0.0:
+				sp.vel = Vector2.ZERO
+
+
+func _pose_of(sp: SimPlayer) -> String:
+	if sp.melted:
+		return ""   # a puddle celebrates by staying a puddle
+	return String(end_pose.get(sp.is_offense, ""))
+
+
+## Per-player constants so a team doesn't hop or fall in lockstep.
+func _pose_phase(sp: SimPlayer) -> float:
+	return float(sp.get_instance_id() % 997) * 0.37
+
+
+func _lie_dir(sp: SimPlayer) -> Vector2:
+	return Vector2.from_angle(float(sp.get_instance_id() % 628) * 0.01)
 
 
 ## A quick zoom-in punch, eased back out over ZOOM_PULSE_TIME - called once
@@ -1041,15 +1082,22 @@ func _draw_players() -> void:
 	var r := _player_radius()
 	var fs := _num_font_size(r)
 
-	# Downed players first so anyone still standing draws on top of them.
+	# Downed players (and puddles) first so anyone still standing draws on
+	# top of them.
 	for group in [sim.defense, sim.offense]:
 		for sp in group:
-			if sp.downed > 0.0:
+			if _is_flat(sp):
 				_draw_person(sp, r, font, fs)
 	for group2 in [sim.defense, sim.offense]:
 		for sp in group2:
-			if sp.downed <= 0.0:
+			if not _is_flat(sp):
 				_draw_person(sp, r, font, fs)
+
+
+func _is_flat(sp: SimPlayer) -> bool:
+	if sp.melted or _pose_of(sp) == "lie":
+		return true
+	return sp.downed > 0.0 and _pose_of(sp) != "jump"
 
 
 ## A body seen from above: a slim upright capsule with the jersey number on it
@@ -1061,16 +1109,36 @@ func _draw_players() -> void:
 func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var p := to_px(sp.pos)
 
+	# "Meltdown": nothing left of him but a puddle until the next snap.
+	if sp.melted:
+		_draw_puddle(sp, p, r)
+		return
+
+	var pose := _pose_of(sp)
+	# Somebody the last play already put down just stays the way he fell.
+	if pose == "lie" and sp.downed > 0.0:
+		pose = "down"
 	var fall := 0.0
-	if sp.downed > 0.0:
+	if pose == "lie":
+		# Losers go down slowly and stay down, each on his own beat.
+		var settle := clampf((_end_t - fmod(_pose_phase(sp), 0.4)) / LIE_DOWN_TIME, 0.0, 1.0)
+		fall = settle * settle * (3.0 - 2.0 * settle)
+	elif sp.downed > 0.0 and pose != "jump":
 		fall = clampf(sp.downed / FALL_TIME, 0.0, 1.0)
 		fall = fall * fall * (3.0 - 2.0 * fall)   # ease so he tips, then settles
 
 	# Walk cycle: a small waddle plus a bounce, both tied to distance covered.
 	var moving := clampf(sp.vel.length() / 3.0, 0.0, 1.0) * (1.0 - fall)
+	if pose != "":
+		moving = 0.0
 	var sway := sin(sp.stride) * moving
 	var bounce := absf(sin(sp.stride)) * moving
 	var center := p + Vector2(sway * r * 0.11, -bounce * r * 0.07)
+	# Winners hop up and down; the shadow stays on the ground and shrinks.
+	var hop := 0.0
+	if pose == "jump":
+		hop = absf(sin(_end_t * JUMP_RATE + _pose_phase(sp))) * r * JUMP_HEIGHT
+		center.y -= hop
 
 	var body := UIKit.OFFENSE if sp.is_offense else UIKit.DEFENSE.darkened(0.08)
 	var head := Color("c9a37a") if sp.is_offense else Color("a8845f")
@@ -1088,14 +1156,20 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	# only its facing changes, so he topples over rather than stretching out.
 	var axis := UP
 	if fall > 0.0:
-		var down_dir := _fall_dir(sp)
+		var down_dir := _lie_dir(sp) if pose == "lie" else _fall_dir(sp)
 		axis = UP.rotated(angle_difference(UP.angle(), down_dir.angle()) * fall)
 	var half := r * 0.46
 	var wide := r * 0.95
 	var a := center - axis * half
 	var b := center + axis * half
 
-	draw_circle(center + Vector2(2, 4), r * lerpf(0.92, 0.78, fall), Color(0, 0, 0, 0.16))
+	var shadow_r := r * lerpf(0.92, 0.78, fall) * (1.0 - 0.3 * hop / maxf(r * JUMP_HEIGHT, 0.01))
+	draw_circle(center + Vector2(2.0, 4.0 + hop), shadow_r, Color(0, 0, 0, 0.16))
+
+	# Laboratory Oddities (OddityPlayerDB) always wear a bright green outline,
+	# presnap included, so the coach can pick them out at a glance.
+	if sp.is_offense and sp.data.quality == ShopPlayerDB.QUALITY_ODDITY and fall < 0.5:
+		draw_arc(center, r * 1.22, 0, TAU, 30, OddityPlayerDB.COLOR, 3.5)
 
 	# Aura'd defenders (see AuraDB/GameState.aura_count) get a pulsing colored
 	# ring so the "colored enemy" reads at a glance on the field.
@@ -1228,6 +1302,26 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		draw_texture_rect(head_tex, HeadArtDB.face_draw_rect(head_set, head_view, head_tex, head_h),
 			false, head_tint)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## A melted "Meltdown" player: a flat, wobbling green-grey slick where he was
+## standing, with his jersey number floating in it.
+func _draw_puddle(sp: SimPlayer, p: Vector2, r: float) -> void:
+	var t := Time.get_ticks_msec() * 0.003 + _pose_phase(sp)
+	var pts := PackedVector2Array()
+	for i in 18:
+		var ang := TAU * float(i) / 18.0
+		var wobble := 1.0 + 0.10 * sin(ang * 3.0 + t) + 0.06 * sin(ang * 5.0 - t * 1.3)
+		pts.append(p + Vector2(cos(ang) * r * 1.35, sin(ang) * r * 0.75) * wobble)
+	draw_colored_polygon(pts, Color(0.45, 0.62, 0.38, 0.85))
+	pts.append(pts[0])
+	draw_polyline(pts, Color(0.22, 0.34, 0.18, 0.9), 2.0, true)
+	draw_circle(p + Vector2(-r * 0.3, -r * 0.15), r * 0.18, Color(1, 1, 1, 0.35))
+	var font := ThemeDB.fallback_font
+	var fs := _num_font_size(r)
+	var tw := font.get_string_size(sp.label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_string(font, p + Vector2(-tw * 0.5, float(fs) * 0.35), sp.label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.16, 0.08, 0.7))
 
 
 func _capsule(a: Vector2, b: Vector2, width: float, col: Color) -> void:

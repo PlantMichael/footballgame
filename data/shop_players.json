@@ -555,5 +555,65 @@
 		"ability_id": "jackpot",
 		"body": "6",
 		"head": "moneybags"
+	},
+	{
+		"name": "Ricky Dooper I",
+		"pos": "WR",
+		"quality": 3,
+		"strength": 5,
+		"agility": 8,
+		"dexterity": 8,
+		"stamina": 6,
+		"intelligence": 7,
+		"ability_id": "dooper_wr",
+		"body": "5"
+	},
+	{
+		"name": "Ricky Dooper II",
+		"pos": "TE",
+		"quality": 3,
+		"strength": 8,
+		"agility": 6,
+		"dexterity": 7,
+		"stamina": 7,
+		"intelligence": 6,
+		"ability_id": "dooper_te",
+		"body": "4"
+	},
+	{
+		"name": "Ricky Dooper III",
+		"pos": "RB",
+		"quality": 3,
+		"strength": 7,
+		"agility": 8,
+		"dexterity": 5,
+		"stamina": 7,
+		"intelligence": 6,
+		"ability_id": "dooper_rb",
+		"body": "8"
+	},
+	{
+		"name": "Gaya Livingston",
+		"pos": "QB",
+		"quality": 4,
+		"strength": 8,
+		"agility": 8,
+		"dexterity": 10,
+		"stamina": 9,
+		"intelligence": 11,
+		"ability_id": "weatherproof",
+		"body": "5"
+	},
+	{
+		"name": "Timmy Toughknuckles",
+		"pos": "T",
+		"quality": 4,
+		"strength": 12,
+		"agility": 8,
+		"dexterity": 7,
+		"stamina": 11,
+		"intelligence": 8,
+		"ability_id": "snow_plow",
+		"body": "2"
 	}
 ]

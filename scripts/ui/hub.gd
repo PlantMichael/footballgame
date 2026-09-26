@@ -169,6 +169,13 @@ func _matchup_panel() -> Control:
 	grid.add_child(_nav_button("Lineup", "Set your 11 starters and hand out items.", "res://scenes/lineup.tscn"))
 	grid.add_child(_nav_button("Route Book", "Learn the classic concepts you can chalk up.", "res://scenes/playbook.tscn"))
 	grid.add_child(_nav_button("Shop", "Spend football bucks on players and items.", "res://scenes/shop.tscn"))
+	# Unlocked by the last match; gone once the next one kicks off.
+	if GameState.ritual_available:
+		grid.add_child(_nav_button("Ritual Site", "Sacrifice players for a Cursed one. Open until kickoff.",
+			"res://scenes/ritual_site.tscn", Color("b060e0")))
+	if GameState.lab_available:
+		grid.add_child(_nav_button("Laboratory", "$%d for a random Oddity player. Open until kickoff." % Laboratory.PRICE,
+			"res://scenes/laboratory.tscn", OddityPlayerDB.COLOR))
 
 	v.add_child(UIKit.vsep(4))
 	v.add_child(_starters_summary())
@@ -232,7 +239,7 @@ func _starters_summary() -> Control:
 	return box
 
 
-func _nav_button(title: String, desc: String, path: String) -> Control:
+func _nav_button(title: String, desc: String, path: String, title_color: Color = UIKit.ACCENT) -> Control:
 	var b := UIKit.button("", 16)
 	b.custom_minimum_size = Vector2(240, 80)
 	b.pressed.connect(func(): get_tree().change_scene_to_file(path))
@@ -243,7 +250,7 @@ func _nav_button(title: String, desc: String, path: String) -> Control:
 	v.offset_left = 12
 	v.offset_top = 10
 	v.offset_right = -12
-	v.add_child(UIKit.label(title, 19, UIKit.ACCENT))
+	v.add_child(UIKit.label(title, 19, title_color))
 	var d := UIKit.label(desc, 12, UIKit.MUTED)
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(d)

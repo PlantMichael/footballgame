@@ -22,11 +22,13 @@ func _build() -> void:
 
 	var champion := won and GameState.is_run_over()
 	var out_of_lives := not won and not tied and not GameState.run_active
-	var margin := int(r.get("score_us", 0)) - int(r.get("score_them", 0))
-	# The Ritual Site: a blowout either way (win or lose by 10+) opens the
-	# door - but only while the run is actually continuing, since a sacrifice
-	# only matters for a roster you'll keep playing with this run.
-	var ritual_eligible := not champion and not out_of_lives and absi(margin) >= 10
+	# The Ritual Site / Laboratory unlocks are decided at the final whistle
+	# (match.gd _finish_match) - and only while the run is actually
+	# continuing, since a new player only matters for a roster you'll keep
+	# playing with this run. The match screen normally sends a continuing run
+	# straight to the hub, which offers them too.
+	var ritual_eligible := not champion and not out_of_lives and GameState.ritual_available
+	var lab_eligible := not champion and not out_of_lives and GameState.lab_available
 
 	if champion:
 		MetaState.award_mark(GameState.qb_id, GameState.chosen_bowl)
@@ -112,6 +114,8 @@ func _build() -> void:
 		row.add_child(shop)
 		if ritual_eligible:
 			row.add_child(_ritual_button())
+		if lab_eligible:
+			row.add_child(_lab_button())
 	elif not champion and not out_of_lives:
 		# Lost (or tied), but still have a life left: retry the same round
 		# rather than ending the run. GameState.round_index didn't move, so the hub and
@@ -128,6 +132,8 @@ func _build() -> void:
 		row.add_child(shop2)
 		if ritual_eligible:
 			row.add_child(_ritual_button())
+		if lab_eligible:
+			row.add_child(_lab_button())
 	else:
 		var again := UIKit.primary_button("  START A NEW RUN  ", 20)
 		again.custom_minimum_size = Vector2(0, 50)
@@ -145,4 +151,12 @@ func _ritual_button() -> Control:
 	b.custom_minimum_size = Vector2(0, 50)
 	b.add_theme_color_override("font_color", Color("b060e0"))
 	b.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/ritual_site.tscn"))
+	return b
+
+
+func _lab_button() -> Control:
+	var b := UIKit.button("  Visit the Laboratory  ", 17)
+	b.custom_minimum_size = Vector2(0, 50)
+	b.add_theme_color_override("font_color", OddityPlayerDB.COLOR)
+	b.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/laboratory.tscn"))
 	return b

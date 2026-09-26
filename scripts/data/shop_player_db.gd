@@ -24,12 +24,16 @@ const QUALITY_ROOKIE := 1
 const QUALITY_SOPHOMORE := 2
 const QUALITY_VETERAN := 3
 const QUALITY_ALL_STAR := 4
+## Laboratory-only (OddityPlayerDB) - never in the shop's JSON pool, so it has
+## no QUALITY_WEIGHTS entry and roll_stock can't draw it.
+const QUALITY_ODDITY := 5
 
 const QUALITY_NAMES := {
 	QUALITY_ROOKIE: "Rookie",
 	QUALITY_SOPHOMORE: "Sophomore",
 	QUALITY_VETERAN: "Veteran",
 	QUALITY_ALL_STAR: "All Star",
+	QUALITY_ODDITY: "Oddity",
 }
 
 ## Higher rarities are drawn less often; weight is relative, not a probability.

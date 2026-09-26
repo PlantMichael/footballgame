@@ -140,9 +140,34 @@ extends RefCounted
 ##   slot_machine_chance()  -> float [0-1], default 0.0. Drops a slot machine at the snap;
 ##                            if it hits, every teammate gets +MatchSim.JACKPOT_BONUS to
 ##                            every stat for the play. MatchSim._step_props.
+##   weather_immune()       -> bool, default false. None of the match's weather touches him -
+##                            no stat penalty, no puddle slowdown. MatchSim._apply_weather /
+##                            _update_terrain.
+##   snow_immune_line()     -> bool, default false. Snow's stat penalty skips him AND every
+##                            offensive lineman (C and all four T slots) on his team.
+##                            MatchSim._apply_weather.
+##   splits_at_snap()       -> float seconds, default 0.0. Nonzero means that at the snap he
+##                            splits into two players who each get half his stats; the copy
+##                            runs the same route this many seconds behind him. MatchSim.
+##                            _split_player / SimPlayer.clone_of, start_delay.
+##   abandons_line_chance() -> float [0-1], default 0.0. Each snap, a lineman with this may
+##                            leave the line to run a random route, handing all his Strength
+##                            to the nearest lineman beside him. MatchSim._abandon_line.
+##   freelance_chance()     -> float [0-1], default 0.0. Each snap, the chance he ignores his
+##                            drawn route and runs a random stock one instead.
+##                            MatchSim._apply_oddities_at_snap.
+##   freelance_bonus()      -> Dictionary of stat deltas granted when freelance_chance hits,
+##                            default {}.
+##   melt_chance_per_second() -> float [0-1], default 0.0. Rolled once per live second; on a
+##                            hit he melts and is out of the play entirely (and if he had the
+##                            ball, the play ends there). MatchSim._step_melts.
+##   cash_mult()            -> float, default 1.0. Multiplies every football-bucks award
+##                            credited to him - his catches, broken tackles, and the TD/first
+##                            down/big play bonuses on plays he finishes with the ball.
+##                            MatchSim._award / _end_play.
 ##
-## `ctx` for snap: wr_count, te_count, rb_count, down, to_go, yards_to_endzone,
-## score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
+## `ctx` for snap: wr_count, te_count, rb_count, dooper_count, down, to_go,
+## yards_to_endzone, score_diff, is_run_play, is_blitzed, is_bowl_game. `ctx` for catch:
 ## nearest_defender_dist, would_be_first_down, target_is_deep. `role` for
 ## contact is "carry", "block", or "cover".
 
@@ -508,6 +533,57 @@ const ABILITIES := {
 		"desc": "Drops a slot machine at the start of the play. If it hits (33%), every teammate gets +2 to every stat for the play.",
 		"slot_machine_chance": Callable(AbilityDB, "_slot_machine_chance_jackpot"),
 	},
+	"dooper_wr": {
+		"name": "Dooper Blood (WR)",
+		"desc": "+1 to all stats for every other WR on the field, and +2 to all stats for each other Ricky Dooper on the field.",
+		"snap": Callable(AbilityDB, "_snap_dooper_wr"),
+	},
+	"dooper_te": {
+		"name": "Dooper Blood (TE)",
+		"desc": "+1 to all stats for every other TE on the field, and +2 to all stats for each other Ricky Dooper on the field.",
+		"snap": Callable(AbilityDB, "_snap_dooper_te"),
+	},
+	"dooper_rb": {
+		"name": "Dooper Blood (RB)",
+		"desc": "+1 to all stats for every other RB on the field, and +2 to all stats for each other Ricky Dooper on the field.",
+		"snap": Callable(AbilityDB, "_snap_dooper_rb"),
+	},
+	"weatherproof": {
+		"name": "Weatherproof",
+		"desc": "Immune to weather effects.",
+		"weather_immune": Callable(AbilityDB, "_weather_immune_weatherproof"),
+	},
+	"snow_plow": {
+		"name": "Snow Plow",
+		"desc": "Immune to snow - and so is your entire offensive line.",
+		"snow_immune_line": Callable(AbilityDB, "_snow_immune_line_snow_plow"),
+	},
+	"mitosis": {
+		"name": "Mitosis",
+		"desc": "At the start of the play, splits in half. Both halves run his route, one second apart, and his stats are divided evenly between them.",
+		"splits_at_snap": Callable(AbilityDB, "_splits_at_snap_mitosis"),
+	},
+	"rogue_lineman": {
+		"name": "Line Abandonment",
+		"desc": "50% chance each play to abandon the line and run a random route. If he does, the lineman next to him gets all of his Strength and takes his man as well.",
+		"abandons_line_chance": Callable(AbilityDB, "_abandons_line_chance_rogue_lineman"),
+	},
+	"flip_flop": {
+		"name": "Flip Flop",
+		"desc": "50% chance each play to ignore his route and run a random one. If he does, +3 to all stats.",
+		"freelance_chance": Callable(AbilityDB, "_freelance_chance_flip_flop"),
+		"freelance_bonus": Callable(AbilityDB, "_freelance_bonus_flip_flop"),
+	},
+	"meltdown": {
+		"name": "Meltdown",
+		"desc": "Unusually high stats, but a 15% chance every second of melting and being out for the rest of the play.",
+		"melt_chance_per_second": Callable(AbilityDB, "_melt_chance_per_second_meltdown"),
+	},
+	"golden_touch": {
+		"name": "Golden Touch",
+		"desc": "Everything he does pays out double football bucks.",
+		"cash_mult": Callable(AbilityDB, "_cash_mult_golden_touch"),
+	},
 }
 
 
@@ -802,6 +878,46 @@ static func drops_keg_after_yards(id: String) -> float:
 ## Chance the slot machine he drops at the snap hits, default 0.0 (no machine).
 static func slot_machine_chance(id: String) -> float:
 	return _dispatch(id, "slot_machine_chance", [], 0.0)
+
+
+## True if no weather effect applies to him at all.
+static func weather_immune(id: String) -> bool:
+	return _dispatch(id, "weather_immune", [], false)
+
+
+## True if he and every offensive lineman on his team ignore snow.
+static func snow_immune_line(id: String) -> bool:
+	return _dispatch(id, "snow_immune_line", [], false)
+
+
+## Seconds his split-off copy trails him by, or 0.0 if he never splits.
+static func splits_at_snap(id: String) -> float:
+	return _dispatch(id, "splits_at_snap", [], 0.0)
+
+
+## Per-snap chance a lineman abandons the line for a random route.
+static func abandons_line_chance(id: String) -> float:
+	return _dispatch(id, "abandons_line_chance", [], 0.0)
+
+
+## Per-snap chance he ignores his route and runs a random stock one.
+static func freelance_chance(id: String) -> float:
+	return _dispatch(id, "freelance_chance", [], 0.0)
+
+
+## Stat deltas granted when freelance_chance hits.
+static func freelance_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "freelance_bonus", [], {})
+
+
+## Chance, rolled once per live second, that he melts out of the play.
+static func melt_chance_per_second(id: String) -> float:
+	return _dispatch(id, "melt_chance_per_second", [], 0.0)
+
+
+## Multiplier on football bucks credited to him.
+static func cash_mult(id: String) -> float:
+	return _dispatch(id, "cash_mult", [], 1.0)
 
 
 # ============================================================================
@@ -1154,3 +1270,60 @@ static func _drops_keg_after_yards_keg_stand() -> float:
 
 static func _slot_machine_chance_jackpot() -> float:
 	return 0.33
+
+
+## Shared by the three Ricky Dooper abilities: +1 to every stat per OTHER
+## teammate at `pos` in the flex slots, plus +2 per other Ricky Dooper
+## anywhere on the field (ctx.dooper_count includes himself).
+static func _dooper_bonus(p: PlayerData, ctx: Dictionary, pos: PlayerData.Pos, count_key: String) -> Dictionary:
+	var same_pos := int(ctx.get(count_key, 0)) - (1 if p.pos == pos else 0)
+	var other_doopers := int(ctx.get("dooper_count", 0)) - 1
+	var amount := maxi(same_pos, 0) + maxi(other_doopers, 0) * 2
+	if amount <= 0:
+		return {}
+	return {"strength": amount, "agility": amount, "dexterity": amount,
+		"stamina": amount, "intelligence": amount}
+
+
+static func _snap_dooper_wr(p: PlayerData, ctx: Dictionary) -> Dictionary:
+	return _dooper_bonus(p, ctx, PlayerData.Pos.WR, "wr_count")
+
+
+static func _snap_dooper_te(p: PlayerData, ctx: Dictionary) -> Dictionary:
+	return _dooper_bonus(p, ctx, PlayerData.Pos.TE, "te_count")
+
+
+static func _snap_dooper_rb(p: PlayerData, ctx: Dictionary) -> Dictionary:
+	return _dooper_bonus(p, ctx, PlayerData.Pos.RB, "rb_count")
+
+
+static func _weather_immune_weatherproof() -> bool:
+	return true
+
+
+static func _snow_immune_line_snow_plow() -> bool:
+	return true
+
+
+static func _splits_at_snap_mitosis() -> float:
+	return 1.0
+
+
+static func _abandons_line_chance_rogue_lineman() -> float:
+	return 0.5
+
+
+static func _freelance_chance_flip_flop() -> float:
+	return 0.5
+
+
+static func _freelance_bonus_flip_flop() -> Dictionary:
+	return {"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 3}
+
+
+static func _melt_chance_per_second_meltdown() -> float:
+	return 0.15
+
+
+static func _cash_mult_golden_touch() -> float:
+	return 2.0

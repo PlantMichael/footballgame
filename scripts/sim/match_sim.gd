@@ -475,6 +475,8 @@ func _update_terrain() -> void:
 	for group in [offense, defense]:
 		for sp in group:
 			sp.terrain_mult = 1.0
+			if sp.is_offense and AbilityDB.weather_immune(sp.data.ability_id):
+				continue
 			for pd in puddles:
 				if sp.pos.distance_to(pd["pos"]) <= float(pd["r"]):
 					sp.terrain_mult = WeatherDB.PUDDLE_SPEED_MULT
@@ -510,6 +512,7 @@ func yards_to_endzone() -> float:
 ## This is the normal path. `set_play` below is the scripted-play path, kept
 ## for the batch balance harnesses in tools/.
 func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true) -> void:
+	_remove_clones()
 	var flexes := flex_players()
 	var spots := RouteBook.formation_for(flexes)
 	var routes: Array = []
@@ -565,6 +568,7 @@ func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true) -> void:
 ## a whistle when the ball has moved. Changing the call between snaps passes
 ## false so the formation visibly shifts instead.
 func set_play(id: String, instant: bool = true) -> void:
+	_remove_clones()
 	play_id = id
 	play = PlayDB.get_play(id)
 	auto_route_ids.clear()
@@ -656,10 +660,16 @@ func _snap_context(is_run_play: bool) -> Dictionary:
 				PlayerData.Pos.WR: wr += 1
 				PlayerData.Pos.TE: te += 1
 				PlayerData.Pos.RB: rb += 1
+	# The whole offense, not just the flexes - Ricky Dooper IV is a Tackle.
+	var doopers := 0
+	for sp in offense:
+		if sp.clone_of == null and sp.data.pname.begins_with("Ricky Dooper"):
+			doopers += 1
 	return {
 		"wr_count": wr,
 		"te_count": te,
 		"rb_count": rb,
+		"dooper_count": doopers,
 		"down": down,
 		"to_go": to_go,
 		"yards_to_endzone": yards_to_endzone(),
@@ -714,6 +724,10 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 ## Wind only bothers a passer - our QB - and never takes him below
 ## WINDY_QB_DEX_FLOOR (a QB already under it keeps what he has).
 func _apply_weather(sp: SimPlayer, base: Dictionary) -> void:
+	if sp.is_offense and AbilityDB.weather_immune(sp.data.ability_id):
+		return
+	if weather == WeatherDB.SNOWY and sp.is_offense and _snow_immune(sp):
+		return
 	match weather:
 		WeatherDB.WINDY:
 			if sp.is_offense and sp.slot == "QB":
@@ -723,6 +737,18 @@ func _apply_weather(sp: SimPlayer, base: Dictionary) -> void:
 			base["agility"] = int(base["agility"]) + WeatherDB.RAINY_AGILITY
 		WeatherDB.SNOWY:
 			base["strength"] = int(base["strength"]) + WeatherDB.SNOWY_STRENGTH
+
+
+## "Snow Plow": the holder himself, plus every offensive lineman (C and the
+## four T slots) while anyone on the field has it.
+func _snow_immune(sp: SimPlayer) -> bool:
+	var line_immune := false
+	for o in offense:
+		if AbilityDB.snow_immune_line(o.data.ability_id):
+			if o == sp:
+				return true
+			line_immune = true
+	return line_immune and (sp.slot == "C" or sp.slot.begins_with("T"))
 
 
 ## True if the offense should be treated as running the ball for blocking
@@ -856,6 +882,9 @@ func _align_offense() -> void:
 		sp.run_lane_y = -1.0
 		sp.keg_dropped = false
 		sp.peel_drops.clear()
+		sp.melted = false
+		sp.melt_timer = 0.0
+		sp.start_delay = 0.0
 		sp.pending_stat_gains.clear()
 		sp.pending_events.clear()
 		_apply_modifiers(sp, ctx)
@@ -1200,6 +1229,174 @@ func snap() -> void:
 	phase = Phase.LIVE
 	time = 0.0
 	_snap_gains()
+	_apply_oddities_at_snap()
+
+
+# --- Oddities (see OddityPlayerDB) ------------------------------------------
+
+## The Laboratory players' coin flips and splits, all decided the instant the
+## ball is snapped - never presnap, so the chalkboard can't tip the coach off
+## which way the flip is going to land this play.
+func _apply_oddities_at_snap() -> void:
+	# A snapshot: _split_player appends to `offense` as it goes.
+	for sp: SimPlayer in offense.duplicate():
+		if sp.clone_of != null:
+			continue
+		var id := sp.data.ability_id
+
+		var freelance := AbilityDB.freelance_chance(id)
+		if freelance > 0.0 and sp.role == SimPlayer.Role.ROUTE and rng.randf() < freelance:
+			_give_random_route(sp)
+			var bonus := AbilityDB.freelance_bonus(id)
+			for stat in bonus:
+				_gain_stat(sp, stat, int(bonus[stat]))
+			_grant_event(sp, "FREELANCING")
+			log_line("%s ignores the play call and freelances!" % sp.data.pname)
+
+		var abandon := AbilityDB.abandons_line_chance(id)
+		if abandon > 0.0 and sp.role == SimPlayer.Role.BLOCK and rng.randf() < abandon:
+			_abandon_line(sp)
+
+		var delay := AbilityDB.splits_at_snap(id)
+		if delay > 0.0 and sp.role == SimPlayer.Role.ROUTE:
+			_split_player(sp, delay)
+
+
+## Swap whatever `sp` was doing for a random stock route from where he's
+## standing, shaped to his side of the formation like an undrawn flex's.
+func _give_random_route(sp: SimPlayer) -> void:
+	var cy := FIELD_W * 0.5
+	var rel := RouteBook.random_route(rng, Vector2(0.0, sp.pos.y - cy))
+	sp.route = []
+	for wp in rel:
+		sp.route.append(Vector2(sp.pos.x + wp.x, clampf(sp.pos.y + wp.y, 0.8, FIELD_W - 0.8)))
+	sp.route_idx = 0
+	sp.route_done = false
+	sp.role = SimPlayer.Role.ROUTE
+	sp.mark = null
+	sp.engaged = false
+
+
+## "Line Abandonment": `sp` quits blocking to run a random route, and the
+## closest lineman beside him inherits all of his Strength. His man isn't
+## handed over explicitly - _assign_blocks reassigns the whole line every
+## frame, so the stronger neighbor picks up whoever comes free.
+func _abandon_line(sp: SimPlayer) -> void:
+	var neighbor: SimPlayer = null
+	var best := 1e9
+	for o in offense:
+		if o == sp or o.role != SimPlayer.Role.BLOCK:
+			continue
+		if o.slot != "C" and not o.slot.begins_with("T"):
+			continue
+		var gap := absf(o.pos.y - sp.pos.y)
+		if gap < best:
+			best = gap
+			neighbor = o
+	var strength := sp.stat("strength")
+	if neighbor != null:
+		_gain_stat(neighbor, "strength", strength)
+	sp.eff["strength"] = 1
+	_grant_stat_gain(sp, "strength", -(strength - 1))
+	_give_random_route(sp)
+	_grant_event(sp, "GOING ROGUE")
+	if neighbor != null:
+		log_line("%s abandons the line! %s takes his Strength and his man." % [sp.data.pname, neighbor.data.pname])
+	else:
+		log_line("%s abandons the line!" % sp.data.pname)
+
+
+## "Mitosis": `sp` splits in two. Each half gets half of every stat (the
+## original keeps the odd point), and the new half runs the same route
+## `delay` seconds behind him.
+func _split_player(sp: SimPlayer, delay: float) -> void:
+	var twin := SimPlayer.new()
+	twin.data = sp.data
+	twin.is_offense = true
+	twin.slot = sp.slot
+	twin.label = sp.label
+	twin.clone_of = sp
+	twin.start_delay = delay
+	twin.role = SimPlayer.Role.ROUTE
+	twin.route = sp.route.duplicate()
+	twin.route_idx = 0
+	# A step behind and to the side, so the two don't draw exactly on top of
+	# each other while the second one waits.
+	twin.pos = Vector2(sp.pos.x - 0.9, clampf(sp.pos.y + 0.7, 0.5, FIELD_W - 0.5))
+	twin.target_pos = twin.pos
+	twin.energy = sp.energy
+	twin.fatigue_floor = sp.fatigue_floor
+	twin.next_contact = sp.next_contact
+	twin.trail = PackedVector2Array([twin.pos])
+	var split := {}
+	for key in sp.eff:
+		var total := int(sp.eff[key])
+		var keep := int(ceil(float(total) * 0.5))
+		sp.eff[key] = maxi(keep, 1)
+		split[key] = maxi(total - keep, 1)
+	twin.eff = split
+	offense.append(twin)
+	_grant_event(sp, "MITOSIS!")
+	log_line("%s splits in half!" % sp.data.pname)
+
+
+## Drop any "Mitosis" halves left over from the last play, before the next
+## call lines anyone up - they only ever exist for the play they split on.
+func _remove_clones() -> void:
+	var kept: Array[SimPlayer] = []
+	for sp in offense:
+		if sp.clone_of == null:
+			kept.append(sp)
+	offense = kept
+
+
+## Everyone the QB can actually throw to right now: the flexes (including a
+## "Mitosis" half, which shares his slot) plus anyone else who has gone out on
+## a route - a lineman who abandoned the line. Melted players and a half still
+## waiting on his delay aren't open to anybody.
+func _receivers() -> Array[SimPlayer]:
+	var out: Array[SimPlayer] = []
+	for sp in offense:
+		if sp.melted or time < sp.start_delay:
+			continue
+		if sp.slot.begins_with("F") or sp.role == SimPlayer.Role.ROUTE:
+			out.append(sp)
+	return out
+
+
+## "Meltdown": one roll per live second.
+func _step_melts(delta: float) -> void:
+	for sp in offense:
+		if sp.melted:
+			continue
+		var chance := AbilityDB.melt_chance_per_second(sp.data.ability_id)
+		if chance <= 0.0:
+			continue
+		sp.melt_timer += delta
+		if sp.melt_timer < 1.0:
+			continue
+		sp.melt_timer -= 1.0
+		if rng.randf() < chance:
+			_melt(sp)
+			if phase != Phase.LIVE:
+				return
+
+
+func _melt(sp: SimPlayer) -> void:
+	sp.melted = true
+	sp.vel = Vector2.ZERO
+	sp.engaged = false
+	sp.mark = null
+	_grant_event(sp, "MELTED")
+	if sp == carrier:
+		sp.has_ball = false
+		_end_play({
+			"kind": "run" if _play_was_a_run() else "complete",
+			"yards": sp.pos.x - los,
+			"text": "%s MELTS INTO A PUDDLE!" % sp.data.pname,
+		})
+	else:
+		log_line("%s melts into a puddle!" % sp.data.pname)
 
 
 ## Abilities that fire the instant the ball is snapped. Unlike `snap` hooks
@@ -1303,7 +1500,7 @@ func _step_props(delta: float) -> void:
 			for o in offense:
 				for stat in STAT_KEYS:
 					_gain_stat(o, stat, JACKPOT_BONUS, false)
-			_award(10, "JACKPOT! %s's slot machine pays out!" % owner.data.pname)
+			_award(10, "JACKPOT! %s's slot machine pays out!" % owner.data.pname, owner)
 		else:
 			log_line("%s's slot machine comes up empty." % owner.data.pname)
 
@@ -1374,6 +1571,9 @@ func step(delta: float) -> void:
 		return
 	time += delta
 	_update_terrain()
+	_step_melts(delta)
+	if phase != Phase.LIVE:
+		return
 	_step_timed_gains(delta)
 	_step_offense(delta)
 	_step_defense(delta)
@@ -1429,6 +1629,9 @@ func _step_offense(delta: float) -> void:
 		d.engaged = false
 	_assign_blocks()
 	for sp in offense:
+		if sp.melted or time < sp.start_delay:
+			sp.hold(delta)
+			continue
 		if sp.disrupted > 0.0:
 			sp.disrupted -= delta
 		if sp == carrier and sp.slot != "QB":
@@ -1596,7 +1799,7 @@ func can_handoff_to(sp: SimPlayer) -> bool:
 		return false
 	if carrier == null or carrier.slot != "QB" or not carrier.has_ball:
 		return false
-	if sp == null or not sp.is_offense or sp == carrier:
+	if sp == null or not sp.is_offense or sp == carrier or sp.melted or time < sp.start_delay:
 		return false
 	if not plays_rb(sp):
 		return false
@@ -1820,7 +2023,7 @@ func _assign_blocks() -> void:
 	var free_blockers: Array[SimPlayer] = []
 	var claimed := {}
 	for sp in offense:
-		if sp.role != SimPlayer.Role.BLOCK or sp == carrier:
+		if sp.role != SimPlayer.Role.BLOCK or sp == carrier or sp.melted:
 			continue
 		if AbilityDB.dedicated_blocker(sp.data.ability_id):
 			# Locked onto his own pick for the whole play (see _align_offense
@@ -2116,7 +2319,7 @@ func _evaluate_targets(qb: SimPlayer) -> Dictionary:
 	var best := {"player": null, "score": -99.0}
 	var qb_int := float(qb.stat("intelligence"))
 
-	for f in flex_players():
+	for f in _receivers():
 		if f.role != SimPlayer.Role.ROUTE and f.role != SimPlayer.Role.CARRY:
 			continue
 		if f == carrier:
@@ -2129,7 +2332,8 @@ func _evaluate_targets(qb: SimPlayer) -> Dictionary:
 		# Depth is worth something, but not so much that a covered deep route
 		# always outranks a wide open checkdown.
 		var downfield := clampf((f.pos.x - los) * 0.11, -1.0, 3.0)
-		var slot_index := int(f.slot.substr(1, 1))
+		# Progression is indexed by flex slot; a lineman out on a route has none.
+		var slot_index := int(f.slot.substr(1, 1)) if f.slot.begins_with("F") else -1
 		var order := progression.find(slot_index)
 		var prog_bonus := 0.0
 		if order >= 0:
@@ -2172,7 +2376,7 @@ func _butter_fingers_penalty(pos: Vector2) -> int:
 func _most_open_receiver() -> SimPlayer:
 	var best: SimPlayer = null
 	var best_open := -1.0
-	for f in flex_players():
+	for f in _receivers():
 		if f.role != SimPlayer.Role.ROUTE and f.role != SimPlayer.Role.CARRY:
 			continue
 		if f == carrier:
@@ -2488,6 +2692,10 @@ func _resolve_catch() -> void:
 		_end_play({"kind": "incomplete", "yards": 0.0, "text": "Pass sails out of bounds."})
 		return
 	var rec: SimPlayer = thrown_to
+	if rec.melted:
+		_end_play({"kind": "incomplete", "yards": 0.0,
+			"text": "Pass falls into what used to be %s." % rec.data.pname})
+		return
 	var rec_dist := rec.pos.distance_to(spot)
 	var def_near: SimPlayer = null
 	var def_dist := 99.0
@@ -2568,7 +2776,7 @@ func _resolve_catch() -> void:
 		if contested:
 			bucks = 15
 			msg = "%s makes a contested grab!" % rec.data.pname
-		_award(bucks, msg)
+		_award(bucks, msg, rec)
 		_trigger_pursuit()
 	else:
 		var savior := _find_catch_savior(rec)
@@ -2582,7 +2790,7 @@ func _resolve_catch() -> void:
 			thrown_to = null
 			_pass_completed_this_play = true
 			_last_completion_target = savior
-			_award(20, "%s swoops in and steals the catch away from %s!" % [savior.data.pname, rec.data.pname])
+			_award(20, "%s swoops in and steals the catch away from %s!" % [savior.data.pname, rec.data.pname], savior)
 			_trigger_pursuit()
 			return
 		if def_dist < 1.4:
@@ -2602,7 +2810,7 @@ func _resolve_catch() -> void:
 ## not blocking or already down) swaps in for a receiver about to drop a
 ## catchable ball and hauls it in instead.
 func _find_catch_savior(rec: SimPlayer) -> SimPlayer:
-	for f in flex_players():
+	for f in _receivers():
 		if f == rec or f.role != SimPlayer.Role.ROUTE:
 			continue
 		if f.downed > 0.0 or f.stunned > 0.0:
@@ -2736,7 +2944,7 @@ func _step_contacts(delta: float) -> void:
 			carrier.eff["agility"] = clampi(carrier.stat("agility") - 5, 1, 15)
 			_grant_stat_gain(carrier, "agility", -5)
 			carrier.vel *= 0.92
-			_award(10, "%s dashes right past %s!" % [carrier.data.pname, d.data.pname])
+			_award(10, "%s dashes right past %s!" % [carrier.data.pname, d.data.pname], carrier)
 			continue
 
 		var chance := 0.88 + float(d.stat("strength") - carrier.stat("strength")) * 0.020
@@ -2767,7 +2975,7 @@ func _step_contacts(delta: float) -> void:
 			d.tackle_cd = BROKEN_TACKLE_RETRY
 			carrier.vel *= 0.5
 			carrier.disrupted = maxf(carrier.disrupted, 0.6)
-			_award(8, "%s breaks the tackle!" % carrier.data.pname)
+			_award(8, "%s breaks the tackle!" % carrier.data.pname, carrier)
 
 
 ## How close the ball carrier has to come for `d` to get a hand on him.
@@ -2921,15 +3129,22 @@ func _end_play(res: Dictionary) -> void:
 	if res["kind"] != "incomplete" and res["kind"] != "interception":
 		res["text"] = "%s  (%s%d yd)" % [res["text"], "+" if gained >= 0 else "", int(round(gained))]
 
+	# Whoever finished the play with the ball earned these - "golden_touch"
+	# doubles them for him. (No carrier on an incompletion or interception,
+	# and neither of those pays a play bonus anyway.)
+	var mult := AbilityDB.cash_mult(carrier.data.ability_id) if carrier != null else 1.0
 	if res["td"]:
-		res["bucks"] = int(res["bucks"]) + 100
-		res["events"].append("Touchdown! +100")
+		var td_bucks := int(round(100.0 * mult))
+		res["bucks"] = int(res["bucks"]) + td_bucks
+		res["events"].append("Touchdown! +%d" % td_bucks)
 	elif not res["turnover"] and gained >= to_go:
-		res["bucks"] = int(res["bucks"]) + 15
-		res["events"].append("First down +15")
+		var fd_bucks := int(round(15.0 * mult))
+		res["bucks"] = int(res["bucks"]) + fd_bucks
+		res["events"].append("First down +%d" % fd_bucks)
 	if gained >= 20.0:
-		res["bucks"] = int(res["bucks"]) + 25
-		res["events"].append("Big play +25")
+		var big_bucks := int(round(25.0 * mult))
+		res["bucks"] = int(res["bucks"]) + big_bucks
+		res["events"].append("Big play +%d" % big_bucks)
 
 	res["duration"] = time
 	result = res
@@ -2941,7 +3156,11 @@ var _pending_bucks: int = 0
 var _pending_events: Array = []
 
 
-func _award(amount: int, text: String) -> void:
+## `actor` is whoever earned it, so an ability like "golden_touch"
+## (AbilityDB.cash_mult) can scale his own payouts.
+func _award(amount: int, text: String, actor: SimPlayer = null) -> void:
+	if actor != null:
+		amount = int(round(float(amount) * AbilityDB.cash_mult(actor.data.ability_id)))
 	_pending_bucks += amount
 	_pending_events.append("%s +%d" % [text, amount])
 	log_line(text)

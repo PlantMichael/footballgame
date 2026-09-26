@@ -97,17 +97,17 @@ func _play_full_match() -> void:
 	if earned <= 0:
 		_fail("no football bucks earned across a whole match")
 
-	# Finish the match the way the final whistle button does, minus the
-	# scene change (which would tear down this harness).
+	# The match screen banks the result itself the moment the last drive
+	# ends (match.gd _begin_match_end) and puts up its countdown panel - the
+	# harness only checks that happened, then tears the scene down before the
+	# countdown's scene change would take the harness with it. (A tie goes
+	# to overtime instead, which this loop doesn't drive.)
 	var won := sim.won()
-	GameState.last_result = {
-		"won": won, "score_us": sim.score_us, "score_them": sim.score_them,
-		"opponent": sim.opponent_name, "bucks": earned, "round": GameState.round_label(),
-	}
-	GameState.add_bucks(earned)
-	GameState.finish_match(won)
-	print("  result: %s, bucks now $%d, round_index=%d" % [
-		"WIN" if won else "LOSS", GameState.bucks, GameState.round_index])
+	if not sim.needs_overtime():
+		if not bool(scene.get("_match_ended")):
+			_fail("the final drive did not trigger the end-of-match panel")
+		print("  result: %s, bucks now $%d, round_index=%d" % [
+			"WIN" if won else "LOSS", GameState.bucks, GameState.round_index])
 
 	scene.queue_free()
 	await get_tree().process_frame

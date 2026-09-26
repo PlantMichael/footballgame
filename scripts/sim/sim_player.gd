@@ -107,6 +107,19 @@ var slip_cd: float = 0.0
 var lured: bool = false
 var lure_point: Vector2 = Vector2.ZERO
 
+## "Mitosis": the half that split off `clone_of` at the snap. Only exists for
+## the one play - MatchSim._remove_clones drops it before the next call.
+## Shares `data` with the original, so everything it does (catches, yards,
+## bucks) is credited to the real player.
+var clone_of: SimPlayer = null
+## Seconds after the snap before he starts moving (the clone's 1s delay).
+var start_delay: float = 0.0
+
+## "Meltdown": melted into a puddle and out of the play until the next snap.
+## melt_timer accumulates live time so the melt roll happens once per second.
+var melted: bool = false
+var melt_timer: float = 0.0
+
 ## Stat gains awarded mid-play (an ability firing at a throw, a handoff, a
 ## dodge, etc.), one entry per point so the renderer can pop them up one at
 ## a time instead of a single combined number. A "-" prefix means a loss.

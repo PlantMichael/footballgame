@@ -168,6 +168,30 @@ can be placed - lineup screen, in-match substitutions, and auto-fill.
 ability yet. The choice replaces the first generated QB on the roster; the
 backup QB stays procedural.
 
+**The match ends on its own.** Once the last drive (or overtime) is over,
+`match.gd` banks the result straight away (`_begin_match_end`) and puts up a
+WIN/LOSE panel with the score and a 5 second countdown, then goes back to the
+hub - or to `post_match.tscn` if the run just ended. While it counts down the
+winning side jumps up and down and the losing side lies flat on the turf
+(`field_view.end_pose`); a tie just stands there.
+
+**Two special visits between matches**, both unlocked by the last match,
+shown as buttons on the hub and forfeited at the next kickoff
+(`GameState.ritual_available` / `lab_available`):
+
+- **The Ritual Site** - win or lose by 10+. Sacrifice players for a Cursed one.
+- **The Laboratory** (`laboratory.gd`) - one of your players went over 200
+  receiving or rushing yards. $500 buys a random **Oddity**
+  (`OddityPlayerDB`, tier `ShopPlayerDB.QUALITY_ODDITY`): a fixed name and
+  bespoke ability, but a stat line rolled fresh on the spot - 30 points split
+  at random over Strength/Agility/Dexterity/Intelligence (Sfdsvd Kytgseg gets
+  44, Midas Jr. 25). Oddities wear a bright green outline on the field. Their
+  abilities (split in two, abandon the line, freelance, melt, double cash)
+  are decided at the snap in `MatchSim._apply_oddities_at_snap` and
+  `_step_melts`; a Mitosis half is a second `SimPlayer` sharing the original's
+  `PlayerData`, appended to `offense` for one play and dropped by
+  `_remove_clones` before the next call.
+
 ## Test and tuning harnesses
 
 These run headless and print results; none of them are shipped game content.
