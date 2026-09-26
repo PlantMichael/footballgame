@@ -60,6 +60,8 @@ const SIDELINE_GRASS := Color("356f47")
 ## zoom; everything else about a body is expressed as a multiple of it.
 const PLAYER_R := 0.72          # yards of radius per player, times _scale
 const PLAYER_R_MIN := 12.0
+## Defensive linemen (slots DL0-DL3) are drawn this much bigger - see _draw_person.
+const DL_SCALE := 1.15
 
 ## Bodies are normalised to equal AREA rather than fitted inside a box. The
 ## source sprites are framed very inconsistently - front-view aspect ratios
@@ -1108,6 +1110,11 @@ func _is_flat(sp: SimPlayer) -> bool:
 ## topples the way the player was going over FALL_TIME seconds.
 func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var p := to_px(sp.pos)
+	# The defensive front four are drawn a size up, so the trenches read as
+	# big bodies. Purely visual - reach, tackles and clicks are all in yards.
+	if not sp.is_offense and sp.slot.begins_with("DL"):
+		r *= DL_SCALE
+		fs = _num_font_size(r)
 
 	# "Meltdown": nothing left of him but a puddle until the next snap.
 	if sp.melted:
