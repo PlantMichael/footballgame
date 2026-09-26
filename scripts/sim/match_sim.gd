@@ -287,7 +287,7 @@ func regenerate_defense(rng_src: RandomNumberGenerator, quality: float) -> void:
 	# this every lineman stayed pinned to a ghost while the new front four
 	# ran through untouched.
 	for sp in offense:
-		sp.mark = _pick_dedicated_target() if AbilityDB.dedicated_blocker(sp.data.ability_id) else null
+		sp.mark = _pick_dedicated_target() if AbilityDB.dedicated_blocker(sp.ability()) else null
 		sp.engaged = false
 	if not play.is_empty():
 		_align_defense()
@@ -475,7 +475,7 @@ func _update_terrain() -> void:
 	for group in [offense, defense]:
 		for sp in group:
 			sp.terrain_mult = 1.0
-			if sp.is_offense and AbilityDB.weather_immune(sp.data.ability_id):
+			if sp.is_offense and AbilityDB.weather_immune(sp.ability()):
 				continue
 			for pd in puddles:
 				if sp.pos.distance_to(pd["pos"]) <= float(pd["r"]):
@@ -698,9 +698,9 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		"stamina": pd.stamina,
 		"intelligence": pd.intelligence,
 	}
-	var decay_start := AbilityDB.decaying_stat_start(pd.ability_id)
+	var decay_start := AbilityDB.decaying_stat_start(sp.ability())
 	if decay_start > 0:
-		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(pd.ability_id), 15)
+		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(sp.ability()), 15)
 		for key in base:
 			base[key] = decayed
 	var item_mods := ItemDB.total_stat_mods(pd.items)
@@ -708,23 +708,23 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		base[key] = int(base[key]) + int(item_mods[key])
 	for key in match_bonus_for(pd):
 		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
-	for key in AbilityDB.snap_bonus(pd.ability_id, pd, ctx):
-		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(pd.ability_id, pd, ctx)[key])
+	for key in AbilityDB.snap_bonus(sp.ability(), pd, ctx):
+		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(sp.ability(), pd, ctx)[key])
 	_apply_weather(sp, base)
-	var agi_cap := AbilityDB.speed_cap(pd.ability_id)
+	var agi_cap := AbilityDB.speed_cap(sp.ability())
 	if agi_cap < 99:
 		base["agility"] = mini(int(base["agility"]), agi_cap)
 	for key in base:
 		base[key] = clampi(int(base[key]), 1, 15)
 	sp.eff = base
-	sp.fatigue_floor = AbilityDB.fatigue_floor(pd.ability_id)
+	sp.fatigue_floor = AbilityDB.fatigue_floor(sp.ability())
 
 
 ## This match's weather, applied to one player's stat line (both teams).
 ## Wind only bothers a passer - our QB - and never takes him below
 ## WINDY_QB_DEX_FLOOR (a QB already under it keeps what he has).
 func _apply_weather(sp: SimPlayer, base: Dictionary) -> void:
-	if sp.is_offense and AbilityDB.weather_immune(sp.data.ability_id):
+	if sp.is_offense and AbilityDB.weather_immune(sp.ability()):
 		return
 	if weather == WeatherDB.SNOWY and sp.is_offense and _snow_immune(sp):
 		return
@@ -744,7 +744,7 @@ func _apply_weather(sp: SimPlayer, base: Dictionary) -> void:
 func _snow_immune(sp: SimPlayer) -> bool:
 	var line_immune := false
 	for o in offense:
-		if AbilityDB.snow_immune_line(o.data.ability_id):
+		if AbilityDB.snow_immune_line(o.ability()):
 			if o == sp:
 				return true
 			line_immune = true
@@ -785,7 +785,7 @@ func _play_was_a_run() -> bool:
 ## decaying_stat_start abilities like "stat_pad" from advancing this play.
 func _team_blocks_stat_loss() -> bool:
 	for sp in offense:
-		if AbilityDB.blocks_stat_loss(sp.data.ability_id):
+		if AbilityDB.blocks_stat_loss(sp.ability()):
 			return true
 	return false
 
@@ -811,6 +811,11 @@ func _out_of_position_penalty(sp: SimPlayer, wanted: String) -> void:
 func _align_offense() -> void:
 	var cy := FIELD_W * 0.5
 	var is_run := PlayDB.is_run(play_id)
+	# The Iron Wall shuts off your tackles' abilities (not the center's) -
+	# first, so nothing below ever sees them. See SimPlayer.ability.
+	var iron_wall := _gimmick_active(BowlDB.IRON_WALL)
+	for sp in offense:
+		sp.ability_negated = iron_wall and sp.slot.begins_with("T")
 	var ctx := _snap_context(is_run)
 
 	var c := offense_slot("C")
@@ -850,7 +855,7 @@ func _align_offense() -> void:
 			for wp in assign:
 				f.route.append(Vector2(f.target_pos.x + wp.x,
 					clampf(f.target_pos.y + wp.y, 0.8, FIELD_W - 0.8)))
-		if AbilityDB.dedicated_blocker(f.data.ability_id):
+		if AbilityDB.dedicated_blocker(f.ability()):
 			# Overrides whatever the coach drew for him: he never runs a
 			# route or takes a handoff, and locks onto his own target for
 			# the whole play instead of the normal per-frame assignment -
@@ -899,6 +904,25 @@ func _align_offense() -> void:
 	_apply_team_buffs()
 	_apply_alignment_buffs()
 	_apply_tier_buffs()
+	_apply_gimmicks()
+
+
+## True while the bowl special player `id` (BowlDB.GIMMICKS) is on the
+## opposing defense - his effect lasts exactly as long as he's out there.
+func _gimmick_active(id: String) -> bool:
+	for d in defense:
+		if d.data.gimmick_id == id:
+			return true
+	return false
+
+
+## Bowl special players' stat effects on your offense, last so no buff can
+## paper over them. (The Iron Wall's is handled up front in _align_offense.)
+func _apply_gimmicks() -> void:
+	if _gimmick_active(BowlDB.DESTROYER):
+		for sp in offense:
+			if plays_rb(sp):
+				sp.eff["agility"] = clampi(sp.stat("agility") + BowlDB.DESTROYER_RB_AGILITY, 1, 15)
 
 
 ## "Right Side Coach"-style abilities (AbilityDB.right_side_buff): buffs the
@@ -908,12 +932,12 @@ func _align_offense() -> void:
 func _apply_alignment_buffs() -> void:
 	var source: SimPlayer = null
 	for sp in offense:
-		if not AbilityDB.right_side_buff(sp.data.ability_id).is_empty():
+		if not AbilityDB.right_side_buff(sp.ability()).is_empty():
 			source = sp
 			break
 	if source == null:
 		return
-	var buff := AbilityDB.right_side_buff(source.data.ability_id)
+	var buff := AbilityDB.right_side_buff(source.ability())
 	var stat: String = String(buff.get("stat", ""))
 	var amount: int = int(buff.get("amount", 0))
 	var count: int = int(buff.get("count", 0))
@@ -931,7 +955,7 @@ func _apply_alignment_buffs() -> void:
 ## Generated (non-shop) players are always quality 0 and never match.
 func _apply_tier_buffs() -> void:
 	for sp in offense:
-		var buff := AbilityDB.tier_buff(sp.data.ability_id)
+		var buff := AbilityDB.tier_buff(sp.ability())
 		if buff.is_empty():
 			continue
 		var qualities: Array = buff.get("qualities", [])
@@ -949,7 +973,7 @@ func _apply_tier_buffs() -> void:
 ## penalty are already baked into `eff`.
 func _apply_team_buffs() -> void:
 	for sp in offense:
-		var buff := AbilityDB.team_buff(sp.data.ability_id)
+		var buff := AbilityDB.team_buff(sp.ability())
 		if buff.is_empty():
 			continue
 		var target_pos: PlayerData.Pos = buff["pos"]
@@ -997,7 +1021,7 @@ func _align_defense() -> void:
 	# zone defender can still happen to be standing near him.
 	var runners: Array[SimPlayer] = []
 	for f in flex_players():
-		if f.role == SimPlayer.Role.ROUTE and not AbilityDB.evades_man_coverage(f.data.ability_id):
+		if f.role == SimPlayer.Role.ROUTE and not AbilityDB.evades_man_coverage(f.ability()):
 			runners.append(f)
 	runners.sort_custom(func(a, b): return absf(a.target_pos.y - cy) > absf(b.target_pos.y - cy))
 
@@ -1066,7 +1090,7 @@ func _align_defense() -> void:
 func _apply_chain() -> void:
 	chains.clear()
 	for sp in offense:
-		var length := AbilityDB.chains_defenders(sp.data.ability_id)
+		var length := AbilityDB.chains_defenders(sp.ability())
 		if length <= 0.0:
 			continue
 		var by_dist := defense.duplicate()
@@ -1120,7 +1144,7 @@ func _enforce_chains() -> void:
 func _apply_snap_push() -> void:
 	var push := 0.0
 	for sp in offense:
-		push = maxf(push, AbilityDB.pushes_defense_at_snap(sp.data.ability_id))
+		push = maxf(push, AbilityDB.pushes_defense_at_snap(sp.ability()))
 	if push <= 0.0:
 		return
 	for d in defense:
@@ -1132,7 +1156,7 @@ func _apply_snap_push() -> void:
 func _apply_curse() -> void:
 	var source: SimPlayer = null
 	for sp in offense:
-		if AbilityDB.curses_nearest_defender(sp.data.ability_id):
+		if AbilityDB.curses_nearest_defender(sp.ability()):
 			source = sp
 			break
 	if source == null:
@@ -1155,7 +1179,7 @@ func _apply_curse() -> void:
 func _apply_distraction() -> void:
 	var source: SimPlayer = null
 	for f in flex_players():
-		if AbilityDB.distracts_defenders(f.data.ability_id):
+		if AbilityDB.distracts_defenders(f.ability()):
 			source = f
 			break
 	if source == null:
@@ -1174,7 +1198,7 @@ func _apply_distraction() -> void:
 func _apply_taunt() -> void:
 	var source: SimPlayer = null
 	for f in flex_players():
-		if AbilityDB.taunts_defenders(f.data.ability_id):
+		if AbilityDB.taunts_defenders(f.ability()):
 			source = f
 			break
 	if source == null:
@@ -1219,9 +1243,9 @@ func snap() -> void:
 	# were walking away from when the play call changed.
 	for sp in offense:
 		if sp.role != SimPlayer.Role.QB and sp.role != SimPlayer.Role.BLOCK \
-				and AbilityDB.dashes_at_snap(sp.data.ability_id):
+				and AbilityDB.dashes_at_snap(sp.ability()):
 			sp.pos.x = minf(sp.pos.x + 5.0, GOAL_LINE - 0.5)
-		if sp.role == SimPlayer.Role.BLOCK and AbilityDB.locks_dl_at_snap(sp.data.ability_id):
+		if sp.role == SimPlayer.Role.BLOCK and AbilityDB.locks_dl_at_snap(sp.ability()):
 			sp.mark = _closest_lineman(sp)
 		sp.trail = PackedVector2Array([sp.pos])
 		sp.odometer = 0.0
@@ -1242,7 +1266,7 @@ func _apply_oddities_at_snap() -> void:
 	for sp: SimPlayer in offense.duplicate():
 		if sp.clone_of != null:
 			continue
-		var id := sp.data.ability_id
+		var id := sp.ability()
 
 		var freelance := AbilityDB.freelance_chance(id)
 		if freelance > 0.0 and sp.role == SimPlayer.Role.ROUTE and rng.randf() < freelance:
@@ -1369,7 +1393,7 @@ func _step_melts(delta: float) -> void:
 	for sp in offense:
 		if sp.melted:
 			continue
-		var chance := AbilityDB.melt_chance_per_second(sp.data.ability_id)
+		var chance := AbilityDB.melt_chance_per_second(sp.ability())
 		if chance <= 0.0:
 			continue
 		sp.melt_timer += delta
@@ -1404,7 +1428,7 @@ func _melt(sp: SimPlayer) -> void:
 ## stat gains pop up and count as gains for "copycat".
 func _snap_gains() -> void:
 	for sp in offense:
-		var id := sp.data.ability_id
+		var id := sp.ability()
 		if auto_route_ids.has(sp.slot):
 			var bonus := AbilityDB.undrawn_route_bonus(id)
 			for stat in bonus:
@@ -1468,7 +1492,7 @@ func _step_props(delta: float) -> void:
 		while not sp.peel_drops.is_empty() and sp.odometer >= sp.peel_drops[0]:
 			sp.peel_drops.remove_at(0)
 			banana_peels.append(sp.pos)
-		var keg_at := AbilityDB.drops_keg_after_yards(sp.data.ability_id)
+		var keg_at := AbilityDB.drops_keg_after_yards(sp.ability())
 		if keg_at > 0.0 and not sp.keg_dropped and sp.odometer >= keg_at:
 			sp.keg_dropped = true
 			_drop_keg(sp)
@@ -1540,7 +1564,7 @@ func _lured_logic(d: SimPlayer, delta: float) -> bool:
 ## "Warming Up"-style abilities: +amount of a stat every live second.
 func _step_timed_gains(delta: float) -> void:
 	for sp in offense:
-		var gain := AbilityDB.gain_per_second(sp.data.ability_id)
+		var gain := AbilityDB.gain_per_second(sp.ability())
 		if gain.is_empty():
 			continue
 		sp.gain_timer += delta
@@ -1616,7 +1640,7 @@ func _step_offense(delta: float) -> void:
 	# checked before anything else moves this frame since there's no point
 	# stepping a play that's about to be blown up anyway.
 	if carrier != null:
-		var fuse := AbilityDB.explodes_after_seconds(carrier.data.ability_id)
+		var fuse := AbilityDB.explodes_after_seconds(carrier.ability())
 		if fuse > 0.0:
 			carrier.carry_seconds += delta
 			if carrier.carry_seconds >= fuse:
@@ -1683,7 +1707,7 @@ func _qb_logic(qb: SimPlayer, delta: float) -> void:
 	if qb_scrambling:
 		if not qb.run_bonus_used:
 			qb.run_bonus_used = true
-			var run_bonus := AbilityDB.on_scramble_bonus(qb.data.ability_id)
+			var run_bonus := AbilityDB.on_scramble_bonus(qb.ability())
 			for stat in run_bonus:
 				_gain_stat(qb, stat, int(run_bonus[stat]))
 		_carry_logic(qb, delta)
@@ -1860,7 +1884,7 @@ func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 	qb.has_ball = false
 	rb.has_ball = true
 	_set_carrier(rb)
-	var handoff_bonus := AbilityDB.on_handoff_bonus(rb.data.ability_id)
+	var handoff_bonus := AbilityDB.on_handoff_bonus(rb.ability())
 	for stat in handoff_bonus:
 		_gain_stat(rb, stat, int(handoff_bonus[stat]))
 	_trigger_pursuit()
@@ -1889,7 +1913,7 @@ func _block_for_handoff(rb: SimPlayer) -> void:
 ## e.g. "power_surge" grants Strength the instant he becomes the carrier.
 func _set_carrier(sp: SimPlayer) -> void:
 	carrier = sp
-	var bonus := AbilityDB.on_carry_bonus(sp.data.ability_id)
+	var bonus := AbilityDB.on_carry_bonus(sp.ability())
 	for stat in bonus:
 		_gain_stat(sp, stat, int(bonus[stat]))
 
@@ -1899,11 +1923,11 @@ func _set_carrier(sp: SimPlayer) -> void:
 ## earthquake. Called right after _set_carrier from both of _resolve_catch's
 ## success branches (the real catch and a "guardian_angel"-style save).
 func _on_receive(sp: SimPlayer) -> void:
-	if AbilityDB.max_agility_on_catch(sp.data.ability_id):
+	if AbilityDB.max_agility_on_catch(sp.ability()):
 		var delta := 15 - sp.stat("agility")
 		if delta > 0:
 			_gain_stat(sp, "agility", delta)
-	if AbilityDB.earthquake_on_catch(sp.data.ability_id):
+	if AbilityDB.earthquake_on_catch(sp.ability()):
 		_trigger_earthquake(sp)
 
 
@@ -1930,7 +1954,7 @@ func _gain_stat(sp: SimPlayer, stat: String, amount: int, copyable: bool = true)
 	if not copyable or amount <= 0 or not sp.is_offense:
 		return
 	for o in offense:
-		if o != sp and AbilityDB.copies_team_gains(o.data.ability_id):
+		if o != sp and AbilityDB.copies_team_gains(o.ability()):
 			_gain_stat(o, stat, amount, false)
 
 
@@ -1952,7 +1976,7 @@ func _grant_event(sp: SimPlayer, text: String) -> void:
 ## still reading the play as if the QB has the ball, delaying when they
 ## start pursuing him for real.
 func _apply_misdirection(rb: SimPlayer) -> void:
-	var chance := AbilityDB.fake_chance(rb.data.ability_id)
+	var chance := AbilityDB.fake_chance(rb.ability())
 	if chance <= 0.0:
 		return
 	for d in defense:
@@ -2025,7 +2049,7 @@ func _assign_blocks() -> void:
 	for sp in offense:
 		if sp.role != SimPlayer.Role.BLOCK or sp == carrier or sp.melted:
 			continue
-		if AbilityDB.dedicated_blocker(sp.data.ability_id):
+		if AbilityDB.dedicated_blocker(sp.ability()):
 			# Locked onto his own pick for the whole play (see _align_offense
 			# / _pick_dedicated_target) - never reassigned, and his target is
 			# claimed so a normal blocker doesn't also get routed onto him.
@@ -2419,7 +2443,7 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	if pressure != null and pressure.pos.distance_to(qb.pos) < 3.5:
 		acc += 0.7
 	acc *= lerpf(1.35, 1.0, clampf(qb.energy, 0.0, 1.0))
-	if AbilityDB.perfect_aim(qb.data.ability_id):
+	if AbilityDB.perfect_aim(qb.ability()):
 		acc = 0.0
 	aim += Vector2(rng.randfn(0.0, acc), rng.randfn(0.0, acc))
 	aim.y = clampf(aim.y, -2.0, FIELD_W + 2.0)
@@ -2442,7 +2466,7 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	# "Gunslinger Growth": a permanent Dexterity gain (not a per-play eff
 	# bonus - see AbilityDB.dex_per_throw_yards) based on how far downfield
 	# this throw was aimed, whether or not it's actually completed.
-	var growth_rate := AbilityDB.dex_per_throw_yards(qb.data.ability_id)
+	var growth_rate := AbilityDB.dex_per_throw_yards(qb.ability())
 	if growth_rate > 0.0:
 		var air_yards := maxf(0.0, aim.x - los)
 		var gain := int(floor(air_yards * growth_rate))
@@ -2598,7 +2622,7 @@ func _man_logic(d: SimPlayer, delta: float) -> void:
 		_zone_logic(d, delta)
 		return
 	var r: SimPlayer = d.mark
-	if time < AbilityDB.cloak_seconds(r.data.ability_id):
+	if time < AbilityDB.cloak_seconds(r.ability()):
 		d.hold(delta)
 		return
 	var qb := offense_slot("QB")
@@ -2726,14 +2750,14 @@ func _resolve_catch() -> void:
 	# instant it was thrown.
 	var qb := offense_slot("QB")
 	if qb != null:
-		var dex_bonus := AbilityDB.passer_dex_bonus(qb.data.ability_id, rec.data.pos)
+		var dex_bonus := AbilityDB.passer_dex_bonus(qb.ability(), rec.data.pos)
 		if dex_bonus != 0:
 			_gain_stat(rec, "dexterity", dex_bonus)
 
 	# "Wasted Potential": no hands at all in the end zone - the catch roll
 	# below turns 0 Dexterity into a guaranteed drop. Set directly rather
 	# than through _gain_stat, whose 1..15 clamp would never let it hit 0.
-	if AbilityDB.zero_dex_in_endzone(rec.data.ability_id) and spot.x >= GOAL_LINE:
+	if AbilityDB.zero_dex_in_endzone(rec.ability()) and spot.x >= GOAL_LINE:
 		rec.eff["dexterity"] = 0
 		_grant_event(rec, "0 DEX")
 
@@ -2742,7 +2766,7 @@ func _resolve_catch() -> void:
 	# yards from the QB laterally.
 	var air_yards := maxf(0.0, spot.x - los)
 	var p := rec.catch_chance_base(air_yards)
-	p += AbilityDB.catch_mod(rec.data.ability_id, ctx)
+	p += AbilityDB.catch_mod(rec.ability(), ctx)
 	p += ItemDB.total_catch_mod(rec.data.items)
 	# Kept deliberately small: the distance/Dexterity curve above is the
 	# design contract, and heavy coverage penalties on top of it made every
@@ -2753,7 +2777,7 @@ func _resolve_catch() -> void:
 	# catch_chance_base uses internally for Dexterity.
 	p -= float(_butter_fingers_penalty(rec.pos)) * 0.015
 	p = clampf(p, 0.03, 0.97)
-	if AbilityDB.guarantees_catch(rec.data.ability_id):
+	if AbilityDB.guarantees_catch(rec.ability()):
 		p = 1.0
 	# "Wasted Potential": 0 Dexterity in the end zone means no catch at all,
 	# not merely a bad catch roll. (A teammate can still bail him out - see
@@ -2815,7 +2839,7 @@ func _find_catch_savior(rec: SimPlayer) -> SimPlayer:
 			continue
 		if f.downed > 0.0 or f.stunned > 0.0:
 			continue
-		if AbilityDB.catches_drops(f.data.ability_id):
+		if AbilityDB.catches_drops(f.ability()):
 			return f
 	return null
 
@@ -2922,7 +2946,7 @@ func _step_contacts(delta: float) -> void:
 			continue
 		d.next_contact = CONTACT_INTERVAL
 		if _contact_roll(d, d.mark, "cover"):
-			d.mark.disrupted = 1.1 * AbilityDB.disrupted_mult(d.mark.data.ability_id)
+			d.mark.disrupted = 1.1 * AbilityDB.disrupted_mult(d.mark.ability())
 
 	# Tackles.
 	if carrier == null:
@@ -2939,7 +2963,7 @@ func _step_contacts(delta: float) -> void:
 			continue
 		d.tackle_cd = 0.4
 
-		if AbilityDB.dodges_once(carrier.data.ability_id) and not carrier.dodge_used:
+		if AbilityDB.dodges_once(carrier.ability()) and not carrier.dodge_used:
 			carrier.dodge_used = true
 			carrier.eff["agility"] = clampi(carrier.stat("agility") - 5, 1, 15)
 			_grant_stat_gain(carrier, "agility", -5)
@@ -2948,7 +2972,7 @@ func _step_contacts(delta: float) -> void:
 			continue
 
 		var chance := 0.88 + float(d.stat("strength") - carrier.stat("strength")) * 0.020
-		chance -= AbilityDB.contact_mod(carrier.data.ability_id, "carry")
+		chance -= AbilityDB.contact_mod(carrier.ability(), "carry")
 		chance -= ItemDB.total_contact_mod(carrier.data.items, "carry")
 		if d.data.aura_id == AuraDB.BIG_BLOCKER:
 			chance += AuraDB.BIG_BLOCKER_TACKLE_BONUS
@@ -3034,9 +3058,9 @@ func _contact_roll(winner: SimPlayer, loser: SimPlayer, role: String) -> bool:
 	# An even matchup still gets a small chance, otherwise nobody ever sheds.
 	var diff := float(winner.stat("strength") - loser.stat("strength"))
 	var chance := clampf(0.06 + diff * 0.024, 0.0, 0.25)
-	chance += AbilityDB.contact_mod(winner.data.ability_id, role)
+	chance += AbilityDB.contact_mod(winner.ability(), role)
 	chance += ItemDB.total_contact_mod(winner.data.items, role)
-	chance -= AbilityDB.contact_mod(loser.data.ability_id, role)
+	chance -= AbilityDB.contact_mod(loser.ability(), role)
 	chance -= ItemDB.total_contact_mod(loser.data.items, role)
 	return rng.randf() < clampf(chance, 0.0, 0.85)
 
@@ -3132,7 +3156,7 @@ func _end_play(res: Dictionary) -> void:
 	# Whoever finished the play with the ball earned these - "golden_touch"
 	# doubles them for him. (No carrier on an incompletion or interception,
 	# and neither of those pays a play bonus anyway.)
-	var mult := AbilityDB.cash_mult(carrier.data.ability_id) if carrier != null else 1.0
+	var mult := AbilityDB.cash_mult(carrier.ability()) if carrier != null else 1.0
 	if res["td"]:
 		var td_bucks := int(round(100.0 * mult))
 		res["bucks"] = int(res["bucks"]) + td_bucks
@@ -3160,7 +3184,7 @@ var _pending_events: Array = []
 ## (AbilityDB.cash_mult) can scale his own payouts.
 func _award(amount: int, text: String, actor: SimPlayer = null) -> void:
 	if actor != null:
-		amount = int(round(float(amount) * AbilityDB.cash_mult(actor.data.ability_id)))
+		amount = int(round(float(amount) * AbilityDB.cash_mult(actor.ability())))
 	_pending_bucks += amount
 	_pending_events.append("%s +%d" % [text, amount])
 	log_line(text)
@@ -3184,7 +3208,7 @@ func advance() -> Dictionary:
 
 	if not _team_blocks_stat_loss():
 		for sp in offense:
-			if AbilityDB.decaying_stat_start(sp.data.ability_id) > 0:
+			if AbilityDB.decaying_stat_start(sp.ability()) > 0:
 				sp.stat_decay += 1
 
 	var out := {"drive_over": false, "reason": "", "match_over": false}

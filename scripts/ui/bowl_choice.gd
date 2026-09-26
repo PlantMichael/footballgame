@@ -56,6 +56,12 @@ func _bowl_card(id: String) -> Control:
 	var desc := UIKit.label(BowlDB.bowl_desc(id), 13, UIKit.MUTED)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(desc)
+	var gimmick := BowlDB.gimmick_for_bowl(id)
+	if gimmick != "":
+		v.add_child(UIKit.label(BowlDB.gimmick_name(gimmick), 14, BowlDB.GIMMICK_COLOR))
+		var effect := UIKit.label(BowlDB.gimmick_effect(gimmick), 12, UIKit.MUTED)
+		effect.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(effect)
 
 	v.add_child(UIKit.rule())
 	var stars := clampi(int(round(BowlDB.quality_mult(id) * 4.0)), 1, 5)

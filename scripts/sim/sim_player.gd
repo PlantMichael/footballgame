@@ -120,6 +120,10 @@ var start_delay: float = 0.0
 var melted: bool = false
 var melt_timer: float = 0.0
 
+## His ability is switched off for this play (e.g. the Toilet Bowl's Iron
+## Wall negating your linemen) - see ability(). Set by MatchSim each call.
+var ability_negated: bool = false
+
 ## Stat gains awarded mid-play (an ability firing at a throw, a handoff, a
 ## dodge, etc.), one entry per point so the renderer can pop them up one at
 ## a time instead of a single combined number. A "-" prefix means a loss.
@@ -138,6 +142,12 @@ var stride: float = 0.0
 var downed: float = 0.0
 
 var trail: PackedVector2Array = PackedVector2Array()
+
+
+## The ability id the sim should act on: his card's, unless negated. Every
+## ability lookup in MatchSim goes through this rather than data.ability_id.
+func ability() -> String:
+	return "" if ability_negated else data.ability_id
 
 
 func stat(key: String) -> int:

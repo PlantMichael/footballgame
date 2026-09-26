@@ -150,6 +150,12 @@ func _matchup_panel() -> Control:
 		UIKit.MUTED if GameState.next_weather == WeatherDB.CLEAR else UIKit.ACCENT)
 	forecast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(forecast)
+	var gimmick := BowlDB.gimmick_for_bowl(bowl_id)
+	if gimmick != "":
+		var special := UIKit.label("Special player: %s - %s" % [BowlDB.gimmick_name(gimmick),
+			BowlDB.gimmick_effect(gimmick)], 14, BowlDB.GIMMICK_COLOR)
+		special.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(special)
 
 	v.add_child(UIKit.vsep(6))
 	v.add_child(UIKit.rule())

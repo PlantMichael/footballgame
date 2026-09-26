@@ -30,6 +30,11 @@ const ITEM_SLOTS := 3
 ## Only ever set on generated opposing defenders, never on the player's roster.
 @export var aura_id: String = ""
 
+## A bowl game's one-of-a-kind special defender (BowlDB.GIMMICKS id), e.g.
+## "Deshawn the Destroyer" in the Pro Bowl. Only ever set on a generated
+## opposing defender, by BowlDB.place_gimmick_player.
+@export var gimmick_id: String = ""
+
 ## Rarity tier for hardcoded shop players (1 Rookie - 4 All Star). 0 means
 ## this player was procedurally generated and has no fixed tier.
 @export var quality: int = 0
@@ -120,6 +125,7 @@ func duplicate_player() -> PlayerData:
 	p.ability_id = ability_id
 	p.items = items.duplicate()
 	p.aura_id = aura_id
+	p.gimmick_id = gimmick_id
 	p.quality = quality
 	p.body = body
 	p.head_id = head_id

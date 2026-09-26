@@ -175,6 +175,16 @@ hub - or to `post_match.tscn` if the run just ended. While it counts down the
 winning side jumps up and down and the losing side lies flat on the turf
 (`field_view.end_pose`); a tie just stands there.
 
+**Bowl games can have a special player** (`BowlDB.GIMMICKS`): one named
+defender, dropped into that bowl's generated defense by
+`BowlDB.place_gimmick_player`, whose effect lasts while he's on the field
+(`MatchSim._gimmick_active`). He's drawn with a purple double ring, and his
+card states the effect. So far: the Pro Bowl's Deshawn the Destroyer (your RBs
+-4 Agility) and the Toilet Bowl's Marcus Williams, the Iron Wall (your four T
+slots' abilities are negated - `SimPlayer.ability_negated`; every ability
+lookup in the sim goes through `SimPlayer.ability()` for this reason).
+Weather still rolls for bowl games as usual.
+
 **Two special visits between matches**, both unlocked by the last match,
 shown as buttons on the hub and forfeited at the next kickoff
 (`GameState.ritual_available` / `lab_available`):

@@ -83,15 +83,20 @@ func _start_match() -> void:
 	GameState.lab_available = false
 	var opp := GameState.current_opponent()
 	var quality := GameState.current_match_quality()
+	var is_bowl := not GameState.dev_mode and GameState.round_index == GameState.bracket.size() - 1
+	var defense := Generator.make_defense(GameState.rng, quality, GameState.aura_count(GameState.rng))
+	if is_bowl:
+		# The bowl's special player, if it has one (BowlDB.GIMMICKS).
+		BowlDB.place_gimmick_player(defense, String(opp.get("bowl_id", GameState.chosen_bowl)))
 	sim = MatchSim.new()
 	sim.setup(
 		GameState.starters(),
-		Generator.make_defense(GameState.rng, quality, GameState.aura_count(GameState.rng)),
+		defense,
 		quality,
 		String(opp.get("name", "Opponent")),
 		int(opp.get("drives", 4))
 	)
-	sim.is_bowl_game = not GameState.dev_mode and GameState.round_index == GameState.bracket.size() - 1
+	sim.is_bowl_game = is_bowl
 	sim.set_weather(GameState.next_weather)
 	sim.start_match()
 	bucks_earned = 0
@@ -1427,7 +1432,10 @@ func _show_card(sp: SimPlayer) -> void:
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
 	head.add_child(UIKit.label("#%d" % pd.number, 14, UIKit.MUTED))
-	head.add_child(UIKit.label(pd.pname, 18, UIKit.TEXT if sp.is_offense else UIKit.DEFENSE))
+	var name_col := UIKit.TEXT if sp.is_offense else UIKit.DEFENSE
+	if pd.gimmick_id != "":
+		name_col = BowlDB.GIMMICK_COLOR
+	head.add_child(UIKit.label(pd.pname, 18, name_col))
 	var sp2 := Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sp2)
@@ -1452,8 +1460,23 @@ func _show_card(sp: SimPlayer) -> void:
 		v.add_child(row)
 
 	v.add_child(UIKit.vsep(2))
+	# A bowl special player: his game-wide effect, in his purple.
+	if pd.gimmick_id != "":
+		v.add_child(UIKit.label("BOWL SPECIAL", 13, BowlDB.GIMMICK_COLOR))
+		var effect := UIKit.label(BowlDB.gimmick_effect(pd.gimmick_id), 12, Color("9fc0b2"))
+		effect.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		effect.custom_minimum_size = Vector2(300, 0)
+		v.add_child(effect)
 	var ab_name := AbilityDB.ability_name(pd.ability_id)
-	if pd.ability_id == "":
+	if sp.ability_negated and pd.ability_id != "":
+		v.add_child(UIKit.label("%s - NEGATED" % ab_name, 13, BowlDB.GIMMICK_COLOR))
+		var why := UIKit.label("Shut off by %s." % BowlDB.gimmick_name(BowlDB.IRON_WALL), 12, UIKit.MUTED)
+		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		why.custom_minimum_size = Vector2(300, 0)
+		v.add_child(why)
+	elif pd.gimmick_id != "" and pd.ability_id == "":
+		pass   # the effect above is the whole story - no "No special ability" line under it
+	elif pd.ability_id == "":
 		v.add_child(UIKit.label("No special ability", 12, UIKit.MUTED))
 	else:
 		v.add_child(UIKit.label(ab_name, 13, UIKit.ACCENT))

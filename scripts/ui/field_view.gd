@@ -563,7 +563,7 @@ func _begin_stroke(sp: SimPlayer) -> void:
 func _route_budget() -> float:
 	if _stroke_player == null:
 		return RouteBook.BUDGET_YARDS
-	return RouteBook.BUDGET_YARDS * AbilityDB.route_budget_mult(_stroke_player.data.ability_id)
+	return RouteBook.BUDGET_YARDS * AbilityDB.route_budget_mult(_stroke_player.ability())
 
 
 func _extend_stroke(point: Vector2) -> void:
@@ -1173,6 +1173,13 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var shadow_r := r * lerpf(0.92, 0.78, fall) * (1.0 - 0.3 * hop / maxf(r * JUMP_HEIGHT, 0.01))
 	draw_circle(center + Vector2(2.0, 4.0 + hop), shadow_r, Color(0, 0, 0, 0.16))
 
+	# A bowl special player (BowlDB.GIMMICKS) - a heavy purple double ring,
+	# so he can't be mistaken for a purple Mind Reader aura's single one.
+	if not sp.is_offense and sp.data.gimmick_id != "" and fall <= 0.0:
+		var pulse5 := 0.06 * sin(Time.get_ticks_msec() * 0.005)
+		draw_arc(center, r * (1.30 + pulse5), 0, TAU, 32, BowlDB.GIMMICK_COLOR, 4.0)
+		draw_arc(center, r * (1.52 + pulse5), 0, TAU, 32, Color(BowlDB.GIMMICK_COLOR, 0.55), 2.0)
+
 	# Aura'd defenders (see AuraDB/GameState.aura_count) get a pulsing colored
 	# ring so the "colored enemy" reads at a glance on the field.
 	if not sp.is_offense and sp.data.aura_id != "" and fall <= 0.0:
@@ -1191,7 +1198,7 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	# Route") gets his own ring for as long as that lasts, so the effect
 	# reads as something actually happening rather than an invisible number.
 	if sp.is_offense and fall <= 0.0 and sim.phase == MatchSim.Phase.LIVE:
-		var cloak_dur := AbilityDB.cloak_seconds(sp.data.ability_id)
+		var cloak_dur := AbilityDB.cloak_seconds(sp.ability())
 		if cloak_dur > 0.0 and sim.time < cloak_dur:
 			var pulse3 := 0.08 * sin(Time.get_ticks_msec() * 0.01)
 			draw_arc(center, r * (1.32 + pulse3), 0, TAU, 30, Color("bfe9ff"), 3.0)
