@@ -7,6 +7,10 @@ signal bucks_changed(new_total: int)
 signal roster_changed()
 
 const SLOT_ORDER := ["QB", "C", "T0", "T1", "T2", "T3", "F0", "F1", "F2", "F3", "F4"]
+## The kicker's slot. Optional and not one of the 11 in SLOT_ORDER: he only
+## comes on when the coach calls a kick (MatchSim.kick_mode), and a lineup
+## without one is still valid - you just can't kick.
+const KICKER_SLOT := "K"
 ## The 4 build-up rounds. The 5th and final bracket entry is the bowl game
 ## itself - its name comes from BowlDB once the coach picks a branch and then
 ## a bowl (see needs_branch_choice/needs_bowl_choice/choose_branch/choose_bowl),
@@ -436,7 +440,7 @@ func auto_fill_lineup() -> void:
 	lineup.clear()
 	var used := {}
 
-	for slot in SLOT_ORDER:
+	for slot in SLOT_ORDER + [KICKER_SLOT]:
 		var kind := slot_kind(slot)
 		var best := -1
 		var best_score := -1.0
@@ -461,6 +465,11 @@ func lineup_is_valid() -> bool:
 		if player_at(slot) == null:
 			return false
 	return true
+
+
+## The kicker in the K slot, or null if there isn't one.
+func kicker() -> PlayerData:
+	return player_at(KICKER_SLOT)
 
 
 func starters() -> Array[PlayerData]:
@@ -530,6 +539,10 @@ func unequip_item(roster_index: int, slot_index: int) -> void:
 func add_player(p: PlayerData) -> void:
 	_ensure_unique_number(p)
 	roster.append(p)
+	# The first kicker you sign goes straight into the (optional) K slot, so
+	# he's ready to kick without a trip to the lineup screen.
+	if p.is_kicker() and kicker() == null:
+		lineup[KICKER_SLOT] = roster.size() - 1
 	roster_changed.emit()
 
 

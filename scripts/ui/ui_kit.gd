@@ -93,6 +93,20 @@ static func primary_button(text: String, size: int = 18) -> Button:
 	return b
 
 
+## A rounded, pill-shaped primary_button - for the floating calls to action
+## that sit over the field rather than inside a panel.
+static func pill_button(text: String, size: int = 16) -> Button:
+	var b := primary_button(text, size)
+	for state in ["normal", "hover", "pressed"]:
+		var sb: StyleBoxFlat = b.get_theme_stylebox(state).duplicate()
+		sb.set_corner_radius_all(22)
+		sb.content_margin_left = 26
+		sb.content_margin_right = 26
+		b.add_theme_stylebox_override(state, sb)
+	b.custom_minimum_size = Vector2(220, 44)
+	return b
+
+
 static func hsep(amount: int = 8) -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(amount, 0)
@@ -132,7 +146,7 @@ static func stat_row(p: PlayerData, size: int = 13) -> HBoxContainer:
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	var mods := ItemDB.total_stat_mods(p.items)
-	for key in STAT_KEYS:
+	for key in p.shown_stats(STAT_KEYS):
 		var v: int = p.stat(key)
 		var l := label("%s %d" % [STAT_LABELS[key], v], size, stat_color(v))
 		if mods.has(key):
@@ -155,18 +169,21 @@ const HEAD_SKIN_TONE_SUFFIX := {
 
 ## Body sprite for `p`, or null if its `body` id doesn't resolve to one of
 ## the extracted assets/players/<view>/body_0N.png files (e.g. hardcoded
-## QBDB entries that haven't had a body picked yet).
-static func body_texture(p: PlayerData, view: String = "front") -> Texture2D:
+## QBDB entries that haven't had a body picked yet). `jersey` is a JerseyDB
+## colour; blue (the default) is the plain assets/players/<view>/ art, and
+## anything a colour lacks falls back to blue.
+static func body_texture(p: PlayerData, view: String = "front", jersey: String = JerseyDB.BLUE) -> Texture2D:
 	var n := int(p.body)
 	if n < 1 or n > 9:
 		return null
 	var suffix: String = HEAD_SKIN_TONE_SUFFIX.get(p.head_id, "") if view == "front" else ""
-	var path := "res://assets/players/%s/body_%02d%s.png" % [view, n, suffix]
-	if not ResourceLoader.exists(path):
-		path = "res://assets/players/%s/body_%02d.png" % [view, n]
-	if not ResourceLoader.exists(path):
-		return null
-	return load(path)
+	var dirs: Array = ["%s/%s" % [jersey, view], view] if jersey != JerseyDB.BLUE else [view]
+	for dir in dirs:
+		for sfx in [suffix, ""]:
+			var path := "res://assets/players/%s/body_%02d%s.png" % [dir, n, sfx]
+			if ResourceLoader.exists(path):
+				return load(path)
+	return null
 
 
 ## Small boxed portrait for `p`, or null if it has no body art yet - callers

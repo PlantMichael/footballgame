@@ -219,18 +219,6 @@
 		"body": "8"
 	},
 	{
-		"name": "Joe Cool",
-		"pos": "QB",
-		"quality": 3,
-		"strength": 6,
-		"agility": 4,
-		"dexterity": 3,
-		"stamina": 6,
-		"intelligence": 4,
-		"ability_id": "pressure_reader",
-		"body": "8"
-	},
-	{
 		"name": "Coolidge Banks",
 		"pos": "QB",
 		"quality": 3,
@@ -251,7 +239,7 @@
 		"dexterity": 3,
 		"stamina": 6,
 		"intelligence": 4,
-		"ability_id": "qb_whisperer",
+		"ability_id": "qb_confidant",
 		"body": "8"
 	},
 	{
@@ -614,6 +602,33 @@
 		"stamina": 11,
 		"intelligence": 8,
 		"ability_id": "snow_plow",
+		"body": "2"
+	},
+	{
+		"name": "The Gatman",
+		"pos": "K",
+		"quality": 3,
+		"strength": 7,
+		"dexterity": 4,
+		"ability_id": "comeback_kicker",
+		"body": "2"
+	},
+	{
+		"name": "Idrop Balls",
+		"pos": "K",
+		"quality": 4,
+		"strength": 9,
+		"dexterity": 10,
+		"ability_id": "red_zone_yips",
+		"body": "2"
+	},
+	{
+		"name": "Dizzy Davis",
+		"pos": "K",
+		"quality": 2,
+		"strength": 8,
+		"dexterity": 7,
+		"ability_id": "straight_shooter",
 		"body": "2"
 	}
 ]

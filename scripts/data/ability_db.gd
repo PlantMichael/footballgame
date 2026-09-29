@@ -99,8 +99,12 @@ extends RefCounted
 ##                            advance/_apply_modifiers.
 ##   decaying_stat_floor()  -> int, default 1. Floor the above decay stops at.
 ##   blocks_stat_loss()     -> bool, default false. While this player is on the field, no
-##                            offensive stat decay (decaying_stat_start above) advances for
-##                            anyone on the team - MatchSim._team_blocks_stat_loss.
+##                            teammate's stats drop below their starting line for the play
+##                            (card stats, or the decayed value above) - weather, items,
+##                            ability drawbacks, out-of-position and mid-play penalties are
+##                            all blocked, and decay (decaying_stat_start) stops advancing.
+##                            Bowl special players' effects still apply. MatchSim.
+##                            _team_blocks_stat_loss / _apply_stat_shield.
 ##   perfect_aim()          -> bool, default false. As a passer, every throw lands exactly
 ##                            on his intended target - the usual accuracy noise from his
 ##                            stats, pressure, and fatigue never gets added. MatchSim._throw.
@@ -134,6 +138,11 @@ extends RefCounted
 ##                            he gains the same stats. MatchSim._gain_stat.
 ##   random_stat_at_snap()  -> int, default 0. +this much to one random stat at every snap.
 ##                            MatchSim._snap_gains.
+##   kick_dex(ctx)          -> int Dexterity added to a kicker's kick, default 0. ctx has
+##                            "points_down" (int, 0 when not trailing), "yards_to_goal"
+##                            (float, from the line of scrimmage) and "curve" (float, 0 for
+##                            a dead-straight kick path up to 1 for a heavily bent one).
+##                            MatchSim._kick_dex.
 ##   drops_keg_after_yards() -> float, default 0.0. Once he's run this far in a play he
 ##                            drops a beer keg, and the 2 defenders nearest it abandon their
 ##                            assignments to go stand at it. MatchSim._step_props.
@@ -161,6 +170,12 @@ extends RefCounted
 ##   melt_chance_per_second() -> float [0-1], default 0.0. Rolled once per live second; on a
 ##                            hit he melts and is out of the play entirely (and if he had the
 ##                            ball, the play ends there). MatchSim._step_melts.
+##   deep_throw_bonus()     -> Dictionary of stat deltas granted the moment a pass aimed 20+
+##                            yards downfield is thrown to him, default {}. MatchSim._throw.
+##   pass_block_bonus()     -> Dictionary of stat deltas granted at the snap when the coach
+##                            hasn't called a Hand Off or Scramble, default {}. Checked at the
+##                            snap rather than presnap since the call can change until then.
+##                            MatchSim._snap_gains.
 ##   cash_mult()            -> float, default 1.0. Multiplies every football-bucks award
 ##                            credited to him - his catches, broken tackles, and the TD/first
 ##                            down/big play bonuses on plays he finishes with the ball.
@@ -194,8 +209,8 @@ const ABILITIES := {
 	},
 	"deep_threat": {
 		"name": "Deep Threat",
-		"desc": "+2 Agility and +10% catch chance on throws 20+ yards downfield.",
-		"snap": Callable(AbilityDB, "_snap_deep_threat"),
+		"desc": "+2 Agility the moment a pass 20+ yards downfield is thrown his way, and +10% catch chance on it.",
+		"deep_throw_bonus": Callable(AbilityDB, "_deep_throw_bonus_deep_threat"),
 		"catch": Callable(AbilityDB, "_catch_deep_threat"),
 	},
 	"red_zone_beast": {
@@ -245,8 +260,8 @@ const ABILITIES := {
 	},
 	"blindside_wall": {
 		"name": "Blindside Wall",
-		"desc": "+3 Strength and +2 Intelligence while pass blocking.",
-		"snap": Callable(AbilityDB, "_snap_blindside_wall"),
+		"desc": "+3 Strength and +2 Intelligence on pass plays (no Hand Off or Scramble called).",
+		"pass_block_bonus": Callable(AbilityDB, "_pass_block_bonus_blindside_wall"),
 	},
 	"escape_artist": {
 		"name": "Escape Artist",
@@ -360,6 +375,11 @@ const ABILITIES := {
 		"name": "QB Whisperer",
 		"desc": "+3 Intelligence to his quarterback.",
 		"team_buff": Callable(AbilityDB, "_team_buff_qb_whisperer"),
+	},
+	"qb_confidant": {
+		"name": "QB Confidant",
+		"desc": "+5 Intelligence to his quarterback.",
+		"team_buff": Callable(AbilityDB, "_team_buff_qb_confidant"),
 	},
 	"attention_hog": {
 		"name": "Attention Hog",
@@ -510,7 +530,7 @@ const ABILITIES := {
 	},
 	"knock_knock": {
 		"name": "Knock Knock",
-		"desc": "+3 Agility when he takes a handoff.",
+		"desc": "+3 Agility and +3 Strength when he takes a handoff.",
 		"on_handoff_bonus": Callable(AbilityDB, "_on_handoff_bonus_knock_knock"),
 	},
 	"copycat": {
@@ -583,6 +603,22 @@ const ABILITIES := {
 		"name": "Golden Touch",
 		"desc": "Everything he does pays out double football bucks.",
 		"cash_mult": Callable(AbilityDB, "_cash_mult_golden_touch"),
+	},
+	# --- Kickers --------------------------------------------------------------
+	"comeback_kicker": {
+		"name": "Comeback Kid",
+		"desc": "+1 Dexterity on a kick for every point you're down by this game.",
+		"kick_dex": Callable(AbilityDB, "_kick_dex_comeback_kicker"),
+	},
+	"red_zone_yips": {
+		"name": "Red Zone Yips",
+		"desc": "Dexterity drops the closer he's kicking from to the end zone: -1 for every 4 yards inside the 30.",
+		"kick_dex": Callable(AbilityDB, "_kick_dex_red_zone_yips"),
+	},
+	"straight_shooter": {
+		"name": "Straight Shooter",
+		"desc": "The less curve on the kick, the higher his Dexterity - up to +4 for a dead-straight kick.",
+		"kick_dex": Callable(AbilityDB, "_kick_dex_straight_shooter"),
 	},
 }
 
@@ -801,8 +837,9 @@ static func decaying_stat_floor(id: String) -> int:
 	return _dispatch(id, "decaying_stat_floor", [], 1)
 
 
-## True if this player's presence on the field stops any offensive stat
-## decay (see decaying_stat_start) from advancing for the whole team.
+## True if this player's presence on the field stops every teammate's stats
+## from dropping below their starting line, including decay (see
+## decaying_stat_start).
 static func blocks_stat_loss(id: String) -> bool:
 	return _dispatch(id, "blocks_stat_loss", [], false)
 
@@ -915,9 +952,23 @@ static func melt_chance_per_second(id: String) -> float:
 	return _dispatch(id, "melt_chance_per_second", [], 0.0)
 
 
+## Stat deltas granted when a 20+ yard pass is thrown to him.
+static func deep_throw_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "deep_throw_bonus", [], {})
+
+
+## Stat deltas granted at the snap on a pass play (no Hand Off/Scramble armed).
+static func pass_block_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "pass_block_bonus", [], {})
+
+
 ## Multiplier on football bucks credited to him.
 static func cash_mult(id: String) -> float:
 	return _dispatch(id, "cash_mult", [], 1.0)
+
+
+static func kick_dex(id: String, ctx: Dictionary) -> int:
+	return _dispatch(id, "kick_dex", [ctx], 0)
 
 
 # ============================================================================
@@ -946,10 +997,8 @@ static func _catch_contested_king(ctx: Dictionary) -> float:
 	return 0.0
 
 
-static func _snap_deep_threat(_p: PlayerData, ctx: Dictionary) -> Dictionary:
-	if bool(ctx.get("target_is_deep", false)):
-		return {"agility": 2}
-	return {}
+static func _deep_throw_bonus_deep_threat() -> Dictionary:
+	return {"agility": 2}
 
 
 static func _catch_deep_threat(ctx: Dictionary) -> float:
@@ -1007,10 +1056,8 @@ static func _catch_possession_man(ctx: Dictionary) -> float:
 	return 0.0
 
 
-static func _snap_blindside_wall(_p: PlayerData, ctx: Dictionary) -> Dictionary:
-	if not bool(ctx.get("is_run_play", false)):
-		return {"strength": 3, "intelligence": 2}
-	return {}
+static func _pass_block_bonus_blindside_wall() -> Dictionary:
+	return {"strength": 3, "intelligence": 2}
 
 
 static func _snap_escape_artist(_p: PlayerData, _ctx: Dictionary) -> Dictionary:
@@ -1119,6 +1166,10 @@ static func _team_buff_line_captain() -> Dictionary:
 
 static func _team_buff_qb_whisperer() -> Dictionary:
 	return {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 3}
+
+
+static func _team_buff_qb_confidant() -> Dictionary:
+	return {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 5}
 
 
 static func _distracts_defenders_attention_hog() -> bool:
@@ -1253,7 +1304,7 @@ static func _on_scramble_bonus_power_scramble() -> Dictionary:
 
 
 static func _on_handoff_bonus_knock_knock() -> Dictionary:
-	return {"agility": 3}
+	return {"agility": 3, "strength": 3}
 
 
 static func _copies_team_gains_copycat() -> bool:
@@ -1327,3 +1378,15 @@ static func _melt_chance_per_second_meltdown() -> float:
 
 static func _cash_mult_golden_touch() -> float:
 	return 2.0
+
+
+static func _kick_dex_comeback_kicker(ctx: Dictionary) -> int:
+	return int(ctx.get("points_down", 0))
+
+
+static func _kick_dex_red_zone_yips(ctx: Dictionary) -> int:
+	return -int(floor(maxf(0.0, 30.0 - float(ctx.get("yards_to_goal", 99.0))) / 4.0))
+
+
+static func _kick_dex_straight_shooter(ctx: Dictionary) -> int:
+	return int(round(4.0 * (1.0 - clampf(float(ctx.get("curve", 1.0)), 0.0, 1.0))))

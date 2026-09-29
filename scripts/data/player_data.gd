@@ -4,9 +4,16 @@ extends Resource
 ## A single football player. Stats are 1-15; stamina is hidden from the UI
 ## per the design doc but drives in-play fatigue.
 
-enum Pos { QB, C, T, RB, WR, TE }
+## K (kicker) was added last so every existing position keeps its number.
+## Kickers only come on for a kick (MatchSim.kick_mode) and only have two
+## stats that mean anything: Strength (how far he can kick) and Dexterity
+## (how true the ball flies) - see shown_stats.
+enum Pos { QB, C, T, RB, WR, TE, K }
 
-const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE"]
+const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE", "K"]
+
+## The stats a kicker actually has, in display order.
+const KICKER_STATS := ["strength", "dexterity"]
 
 @export var pname: String = "Player"
 @export var pos: Pos = Pos.WR
@@ -74,6 +81,7 @@ func natural_slot_kind() -> String:
 		Pos.QB: return "QB"
 		Pos.C: return "C"
 		Pos.T: return "T"
+		Pos.K: return "K"
 		_: return "FLEX"
 
 
@@ -89,8 +97,23 @@ func overall() -> int:
 			return int(round(agility * 0.4 + strength * 0.3 + dexterity * 0.15 + intelligence * 0.15))
 		Pos.TE:
 			return int(round(dexterity * 0.35 + strength * 0.3 + agility * 0.2 + intelligence * 0.15))
+		Pos.K:
+			return int(round(dexterity * 0.55 + strength * 0.45))
 		_:
 			return int(round(dexterity * 0.4 + agility * 0.35 + intelligence * 0.15 + strength * 0.1))
+
+
+## The stats worth showing for him - a kicker's are just KICKER_STATS, the
+## rest have the usual four (stamina stays hidden, as always). `all` is the
+## full visible list to filter down from (UIKit.STAT_KEYS).
+func shown_stats(all: Array) -> Array:
+	if pos == Pos.K:
+		return KICKER_STATS
+	return all
+
+
+func is_kicker() -> bool:
+	return pos == Pos.K
 
 
 func stat(key: String) -> int:
@@ -104,6 +127,8 @@ func stat(key: String) -> int:
 
 
 func add_stat(key: String, amount: int) -> void:
+	if pos == Pos.K and not KICKER_STATS.has(key):
+		return   # a kicker doesn't have it to raise
 	match key:
 		"strength": strength = clampi(strength + amount, 1, 15)
 		"agility": agility = clampi(agility + amount, 1, 15)

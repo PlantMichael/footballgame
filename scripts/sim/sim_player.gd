@@ -22,6 +22,9 @@ var role: Role = Role.ZONE
 
 ## Effective stats for this play: base + item + ability, clamped 1..15.
 var eff: Dictionary = {}
+## The stat line this play started from, before items/weather/abilities -
+## the floor "stat_shield" holds everyone to. MatchSim._apply_modifiers.
+var stat_base: Dictionary = {}
 
 ## Route waypoints in absolute field coordinates.
 var route: Array = []

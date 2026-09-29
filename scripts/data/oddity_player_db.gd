@@ -14,6 +14,9 @@ extends RefCounted
 
 const COLOR := Color("39ff5a")
 
+## Every Oddity wears the same stitched-together lab head (HeadArtDB).
+const HEAD := "oddity"
+
 ## The default pool - 30 points is an average of 7.5 across the four stats,
 ## but a lopsided roll can just as easily give a 13 and a 2.
 const BASE_POOL := 30
@@ -103,7 +106,7 @@ static func _make(rng: RandomNumberGenerator, e: Dictionary) -> PlayerData:
 	p.stamina = rng.randi_range(STAMINA_MIN, STAMINA_MAX)
 	p.ability_id = String(e["ability_id"])
 	p.body = String(e["body"])
-	p.head_id = Generator.random_head_id(rng)
+	p.head_id = HEAD
 	p.quality = ShopPlayerDB.QUALITY_ODDITY
 	return p
 

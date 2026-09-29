@@ -47,6 +47,7 @@ const QUALITY_WEIGHTS := {
 const POS_BY_NAME := {
 	"QB": PlayerData.Pos.QB, "C": PlayerData.Pos.C, "T": PlayerData.Pos.T,
 	"RB": PlayerData.Pos.RB, "WR": PlayerData.Pos.WR, "TE": PlayerData.Pos.TE,
+	"K": PlayerData.Pos.K,
 }
 
 static var _cache: Array = []
@@ -88,6 +89,11 @@ static func _make(entry: Dictionary, rng: RandomNumberGenerator) -> PlayerData:
 	p.dexterity = int(entry.get("dexterity", 5))
 	p.stamina = int(entry.get("stamina", 5))
 	p.intelligence = int(entry.get("intelligence", 5))
+	if p.pos == PlayerData.Pos.K:
+		# Kickers have no Agility, Stamina or Intelligence at all.
+		p.agility = 0
+		p.stamina = 0
+		p.intelligence = 0
 	p.ability_id = String(entry.get("ability_id", ""))
 	p.body = String(entry.get("body", "medium"))
 	p.head_id = String(entry.get("head", Generator.random_head_id(rng)))

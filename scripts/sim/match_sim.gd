@@ -86,6 +86,8 @@ var to_go: float = 10.0
 var los: float = 35.0
 var opponent_quality: float = 6.0
 var opponent_name: String = "Opponent"
+## The opponent's jersey colour this match (JerseyDB) - purely visual.
+var defense_jersey: String = JerseyDB.BLUE
 
 ## Set by match.gd before start_match() when this is the run's final, chosen
 ## bowl game - see AbilityDB's "bowl_jitters" and _snap_context's
@@ -163,6 +165,10 @@ var auto_route_ids: Dictionary = {}
 var time: float = 0.0
 var carrier: SimPlayer = null
 var thrown_to: SimPlayer = null
+## Who ended the last play by tackling the carrier / picking the pass off.
+## Only the renderer's after-the-whistle animations read these.
+var tackler: SimPlayer = null
+var interceptor: SimPlayer = null
 
 ## Box-score stat line per PlayerData for THIS match - see stat_line_for and
 ## _credit_game_stats. Purely presentational (the match screen's Team Stats
@@ -239,6 +245,7 @@ func setup(starters: Array, defense_data: Array, quality: float, opp_name: Strin
 	_roster_defense = defense_data
 	opponent_quality = quality
 	opponent_name = opp_name
+	defense_jersey = JerseyDB.random_opponent()
 	total_drives = drives
 	score_us = 0
 	score_them = 0
@@ -413,6 +420,11 @@ func _credit_game_stats(res: Dictionary) -> void:
 				_bump_stat(carrier.data, "rush_yards", yards)
 				if td:
 					_bump_stat(carrier.data, "rush_td")
+		"field_goal", "missed_fg":
+			if kicker_sp != null:
+				_bump_stat(kicker_sp.data, "fg_att")
+				if kind == "field_goal":
+					_bump_stat(kicker_sp.data, "fg_made")
 
 
 # ============================================================================
@@ -429,6 +441,7 @@ func start_match() -> void:
 
 
 func begin_drive() -> void:
+	_take_kicker_off()
 	drive_num += 1
 	los = 25.0 + OWN_GOAL + rng.randf_range(-5.0, 5.0)
 	los = clampf(los, 20.0, 45.0)
@@ -511,7 +524,10 @@ func yards_to_endzone() -> float:
 ##
 ## This is the normal path. `set_play` below is the scripted-play path, kept
 ## for the batch balance harnesses in tools/.
-func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true) -> void:
+##
+## `walk` (with `instant`) keeps everyone where the last play left them and
+## lets presnap_step walk them onto the new spots, instead of teleporting.
+func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true, walk: bool = false) -> void:
 	_remove_clones()
 	var flexes := flex_players()
 	var spots := RouteBook.formation_for(flexes)
@@ -557,7 +573,7 @@ func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true) -> void:
 		# target. See _evaluate_targets.
 		"progression": [],
 	}
-	_begin_call(instant)
+	_begin_call(instant, walk)
 
 
 ## Position everyone for a scripted PlayDB play. Used by the tools/ balance
@@ -578,8 +594,11 @@ func set_play(id: String, instant: bool = true) -> void:
 
 
 ## Shared reset + alignment for both call paths. `play` must already be set.
-func _begin_call(instant: bool) -> void:
+func _begin_call(instant: bool, walk: bool = false) -> void:
 	time = 0.0
+	kick_play = false
+	tackler = null
+	interceptor = null
 	# Nothing drains this when the sim runs headless, so reset it per play
 	# rather than letting a batch harness grow it for thousands of snaps.
 	catch_shakes.clear()
@@ -616,13 +635,20 @@ func _begin_call(instant: bool) -> void:
 		_zone_scheme_this_play = rng.randf() < clampf(0.25 + opponent_quality * 0.02, 0.2, 0.55)
 		_align_defense()
 		for sp in offense:
-			sp.pos = sp.target_pos
+			if not walk:
+				sp.pos = sp.target_pos
 			sp.vel = Vector2.ZERO
 			sp.trail = PackedVector2Array([sp.pos])
 		for sp in defense:
-			sp.pos = sp.target_pos
+			if not walk:
+				sp.pos = sp.target_pos
 			sp.vel = Vector2.ZERO
 	ball_pos = Vector2(los, FIELD_W * 0.5)
+	# A re-call while the kick unit is out (a sub, say) keeps it out.
+	if kick_mode and kicker_sp != null:
+		if not offense.has(kicker_sp):
+			offense.append(kicker_sp)
+		_align_kick()
 
 
 ## Walk everyone toward their alignment while the play is being chosen.
@@ -634,20 +660,29 @@ func presnap_step(delta: float) -> void:
 	for sp in defense:
 		_shift(sp, delta)
 	var qb := offense_slot("QB")
-	if qb != null:
+	if kick_mode:
+		ball_pos = kick_spot()
+	elif qb != null:
 		ball_pos = qb.pos
 
 
+## Walking, not sliding: quicker the further he has to go, so a man
+## coming back from 30 yards downfield still makes it in a second or two,
+## but never slower than a brisk walk so the last yard doesn't drag.
+const SHIFT_MIN_SPEED := 4.5
+const SHIFT_CATCHUP := 1.8
+
 func _shift(sp: SimPlayer, delta: float) -> void:
 	var to := sp.target_pos - sp.pos
-	if to.length() < 0.06:
+	var dist := to.length()
+	if dist < 0.06:
 		sp.pos = sp.target_pos
 		sp.vel = sp.vel.lerp(Vector2.ZERO, clampf(delta * 12.0, 0.0, 1.0))
 		return
-	var prev := sp.pos
-	sp.pos = sp.pos.lerp(sp.target_pos, clampf(delta * 9.0, 0.0, 1.0))
-	sp.vel = (sp.pos - prev) / maxf(delta, 0.0001)
-	sp.stride += sp.vel.length() * delta * 3.2
+	var step := minf(dist, maxf(SHIFT_MIN_SPEED, dist * SHIFT_CATCHUP) * delta)
+	sp.vel = to / dist * step / maxf(delta, 0.0001)
+	sp.pos += to / dist * step
+	sp.stride += step * 3.2
 
 
 func _snap_context(is_run_play: bool) -> Dictionary:
@@ -703,6 +738,7 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(sp.ability()), 15)
 		for key in base:
 			base[key] = decayed
+	sp.stat_base = base.duplicate()
 	var item_mods := ItemDB.total_stat_mods(pd.items)
 	for key in item_mods:
 		base[key] = int(base[key]) + int(item_mods[key])
@@ -904,7 +940,26 @@ func _align_offense() -> void:
 	_apply_team_buffs()
 	_apply_alignment_buffs()
 	_apply_tier_buffs()
+	_apply_stat_shield()
 	_apply_gimmicks()
+
+
+## "Stat Shield": while anyone on the offense has it, nobody's stat can sit
+## below where it started this play (SimPlayer.stat_base - card stats, or a
+## decaying ability's current value) - weather, items, ability drawbacks and
+## the out-of-position penalty all get floored away. Runs before
+## _apply_gimmicks, so a bowl special player's effect still lands.
+## Hard ceilings like "cant_miss" are the ability's whole identity rather than
+## a loss, so they're re-applied on top.
+func _apply_stat_shield() -> void:
+	if not _team_blocks_stat_loss():
+		return
+	for sp in offense:
+		for key in sp.stat_base:
+			sp.eff[key] = clampi(maxi(int(sp.eff[key]), int(sp.stat_base[key])), 1, 15)
+		var agi_cap := AbilityDB.speed_cap(sp.ability())
+		if agi_cap < 99:
+			sp.eff["agility"] = mini(int(sp.eff["agility"]), agi_cap)
 
 
 ## True while the bowl special player `id` (BowlDB.GIMMICKS) is on the
@@ -1239,6 +1294,16 @@ func preview_routes() -> Array:
 func snap() -> void:
 	if phase != Phase.PRESNAP:
 		return
+	if kick_mode:
+		_snap_kick()
+		return
+	# Anyone still well short of his spot (snapped while walking on from the
+	# last play) is put on it - a play can't start with a man ten yards off
+	# his alignment. A little mid-shift slack is fine.
+	for sp in offense + defense:
+		if sp.pos.distance_to(sp.target_pos) > 1.5:
+			sp.pos = sp.target_pos
+			sp.vel = Vector2.ZERO
 	# Start trails from where everyone actually is, not from the alignment they
 	# were walking away from when the play call changed.
 	for sp in offense:
@@ -1427,8 +1492,13 @@ func _melt(sp: SimPlayer) -> void:
 ## (baked silently into `eff` presnap) these happen on a live field, so their
 ## stat gains pop up and count as gains for "copycat".
 func _snap_gains() -> void:
+	var pass_play := not _is_run_play()
 	for sp in offense:
 		var id := sp.ability()
+		if pass_play:
+			var pass_bonus := AbilityDB.pass_block_bonus(id)
+			for stat in pass_bonus:
+				_gain_stat(sp, stat, int(pass_bonus[stat]))
 		if auto_route_ids.has(sp.slot):
 			var bonus := AbilityDB.undrawn_route_bonus(id)
 			for stat in bonus:
@@ -1594,6 +1664,11 @@ func step(delta: float) -> void:
 	if phase != Phase.LIVE:
 		return
 	time += delta
+	if kick_play:
+		_step_kick(delta)
+		if phase == Phase.LIVE and time > MAX_PLAY_TIME:
+			_finish_kick("short")
+		return
 	_update_terrain()
 	_step_melts(delta)
 	if phase != Phase.LIVE:
@@ -1949,6 +2024,8 @@ func _trigger_earthquake(sp: SimPlayer) -> void:
 ## teammate, unless `copyable` is false (a team-wide gain like the jackpot,
 ## which he already gets directly). A copied gain is never re-copied.
 func _gain_stat(sp: SimPlayer, stat: String, amount: int, copyable: bool = true) -> void:
+	if amount < 0 and sp.is_offense and _team_blocks_stat_loss():
+		return
 	sp.eff[stat] = clampi(sp.stat(stat) + amount, 1, 15)
 	_grant_stat_gain(sp, stat, amount)
 	if not copyable or amount <= 0 or not sp.is_offense:
@@ -2463,6 +2540,12 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	_trigger_pursuit()
 	log_line("%s throws to %s." % [qb.data.pname, target.data.pname])
 
+	# "Deep Threat": a boost to run under it, the moment a deep ball is his.
+	if aim.x - los >= 20.0:
+		var deep_bonus := AbilityDB.deep_throw_bonus(target.ability())
+		for stat in deep_bonus:
+			_gain_stat(target, stat, int(deep_bonus[stat]))
+
 	# "Gunslinger Growth": a permanent Dexterity gain (not a per-play eff
 	# bonus - see AbilityDB.dex_per_throw_yards) based on how far downfield
 	# this throw was aimed, whether or not it's actually completed.
@@ -2826,8 +2909,23 @@ func _resolve_catch() -> void:
 		_end_play({
 			"kind": "incomplete",
 			"yards": 0.0,
-			"text": "%s cannot hang on." % rec.data.pname,
+			"text": String(DROP_LINES.pick_random()) % rec.data.pname,
 		})
+
+
+## Result text for a dropped catchable ball, one picked at random each time.
+## Cosmetic only, so it draws from the global RNG rather than `rng` - the sim's
+## seeded sequence (and every balance harness in tools/) stays the same.
+const DROP_LINES := [
+	"%s cannot hang on.",
+	"%s couldn't catch it.",
+	"%s dropped the ball (literally).",
+	"%s choked in the moment.",
+	"Right through the hands of %s.",
+	"%s had it... and then he didn't.",
+	"%s forgot to bring his hands today.",
+	"Off the facemask of %s.",
+]
 
 
 ## A teammate with "guardian_angel" (must be running a live route himself,
@@ -2845,6 +2943,7 @@ func _find_catch_savior(rec: SimPlayer) -> SimPlayer:
 
 
 func _interception(d: SimPlayer) -> void:
+	interceptor = d
 	_end_play({
 		"kind": "interception",
 		"yards": 0.0,
@@ -2965,7 +3064,8 @@ func _step_contacts(delta: float) -> void:
 
 		if AbilityDB.dodges_once(carrier.ability()) and not carrier.dodge_used:
 			carrier.dodge_used = true
-			carrier.eff["agility"] = clampi(carrier.stat("agility") - 5, 1, 15)
+			if not _team_blocks_stat_loss():
+				carrier.eff["agility"] = clampi(carrier.stat("agility") - 5, 1, 15)
 			_grant_stat_gain(carrier, "agility", -5)
 			carrier.vel *= 0.92
 			_award(10, "%s dashes right past %s!" % [carrier.data.pname, d.data.pname], carrier)
@@ -3080,6 +3180,9 @@ func _tackle(d: SimPlayer) -> void:
 		})
 		return
 	carrier.downed = 0.0001
+	# He goes down in the pile with him (purely visual - the play is over).
+	d.downed = 0.0001
+	tackler = d
 	var end_x := carrier.pos.x
 	var is_sack := carrier.slot == "QB" and not qb_scrambling and not _play_was_a_run()
 	var kind := "sack" if is_sack else ("run" if _play_was_a_run() else "complete")
@@ -3150,7 +3253,7 @@ func _end_play(res: Dictionary) -> void:
 	_pending_events.clear()
 
 	var gained: float = res["yards"]
-	if res["kind"] != "incomplete" and res["kind"] != "interception":
+	if res["kind"] != "incomplete" and res["kind"] != "interception" and not bool(res.get("kick", false)):
 		res["text"] = "%s  (%s%d yd)" % [res["text"], "+" if gained >= 0 else "", int(round(gained))]
 
 	# Whoever finished the play with the ball earned these - "golden_touch"
@@ -3197,6 +3300,328 @@ func log_line(text: String) -> void:
 
 
 # ============================================================================
+# Kicking
+# ============================================================================
+## Instead of a play, the coach can call a kick at any snap (match.gd's KICK
+## button) if he has a kicker in the K slot. Every kick is a field goal try:
+## the coach chalks the ball's flight from the kicker, the wind pushes it
+## off that line while it's in the air, and it's good if it crosses the back
+## of the end zone between the uprights. Made or missed, the drive is over.
+##
+## The kicker only exists on the field for a kick: set_kick_mode adds him to
+## `offense` (so he's drawn, walks on, and can be clicked like anyone else)
+## and set_kick_mode(false) / begin_drive take him off again.
+
+## Where the ball is held for the kick, behind the line of scrimmage.
+const KICK_SPOT_BACK := 7.0
+## The kicker lines up behind and a little to the side of the holder.
+const KICKER_SETUP := Vector2(-2.6, 1.4)
+## How far a kick path may be drawn: base plus per point of Strength.
+## 7 Strength reaches about 47 yards, 10 about 58, 15 about 76.
+const KICK_RANGE_BASE := 22.0
+const KICK_RANGE_PER_STR := 3.6
+const KICK_SPEED := 24.0          # yd/s along the drawn path
+const KICK_RUNUP := 0.55          # s from the snap until the boot
+## Wind, in mph. Blows the whole time the ball is in the air, as a steady
+## acceleration: WIND_ACCEL_PER_MPH yd/s^2 per mph. A 10 mph crosswind moves
+## a 45-yard kick about 5 yards - the uprights are only 6 wide - so a kick
+## chalked straight at them in any real wind usually misses; you aim into
+## it. Short kicks are in the air too briefly to drift much.
+const WIND_MIN_MPH := 3.0
+const WIND_MAX_MPH := 16.0
+const WINDY_MAX_MPH := 28.0
+const WIND_ACCEL_PER_MPH := 0.3
+## The uprights: 18'6" apart, on the back line of the end zone.
+const POSTS_X := FIELD_LEN
+const POST_HALF := 3.08
+## How far a kick strays from its chalked line, as a standard deviation in
+## yards per yard of kick, per point of Dexterity short of 16. 8 Dexterity
+## puts a 45-yard kick about 1.8 yards off line on average; 15, about 0.2.
+const KICK_SCATTER := 0.005
+const FG_POINTS := 3
+const FG_BUCKS := 40
+
+var kicker_sp: SimPlayer = null
+## Presnap: the call is a kick rather than a play.
+var kick_mode: bool = false
+## Live/dead: the play being run (or just finished) is a kick.
+var kick_play: bool = false
+## The chalked kick, waypoints relative to kick_spot(). Empty means "straight
+## at the middle of the uprights, as far as he can kick it".
+var kick_route: Array = []
+## Wind for this kick, as a field-space vector in mph (x downfield, y across).
+var wind: Vector2 = Vector2.ZERO
+## The kick in flight - see _launch_kick.
+var _kick: Dictionary = {}
+
+
+## Hand the sim this match's kicker (GameState's K slot), or null.
+func set_kicker(pd: PlayerData) -> void:
+	if kicker_sp != null:
+		offense.erase(kicker_sp)
+	kicker_sp = null
+	if pd == null:
+		return
+	kicker_sp = SimPlayer.new()
+	kicker_sp.data = pd
+	kicker_sp.is_offense = true
+	kicker_sp.slot = GameState.KICKER_SLOT
+	kicker_sp.label = str(pd.number)
+	kicker_sp.role = SimPlayer.Role.BLOCK
+
+
+func can_kick() -> bool:
+	return kicker_sp != null and phase == Phase.PRESNAP
+
+
+func kick_spot() -> Vector2:
+	return Vector2(los - KICK_SPOT_BACK, FIELD_W * 0.5)
+
+
+## Yards of flight the kicker can put on the ball - the chalk budget for his
+## kick path.
+func kick_range() -> float:
+	if kicker_sp == null:
+		return 0.0
+	return KICK_RANGE_BASE + KICK_RANGE_PER_STR * float(_kicker_stat("strength"))
+
+
+## Straight-line distance of the field goal try, spot to uprights.
+func kick_distance() -> float:
+	return POSTS_X - kick_spot().x
+
+
+func wind_mph() -> float:
+	return wind.length()
+
+
+## Switch the presnap call between a normal play and a kick. Turning it on
+## rolls a fresh wind, wipes the old kick chalk and sends the kick unit out;
+## turning it off takes the kicker back off and re-runs the drawn play.
+func set_kick_mode(on: bool) -> void:
+	if on == kick_mode or phase != Phase.PRESNAP:
+		return
+	if on and kicker_sp == null:
+		return
+	kick_mode = on
+	if on:
+		var max_mph := WINDY_MAX_MPH if weather == WeatherDB.WINDY else WIND_MAX_MPH
+		wind = Vector2.from_angle(rng.randf() * TAU) * rng.randf_range(WIND_MIN_MPH, max_mph)
+		kick_route = []
+		if not offense.has(kicker_sp):
+			# He jogs on from your sideline.
+			kicker_sp.pos = Vector2(los - 6.0, -1.5)
+			kicker_sp.vel = Vector2.ZERO
+			kicker_sp.downed = 0.0
+			offense.append(kicker_sp)
+		_align_kick()
+	else:
+		_take_kicker_off()
+
+
+func _take_kicker_off() -> void:
+	kick_mode = false
+	kick_play = false
+	_kick = {}
+	if kicker_sp != null:
+		offense.erase(kicker_sp)
+
+
+## The field goal unit: line as usual, the flexes as wings and a personal
+## protector, the QB down as holder, the kicker behind him.
+func _align_kick() -> void:
+	var cy := FIELD_W * 0.5
+	var spot := kick_spot()
+	var wings := [Vector2(-0.6, -7.8), Vector2(-0.6, -10.2), Vector2(-0.6, 7.8), Vector2(-0.6, 10.2),
+		Vector2(-4.0, 1.6)]
+	var flexes := flex_players()
+	for i in flexes.size():
+		flexes[i].target_pos = Vector2(los, cy) + wings[mini(i, wings.size() - 1)]
+	var qb := offense_slot("QB")
+	if qb != null:
+		qb.target_pos = spot + Vector2(0.0, -0.9)
+	kicker_sp.target_pos = spot + KICKER_SETUP
+	ball_pos = spot
+
+
+func set_kick_route(route: Array) -> void:
+	kick_route = route
+
+
+## The kick's flight line in absolute field yards, starting at the spot.
+func kick_line() -> PackedVector2Array:
+	var spot := kick_spot()
+	var line := PackedVector2Array([spot])
+	if kick_route.is_empty():
+		var aim := Vector2(POSTS_X, FIELD_W * 0.5) - spot
+		line.append(spot + aim.normalized() * minf(kick_range(), aim.length() + 8.0))
+		return line
+	for wp in kick_route:
+		line.append(spot + wp)
+	return line
+
+
+## 0 for a dead-straight kick path, up to 1 for one that bends a lot: how
+## much longer the path is than a straight line between its ends.
+func kick_curve(line: PackedVector2Array) -> float:
+	if line.size() < 3:
+		return 0.0
+	var length := 0.0
+	for i in range(1, line.size()):
+		length += line[i - 1].distance_to(line[i])
+	var chord := line[0].distance_to(line[line.size() - 1])
+	if chord < 0.5:
+		return 1.0
+	return clampf((length / chord - 1.0) * 8.0, 0.0, 1.0)
+
+
+func _kicker_stat(key: String) -> int:
+	var base := kicker_sp.data.stat(key)
+	var mods := ItemDB.total_stat_mods(kicker_sp.data.items)
+	return clampi(base + int(mods.get(key, 0)), 1, 15)
+
+
+## The kicker's Dexterity for this kick, after his ability. Pops the ability's
+## gain or loss over his head when `announce`.
+func _kick_dex(line: PackedVector2Array, announce: bool) -> int:
+	var base := _kicker_stat("dexterity")
+	var ctx := {
+		"points_down": maxi(0, score_them - score_us),
+		"yards_to_goal": GOAL_LINE - los,
+		"curve": kick_curve(line),
+	}
+	var dex := clampi(base + AbilityDB.kick_dex(kicker_sp.ability(), ctx), 1, 15)
+	if announce and dex != base:
+		_grant_stat_gain(kicker_sp, "dexterity", dex - base)
+	return dex
+
+
+## The snap on a kick: the kicker steps into it, and the ball goes up after
+## KICK_RUNUP. See _step_kick.
+func _snap_kick() -> void:
+	kick_mode = false
+	kick_play = true
+	phase = Phase.LIVE
+	time = 0.0
+	carrier = null
+	thrown_to = null
+	ball_in_air = false
+	for sp in offense + defense:
+		if sp.pos.distance_to(sp.target_pos) > 1.5:
+			sp.pos = sp.target_pos
+		sp.vel = Vector2.ZERO
+		sp.trail = PackedVector2Array([sp.pos])
+		sp.engaged = false
+	ball_pos = kick_spot()
+	_kick = {"booted": false, "verdict": ""}
+	log_line("%s lines up a %d-yard field goal try." % [kicker_sp.data.pname, int(round(kick_distance()))])
+
+
+func _launch_kick() -> void:
+	var line := kick_line()
+	var length := 0.0
+	for i in range(1, line.size()):
+		length += line[i - 1].distance_to(line[i])
+	length = maxf(length, 1.0)
+	var dex := _kick_dex(line, true)
+	var dir := (line[line.size() - 1] - line[0]).normalized()
+	var side := Vector2(-dir.y, dir.x)
+	_kick = {
+		"booted": true,
+		"line": line,
+		"len": length,
+		"t": 0.0,
+		"T": length / KICK_SPEED,
+		"accel": wind * WIND_ACCEL_PER_MPH,
+		# A hook or slice: how far off his line he ends up, reached gradually.
+		"stray": side * rng.randfn(0.0, maxf(0.0, 16.0 - float(dex)) * KICK_SCATTER * length),
+		"verdict": "",
+	}
+	ball_from = line[0]
+	ball_to = line[line.size() - 1]
+	ball_air_time = float(_kick["T"])
+	ball_t = 0.0
+	ball_in_air = true
+
+
+## Where the kick is `t` seconds into its flight.
+func _kick_pos(t: float) -> Vector2:
+	var line: PackedVector2Array = _kick["line"]
+	var s := minf(t * KICK_SPEED, float(_kick["len"]))
+	var p := line[line.size() - 1]
+	var walked := 0.0
+	for i in range(1, line.size()):
+		var leg := line[i - 1].distance_to(line[i])
+		if walked + leg >= s:
+			p = line[i - 1].lerp(line[i], (s - walked) / maxf(leg, 0.001))
+			break
+		walked += leg
+	var frac := s / float(_kick["len"])
+	return p + (_kick["stray"] as Vector2) * frac + (_kick["accel"] as Vector2) * 0.5 * t * t
+
+
+func _step_kick(delta: float) -> void:
+	var spot := kick_spot()
+	# Everybody else: the line holds, the rush comes but can't get through.
+	for sp in offense:
+		if sp != kicker_sp:
+			sp.hold(delta)
+	for d in defense:
+		if d.slot.begins_with("DB"):
+			d.hold(delta)
+			continue
+		var at := Vector2(maxf(los + 0.7, spot.x), d.pos.y + (spot.y - d.pos.y) * 0.3)
+		d.move_toward_point(at, delta, 0.7)
+		d.pos.x = maxf(d.pos.x, los + 0.6)
+
+	if not bool(_kick.get("booted", false)):
+		# The approach: a couple of steps up to the ball.
+		kicker_sp.move_toward_point(spot + Vector2(-0.7, 0.35), delta, 0.8)
+		ball_pos = spot
+		if time >= KICK_RUNUP:
+			_launch_kick()
+		return
+
+	kicker_sp.hold(delta)
+	var before := ball_pos
+	_kick["t"] = float(_kick["t"]) + delta
+	var t: float = _kick["t"]
+	ball_t = t
+	ball_pos = _kick_pos(t)
+	# Through the uprights (or not) the moment it reaches the back line.
+	if String(_kick["verdict"]) == "" and before.x < POSTS_X and ball_pos.x >= POSTS_X:
+		var k := (POSTS_X - before.x) / maxf(ball_pos.x - before.x, 0.001)
+		var y := lerpf(before.y, ball_pos.y, k)
+		var off := y - FIELD_W * 0.5
+		if absf(off) <= POST_HALF:
+			_kick["verdict"] = "good"
+		else:
+			# Offense attacks up the screen with field-y increasing to its right.
+			_kick["verdict"] = "wide right" if off > 0.0 else "wide left"
+	if t >= float(_kick["T"]):
+		ball_in_air = false
+		var verdict := String(_kick["verdict"])
+		if verdict == "":
+			verdict = "short"
+		_finish_kick(verdict)
+
+
+func _finish_kick(verdict: String) -> void:
+	var dist := int(round(kick_distance()))
+	var good := verdict == "good"
+	if good:
+		_award(FG_BUCKS, "Field goal!", kicker_sp)
+	_end_play({
+		"kind": "field_goal" if good else "missed_fg",
+		"yards": 0.0,
+		"kick": true,
+		"fg_good": good,
+		"text": ("%d-yard field goal is GOOD!" % dist) if good
+			else ("%d-yard field goal is no good - %s." % [dist, verdict]),
+	})
+
+
+# ============================================================================
 # Advancing the down / drive
 # ============================================================================
 
@@ -3213,7 +3638,15 @@ func advance() -> Dictionary:
 
 	var out := {"drive_over": false, "reason": "", "match_over": false}
 
-	if bool(result.get("td", false)):
+	if bool(result.get("kick", false)):
+		# Made or missed, a kick ends the drive.
+		out["drive_over"] = true
+		if bool(result.get("fg_good", false)):
+			score_us += FG_POINTS
+			out["reason"] = "Field goal is good. Three points."
+		else:
+			out["reason"] = "The field goal try is no good."
+	elif bool(result.get("td", false)):
 		score_us += 7
 		out["drive_over"] = true
 		out["reason"] = "Touchdown! Extra point is good."
@@ -3301,6 +3734,9 @@ func resync_offense(new_starters: Array) -> void:
 	for sp in offense:
 		prev[sp.data] = sp.energy
 	_build_offense(new_starters)
+	if kick_mode and kicker_sp != null:
+		offense.append(kicker_sp)
+		_align_kick()
 	for sp in offense:
 		if prev.has(sp.data):
 			sp.energy = prev[sp.data]

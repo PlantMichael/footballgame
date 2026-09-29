@@ -73,6 +73,7 @@ const NUMBER_BANDS := {
 	PlayerData.Pos.RB: [[0, 49], [80, 89]],
 	PlayerData.Pos.WR: [[0, 49], [80, 89]],
 	PlayerData.Pos.TE: [[0, 49], [80, 89]],
+	PlayerData.Pos.K: [[1, 19], [90, 99]],
 }
 
 ## Same idea for defense, keyed by role rather than PlayerData.Pos - the
@@ -144,30 +145,34 @@ static func make_player(rng: RandomNumberGenerator, pos: PlayerData.Pos, quality
 	return p
 
 
+## Abilities a generated (tier-less) player can roll, by position. Every
+## signature ability of a shop, cursed, Oddity, or bowl player is left out on
+## purpose - rarity is what buys those, so a free generated player should never
+## show up with one (or with a stronger version of one, e.g. "ghost_route" over
+## the Veteran's "cloaked_route"). Each pool leans into its position's
+## signature mechanic: QB = risk/decision-making, RB = momentum/breaking
+## tackles, WR = catching/separation, TE = blocking and receiving,
+## T/C = blocking/anchoring.
+const GENERATED_ABILITIES := {
+	PlayerData.Pos.QB: ["gunslinger", "field_general", "clutch_gene", "film_study"],
+	PlayerData.Pos.C: ["immovable", "iron_anchor", "workhorse", "blindside_wall"],
+	PlayerData.Pos.T: ["immovable", "iron_anchor", "blindside_wall", "workhorse", "chain_mover"],
+	PlayerData.Pos.RB: ["bulldozer", "escape_artist", "scat_back", "goal_line_back", "chain_mover", "second_wind"],
+	PlayerData.Pos.WR: ["sure_hands", "deep_threat", "contested_king", "spread_specialist", "route_technician", "possession_man"],
+	PlayerData.Pos.TE: ["red_zone_beast", "sure_hands", "contested_king", "film_study", "possession_man", "immovable"],
+}
+
+
 static func _pick_ability(rng: RandomNumberGenerator, pos: PlayerData.Pos) -> String:
-	# Bias toward abilities that make sense for the position, but allow anything.
-	# Pools lean into each position's signature mechanic (see design agenda):
-	# QB = risk/accuracy/decision-making, RB = momentum/breaking tackles/agility,
-	# WR = route progression/separation/big plays, TE = switching blocking &
-	# receiving, T = blocking/protection/anchoring, C = buffing/coordinating
-	# the line.
-	var pool: Array = []
-	match pos:
-		PlayerData.Pos.QB:
-			pool = ["gunslinger", "field_general", "pressure_reader", "clutch_gene", "film_study", "trusted_target_wr", "trusted_target_te"]
-		PlayerData.Pos.C:
-			pool = ["line_captain", "qb_whisperer", "power_scheme", "field_command", "spacing_coach", "immovable", "iron_anchor"]
-		PlayerData.Pos.T:
-			pool = ["immovable", "iron_anchor", "blindside_wall", "workhorse", "chain_mover", "lockdown_block"]
-		PlayerData.Pos.RB:
-			pool = ["bulldozer", "escape_artist", "scat_back", "goal_line_back", "chain_mover", "instant_burst", "power_surge", "phantom_step", "misdirection", "down_and_distance"]
-		PlayerData.Pos.WR:
-			pool = ["corps_of_three", "sure_hands", "deep_threat", "contested_king", "spread_specialist", "route_technician", "possession_man", "ghost_route"]
-		PlayerData.Pos.TE:
-			pool = ["red_zone_beast", "sure_hands", "contested_king", "film_study", "possession_man", "immovable", "cloaked_route", "guardian_angel", "lockdown_block"]
-	if rng.randf() < 0.15:
-		var all_ids: Array = AbilityDB.all_ids()
-		return all_ids[rng.randi_range(0, all_ids.size() - 1)]
+	# Bias toward abilities that make sense for the position, but 15% of the
+	# time take one from any position's pool - still never a signature one.
+	var pool: Array = GENERATED_ABILITIES.get(pos, [])
+	if pool.is_empty() or rng.randf() < 0.15:
+		pool = []
+		for p in GENERATED_ABILITIES.values():
+			for id in p:
+				if not pool.has(id):
+					pool.append(id)
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
 

@@ -3,7 +3,9 @@ extends Control
 ## The match screen. The field fills the whole window; everything else is an
 ## overlay on top of it:
 ##   - a thin scoreboard strip along the top
-##   - the chalkboard along the bottom, where routes are drawn
+##   - the chalkboard, a card floating over the bottom of the field where
+##     routes are drawn (and a slimmer one while the play is live)
+##   - a floating result card between plays and drives, in its place
 ##   - a card that pops up when you click a player
 ##   - a substitution list that slides in from the right
 ##   - a centered panel after a scoring drive to pick a per-game upgrade
@@ -15,12 +17,29 @@ const SUB_STEP := 1.0 / 120.0
 ## and a row of 124px route cards underneath them.
 const BAR_TALL := 224
 const BAR_SHORT := 74
+## Seconds the floating result card waits after a play before moving on to
+## the next one by itself. See _tick_auto_continue.
+const AUTO_CONTINUE := 4.0
+const TOP_BAR_H := 54
+## Space left between the floating bottom cards and the window's bottom edge.
+const FLOAT_GAP := 16
 
 var sim: MatchSim
 var field: Control
 
 var top_bar: PanelContainer
 var play_bar: PanelContainer
+## Floats over the bottom of the field in place of play_bar between plays and
+## between drives - see _refresh_bar.
+var float_panel: PanelContainer
+## Seconds left before the result card continues on its own, -1 when it isn't
+## counting. Pauses while a player card or side panel is open.
+var _auto_left: float = -1.0
+var _auto_bar: ProgressBar
+var _auto_btn: Button
+## How much of the window's bottom the play bar is meant to take up this
+## phase (BAR_TALL/BAR_SHORT) - see _fit_bottom_panels.
+var _bar_height: float = BAR_TALL
 var bar_host: MarginContainer
 var side_panel: PanelContainer
 var card: PanelContainer
@@ -97,6 +116,7 @@ func _start_match() -> void:
 		int(opp.get("drives", 4))
 	)
 	sim.is_bowl_game = is_bowl
+	sim.set_kicker(GameState.kicker())
 	sim.set_weather(GameState.next_weather)
 	sim.start_match()
 	bucks_earned = 0
@@ -115,12 +135,14 @@ func _build_layout() -> void:
 	field.field_clicked.connect(_dismiss_overlays)
 	field.route_drawn.connect(_on_route_drawn)
 	field.bottom_inset = float(BAR_TALL)
+	field.top_inset = float(TOP_BAR_H)
 	add_child(field)
 	field.snap_camera()
 
 	_build_top_bar()
 	_build_log()
 	_build_play_bar()
+	_build_float_panel()
 	_build_side_panel()
 	_build_card()
 	_build_upgrade_panel()
@@ -141,7 +163,7 @@ func _build_top_bar() -> void:
 	top_bar = PanelContainer.new()
 	top_bar.add_theme_stylebox_override("panel", _overlay_style(0.90))
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.offset_bottom = 54
+	top_bar.offset_bottom = TOP_BAR_H
 	top_bar.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(top_bar)
 
@@ -225,16 +247,59 @@ func _build_log() -> void:
 	add_child(log_label)
 
 
-func _build_play_bar() -> void:
-	play_bar = PanelContainer.new()
-	play_bar.add_theme_stylebox_override("panel", _overlay_style(0.92))
-	play_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	play_bar.offset_top = -BAR_TALL
-	play_bar.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(play_bar)
+## The look shared by every card floating over the bottom of the field:
+## rounded, a thin gold edge, and a drop shadow lifting it off the turf.
+func _float_style(margin_x: int, margin_y: int) -> StyleBoxFlat:
+	var sb := UIKit.stylebox(Color(UIKit.PANEL_HI, 0.96), 16, 1, Color(UIKit.ACCENT, 0.45))
+	sb.content_margin_left = margin_x
+	sb.content_margin_right = margin_x
+	sb.content_margin_top = margin_y
+	sb.content_margin_bottom = margin_y
+	sb.shadow_color = Color(0, 0, 0, 0.45)
+	sb.shadow_size = 14
+	sb.shadow_offset = Vector2(0, 4)
+	return sb
 
+
+## A card anchored to the bottom-center of the screen that sizes itself to
+## its contents, growing up and out to both sides - see _fit_bottom_panels.
+func _bottom_card(style: StyleBoxFlat) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", style)
+	p.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	p.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(p)
+	return p
+
+
+func _build_play_bar() -> void:
+	play_bar = _bottom_card(_float_style(14, 6))
 	bar_host = MarginContainer.new()
 	play_bar.add_child(bar_host)
+
+
+func _build_float_panel() -> void:
+	float_panel = _bottom_card(_float_style(28, 15))
+	float_panel.custom_minimum_size = Vector2(420, 0)
+	float_panel.visible = false
+	_fit_bottom_panels()
+
+
+## Collapse both bottom cards back onto their anchor so each is sized to what
+## it holds now (anything taller than asked for grows upward). Deferred from
+## _refresh_bar, once the old contents have actually been freed. The camera
+## is then framed on the field above the play bar's real top edge.
+func _fit_bottom_panels() -> void:
+	for p: Control in [play_bar, float_panel]:
+		p.offset_left = 0
+		p.offset_right = 0
+		p.offset_bottom = -FLOAT_GAP
+	play_bar.offset_top = -_bar_height
+	float_panel.offset_top = -FLOAT_GAP
+	if play_bar.visible:
+		field.bottom_inset = maxf(_bar_height, size.y - play_bar.position.y)
 
 
 func _build_side_panel() -> void:
@@ -298,6 +363,8 @@ func _process(delta: float) -> void:
 	if sim.phase != _last_phase:
 		_last_phase = sim.phase
 		_refresh_bar()
+
+	_tick_auto_continue(delta)
 
 	if sim.phase == MatchSim.Phase.PRESNAP:
 		# Walk the formation onto its spots after a play-call change.
@@ -388,14 +455,30 @@ func _refresh_bar() -> void:
 	_last_phase = sim.phase
 	for c in bar_host.get_children():
 		c.queue_free()
+	for c in float_panel.get_children():
+		c.queue_free()
+	_auto_left = -1.0
+	_auto_bar = null
+	_auto_btn = null
+
+	# Between plays and between drives the bottom bar gives way to a card
+	# floating over the field. (The match's final drive keeps the bar - see
+	# _begin_match_end.)
+	var floating := pending_upgrades.is_empty() and (sim.phase == MatchSim.Phase.DEAD
+		or (sim.phase == MatchSim.Phase.DRIVE_OVER and not _match_is_over()))
+	play_bar.visible = not floating
+	float_panel.visible = floating
+	_fit_bottom_panels.call_deferred()
 
 	field.draw_enabled = sim.phase == MatchSim.Phase.PRESNAP and pending_upgrades.is_empty()
 	if not field.draw_enabled:
 		field.cancel_stroke()
 
-	var tall := sim.phase != MatchSim.Phase.LIVE
+	# The floating card keeps the LIVE bar's short inset, so the camera
+	# doesn't lurch the moment the whistle blows.
+	var tall := sim.phase != MatchSim.Phase.LIVE and not floating
 	var bar_height := float(BAR_TALL if tall else BAR_SHORT)
-	play_bar.offset_top = -bar_height
+	_bar_height = bar_height
 	side_panel.offset_bottom = -bar_height
 	# The camera centers on what's actually visible above the bar, not the
 	# whole control - keep it in sync with the bar's real height (it shrinks
@@ -413,17 +496,19 @@ func _refresh_bar() -> void:
 
 	match sim.phase:
 		MatchSim.Phase.PRESNAP:
-			bar_host.add_child(_playcall_bar())
+			bar_host.add_child(_kick_bar() if sim.kick_mode else _playcall_bar())
 		MatchSim.Phase.LIVE:
 			bar_host.add_child(_live_bar())
 		MatchSim.Phase.DEAD:
-			bar_host.add_child(_result_bar())
+			float_panel.add_child(_result_bar())
+			_auto_left = AUTO_CONTINUE
+			_update_auto_widgets()
 		MatchSim.Phase.DRIVE_OVER:
 			if _match_is_over():
 				bar_host.add_child(_final_bar())
 				_begin_match_end()
 			else:
-				bar_host.add_child(_drive_over_bar())
+				float_panel.add_child(_drive_over_bar())
 		_:
 			bar_host.add_child(_live_bar())
 
@@ -467,8 +552,107 @@ func _playcall_bar() -> Control:
 	var snap := UIKit.primary_button("SNAP THE BALL", 18)
 	snap.custom_minimum_size = Vector2(0, 38)
 	snap.pressed.connect(_on_snap)
-	body.add_child(_wrap_snap(snap))
+	var snap_box := _wrap_snap(snap)
+	snap_box.add_theme_constant_override("separation", 8)
+	snap_box.add_child(_kick_button())
+	body.add_child(snap_box)
 	return v
+
+
+## Switches the call to a field goal try - available on any down, as long
+## as there's a kicker in the K slot.
+func _kick_button() -> Button:
+	var b := UIKit.button("KICK", 15)
+	b.custom_minimum_size = Vector2(0, 32)
+	if sim.kicker_sp == null:
+		b.disabled = true
+		b.tooltip_text = "No kicker in your lineup - sign one and put him in the K slot."
+	else:
+		b.tooltip_text = "Bring on %s for a %d-yard field goal try. Made or missed, it ends the drive." % [
+			sim.kicker_sp.data.pname, int(round(sim.kick_distance()))]
+	b.pressed.connect(func():
+		_dismiss_overlays()
+		field.cancel_stroke()
+		sim.set_kick_mode(true)
+		_refresh_bar())
+	return b
+
+
+## The play-call bar while the field goal unit is out: the try's distance,
+## the kicker's range, the wind to beat, and the kick/back-out buttons.
+func _kick_bar() -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	var k := sim.kicker_sp
+	var pd := k.data
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
+	head.add_child(UIKit.label("FIELD GOAL", 15, UIKit.ACCENT))
+	head.add_child(UIKit.label("%d-yard try from the %s   -   drag from #%d to chalk the kick. The wind pushes the ball while it's in the air, so aim into it."
+		% [int(round(sim.kick_distance())), sim.yard_line_text(sim.los), pd.number], 12, UIKit.MUTED))
+	v.add_child(head)
+
+	var body := HBoxContainer.new()
+	body.add_theme_constant_override("separation", 26)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(body)
+
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 4)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	body.add_child(info)
+	info.add_child(UIKit.label("#%d %s   K" % [pd.number, pd.pname], 16, UIKit.TEXT))
+	info.add_child(UIKit.stat_row(pd, 13))
+	info.add_child(UIKit.label("%s: %s" % [AbilityDB.ability_name(pd.ability_id), AbilityDB.ability_desc(pd.ability_id)],
+		12, Color("9fc0b2")))
+	var range_yd := sim.kick_range()
+	var reach := UIKit.label("Range: %d yd of flight   -   the uprights are %d yd away" % [
+		int(round(range_yd)), int(round(sim.kick_distance()))], 13,
+		UIKit.GOOD if range_yd >= sim.kick_distance() + 1.0 else UIKit.BAD)
+	info.add_child(reach)
+	var drawn := not sim.kick_route.is_empty()
+	info.add_child(UIKit.label("Kick chalked (%d yd)" % int(round(RouteBook.route_length(sim.kick_route)))
+		if drawn else "Nothing chalked - he'll kick it straight down the middle.", 12,
+		UIKit.ACCENT if drawn else UIKit.MUTED))
+
+	var wind := VBoxContainer.new()
+	wind.alignment = BoxContainer.ALIGNMENT_CENTER
+	wind.custom_minimum_size = Vector2(230, 0)
+	body.add_child(wind)
+	wind.add_child(UIKit.label("WIND", 12, UIKit.ACCENT))
+	wind.add_child(UIKit.label("%d mph" % int(round(sim.wind_mph())), 26, UIKit.TEXT))
+	wind.add_child(UIKit.label(_wind_words(sim.wind), 13, UIKit.MUTED))
+
+	var buttons := VBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 8)
+	buttons.custom_minimum_size = Vector2(180, 0)
+	body.add_child(buttons)
+	var go := UIKit.primary_button("KICK IT", 18)
+	go.custom_minimum_size = Vector2(0, 38)
+	go.pressed.connect(_on_snap)
+	buttons.add_child(go)
+	var back := UIKit.button("Back to offense", 13)
+	back.custom_minimum_size = Vector2(0, 30)
+	back.pressed.connect(func():
+		field.cancel_stroke()
+		sim.set_kick_mode(false)
+		_apply_call(false)
+		_refresh_bar())
+	buttons.add_child(back)
+	return v
+
+
+## Which way the wind is blowing, from the kicker's point of view.
+func _wind_words(w: Vector2) -> String:
+	var parts: Array = []
+	if absf(w.x) >= 1.5:
+		parts.append("at your back" if w.x > 0.0 else "in your face")
+	if absf(w.y) >= 1.5:
+		parts.append("blowing left to right" if w.y > 0.0 else "blowing right to left")
+	return "calm" if parts.is_empty() else ", ".join(parts)
 
 
 ## One card per flex: who he is, how much chalk his route uses, and a
@@ -570,11 +754,15 @@ func _chalk_tools() -> Control:
 
 ## Rebuild the offensive call from whatever is on the chalkboard. `instant`
 ## false lets the formation visibly shift instead of teleporting.
-func _apply_call(instant: bool = true) -> void:
-	sim.set_drawn_call(GameState.drawn_routes, instant)
+func _apply_call(instant: bool = true, walk: bool = false) -> void:
+	sim.set_drawn_call(GameState.drawn_routes, instant, walk)
 
 
 func _on_route_drawn(slot: String, route: Array) -> void:
+	if slot == GameState.KICKER_SLOT:
+		sim.set_kick_route(route)
+		_refresh_bar()
+		return
 	GameState.set_route(slot, route)
 	# false: everyone is already standing on their spots, so re-aligning
 	# instantly here would snap the other four receivers mid-shift.
@@ -823,6 +1011,9 @@ func _live_bar() -> Control:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 8)
 	row.add_child(UIKit.label("LIVE   ", 15, UIKit.ACCENT))
+	if sim.kick_play:
+		row.add_child(UIKit.label("Field goal try - %d yards" % int(round(sim.kick_distance())), 13, UIKit.MUTED))
+		return row
 
 	if sim.planned_action == "handoff":
 		var target := sim.offense_slot(sim.planned_handoff_slot)
@@ -856,14 +1047,62 @@ func _result_bar() -> Control:
 		e.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(e)
 
-	var cont := UIKit.primary_button("CONTINUE", 18)
-	cont.custom_minimum_size = Vector2(0, 40)
-	cont.pressed.connect(_on_continue)
-	v.add_child(cont)
+	v.add_child(UIKit.vsep(4))
+	_auto_btn = UIKit.pill_button("NEXT PLAY", 16)
+	_auto_btn.pressed.connect(_on_continue)
+	v.add_child(_centered(_auto_btn))
+
+	# Countdown to the next play, draining under the button.
+	_auto_bar = ProgressBar.new()
+	_auto_bar.show_percentage = false
+	_auto_bar.max_value = AUTO_CONTINUE
+	_auto_bar.value = AUTO_CONTINUE
+	_auto_bar.custom_minimum_size = Vector2(180, 4)
+	_auto_bar.add_theme_stylebox_override("background", _flat(UIKit.LINE))
+	_auto_bar.add_theme_stylebox_override("fill", _flat(UIKit.ACCENT))
+	_auto_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_centered(_auto_bar))
 	return v
 
 
+## `c` at its own minimum width, centered, inside a VBox that would otherwise
+## stretch it edge to edge.
+func _centered(c: Control) -> Control:
+	c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	return c
+
+
+func _flat(col: Color) -> StyleBoxFlat:
+	var sb := UIKit.stylebox(col, 2, 0)
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 0
+	return sb
+
+
+## Counts the result card down and moves on to the next play when it runs
+## out. Holds while the coach is looking at a player card or the stats/sub
+## panel, so the next play can't start out from under him.
+func _tick_auto_continue(delta: float) -> void:
+	if _auto_left < 0.0 or sim.phase != MatchSim.Phase.DEAD:
+		return
+	if card.visible or side_panel.visible:
+		return
+	_auto_left -= delta
+	if _auto_left <= 0.0:
+		_on_continue()
+		return
+	_update_auto_widgets()
+
+
+func _update_auto_widgets() -> void:
+	if _auto_btn != null:
+		_auto_btn.text = "NEXT PLAY  %d" % int(ceil(maxf(_auto_left, 0.0)))
+	if _auto_bar != null:
+		_auto_bar.value = maxf(_auto_left, 0.0)
+
+
 func _on_continue() -> void:
+	_auto_left = -1.0
 	_dismiss_overlays()
 	var scored := bool(sim.result.get("td", false))
 	var outcome := sim.advance()
@@ -881,7 +1120,9 @@ func _on_continue() -> void:
 			_start_upgrade_choice()
 			return
 	else:
-		_apply_call()
+		# Walk everyone onto the new spots from wherever the after-play
+		# animations left them, rather than teleporting.
+		_apply_call(true, true)
 		# Pan back from where the play ended to the new spot, not a cut.
 		field.glide_camera()
 	_refresh_bar()
@@ -908,8 +1149,8 @@ func _drive_over_bar() -> Control:
 		var ot_note := UIKit.label("Tied at the end of regulation - %d drives each to settle it. Still tied after that and it's a tie game." % MatchSim.OVERTIME_DRIVES, 14, UIKit.MUTED)
 		ot_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(ot_note)
-		var ot := UIKit.primary_button("GO TO OVERTIME", 18)
-		ot.custom_minimum_size = Vector2(0, 40)
+		v.add_child(UIKit.vsep(4))
+		var ot := UIKit.pill_button("GO TO OVERTIME", 16)
 		ot.pressed.connect(func():
 			_dismiss_overlays()
 			opponent_note = ""
@@ -918,19 +1159,19 @@ func _drive_over_bar() -> Control:
 			_apply_call()
 			field.snap_camera()
 			_refresh_bar())
-		v.add_child(ot)
+		v.add_child(_centered(ot))
 	else:
 		# (The match's actual last drive never gets here - _refresh_bar hands
 		# that straight to _begin_match_end instead.)
-		var next := UIKit.primary_button("NEXT DRIVE", 18)
-		next.custom_minimum_size = Vector2(0, 40)
+		v.add_child(UIKit.vsep(4))
+		var next := UIKit.pill_button("NEXT DRIVE", 16)
 		next.pressed.connect(func():
 			_dismiss_overlays()
 			sim.begin_drive()
 			_apply_call()
 			field.snap_camera()
 			_refresh_bar())
-		v.add_child(next)
+		v.add_child(_centered(next))
 	return v
 
 
@@ -1444,7 +1685,7 @@ func _show_card(sp: SimPlayer) -> void:
 	v.add_child(UIKit.rule())
 
 	# Full stat block, including the effective numbers this play.
-	for key in ["strength", "agility", "dexterity", "intelligence"]:
+	for key in pd.shown_stats(["strength", "agility", "dexterity", "intelligence"]):
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		var name_label := UIKit.label(UIKit.STAT_LABELS[key], 13, UIKit.MUTED)

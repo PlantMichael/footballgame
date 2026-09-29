@@ -5,7 +5,7 @@ extends RefCounted
 ## `PlayerData.head_id`: "1" and "2" are the two generic random styles every
 ## rolled player picks between, and a handful of named players (see
 ## Generator.RANDOM_HEAD_IDS, ShopPlayerDB's optional "head" JSON field, and
-## CursedPlayerDB) get their own unique id instead.
+## CursedPlayerDB, OddityPlayerDB) get their own unique id instead.
 ##
 ## The art arrives as a head drawn well off to one side of a big canvas - the
 ## same framing in every file - so a texture used straight from the file
@@ -67,6 +67,12 @@ const SOURCE := {
 		"left": "res://assets/heads_outlined/cursedplayerleft.png",
 		"right": "res://assets/heads_outlined/cursedplayerright.png",
 	},
+	"oddity": {
+		"front": "res://assets/heads_outlined/oddityheadforward.png",
+		"back": "res://assets/heads_outlined/oddityheadback.png",
+		"left": "res://assets/heads_outlined/oddityheadleft.png",
+		"right": "res://assets/heads_outlined/oddityheadright.png",
+	},
 }
 
 ## "set_id:view" -> Texture2D, or null once we've established that combo has
@@ -127,6 +133,49 @@ static func face_draw_rect(set_id: String, view: String, tex: Texture2D, face_h:
 			Vector2(face_h * ts.x / maxf(ts.y, 1.0), face_h))
 	var k := face_h / face.size.y
 	return Rect2(-(face.position + face.size * 0.5) * k, tex.get_size() * k)
+
+
+static var _skin_cache: Dictionary = {}
+
+## The head's skin tone: the most common non-ink colour inside the face on
+## its front view. The floating hands (field_view.gd) are matched to it, so
+## a new head needs nothing written down for its hands to fit. Head "1"'s
+## peach if the art can't be read.
+static func skin_color(set_id: String) -> Color:
+	if _skin_cache.has(set_id):
+		return _skin_cache[set_id]
+	var skin := Color8(255, 209, 180)
+	var tex := head_texture(set_id, "front")
+	var img := tex.get_image() if tex != null else null
+	if img != null:
+		var face := face_rect(set_id, "front")
+		var counts: Dictionary = {}
+		var first: Dictionary = {}
+		const N := 32
+		for iy in N:
+			for ix in N:
+				var u := Vector2((float(ix) + 0.5) / N, (float(iy) + 0.5) / N)
+				# Inside the face circle, clear of its baked outline.
+				if u.distance_to(Vector2(0.5, 0.5)) > 0.4:
+					continue
+				var px := Vector2i(face.position + face.size * u)
+				if px.x < 0 or px.y < 0 or px.x >= img.get_width() or px.y >= img.get_height():
+					continue
+				var c := img.get_pixelv(px)
+				if c.a < 0.95 or c.get_luminance() < 0.12:
+					continue
+				var key := (c.r8 >> 3) << 10 | (c.g8 >> 3) << 5 | (c.b8 >> 3)
+				counts[key] = int(counts.get(key, 0)) + 1
+				if not first.has(key):
+					first[key] = c
+		var best := -1
+		for key in counts:
+			if best < 0 or counts[key] > counts[best]:
+				best = key
+		if best >= 0:
+			skin = Color(first[best], 1.0)
+	_skin_cache[set_id] = skin
+	return skin
 
 
 static func _face_canvas_rect(path: String) -> Rect2:

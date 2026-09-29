@@ -69,6 +69,11 @@ func _build() -> void:
 		backs.add_child(_slot_widget(slot))
 	field.add_child(backs)
 
+	# The kicker sits back on his own - optional, he only comes on to kick.
+	var kick_row := _row()
+	kick_row.add_child(_slot_widget(GameState.KICKER_SLOT))
+	field.add_child(kick_row)
+
 	root.add_child(_selected_info())
 	root.add_child(_bench_strip())
 
@@ -147,8 +152,12 @@ func _slot_widget(slot: String) -> Control:
 	var tag := UIKit.label(_slot_label(slot), 12, UIKit.ACCENT if selected else UIKit.MUTED)
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(tag)
+	var optional := slot == GameState.KICKER_SLOT
 	var name_text := "- empty -" if p == null else "#%d %s" % [p.number, p.pname]
-	var name_label := UIKit.label(name_text, 13, UIKit.BAD if p == null else UIKit.TEXT)
+	if p == null and optional:
+		name_text = "- none (optional) -"
+	var name_label := UIKit.label(name_text, 13,
+		(UIKit.MUTED if optional else UIKit.BAD) if p == null else UIKit.TEXT)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(name_label)
 	h.add_child(col)
@@ -269,7 +278,10 @@ func _selected_info() -> Control:
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_theme_constant_override("separation", 14)
 	if p == null:
-		h.add_child(UIKit.label("Nobody at %s - pick someone below." % _slot_label(selected_slot), 14, UIKit.BAD))
+		if selected_slot == GameState.KICKER_SLOT:
+			h.add_child(UIKit.label("No kicker - you can't kick without one. Sign one from the shop.", 14, UIKit.MUTED))
+		else:
+			h.add_child(UIKit.label("Nobody at %s - pick someone below." % _slot_label(selected_slot), 14, UIKit.BAD))
 		return h
 	h.add_child(UIKit.label("%s  %s" % [p.pname, p.pos_name()], 15, UIKit.ACCENT))
 	h.add_child(UIKit.stat_row(p, 13))

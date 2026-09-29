@@ -29,6 +29,20 @@ func _ready() -> void:
 	get_tree().quit()
 
 
+func _wait_for_auto_continue(scene: Node, sim: MatchSim) -> void:
+	var panel: Control = scene.get("float_panel")
+	if panel == null or not panel.visible:
+		_fail("no floating result card after the play")
+	var waited := 0.0
+	while sim.phase == MatchSim.Phase.DEAD and waited < 10.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	if sim.phase == MatchSim.Phase.DEAD:
+		_fail("result card never continued on its own")
+	else:
+		print("  result card auto-continued after %.1fs" % waited)
+
+
 func _fail(msg: String) -> void:
 	failures.append(msg)
 	print("  FAIL: " + msg)
@@ -72,7 +86,12 @@ func _play_full_match() -> void:
 			MatchSim.Phase.DEAD:
 				if not sim.result.has("text"):
 					_fail("dead play produced no result text")
-				scene.call("_on_continue")
+				if plays == 1:
+					# The first result is left alone: the floating card should
+					# count down and move on to the next play by itself.
+					await _wait_for_auto_continue(scene, sim)
+				else:
+					scene.call("_on_continue")
 
 			MatchSim.Phase.DRIVE_OVER:
 				drives_played += 1
