@@ -40,6 +40,8 @@ const POS_WEIGHTS := {
 	PlayerData.Pos.RB: {"strength": 1.1, "agility": 1.5, "dexterity": 0.9, "stamina": 1.1, "intelligence": 0.8},
 	PlayerData.Pos.WR: {"strength": 0.6, "agility": 1.4, "dexterity": 1.5, "stamina": 1.0, "intelligence": 1.0},
 	PlayerData.Pos.TE: {"strength": 1.2, "agility": 0.9, "dexterity": 1.2, "stamina": 1.0, "intelligence": 1.0},
+	# Only the two KICKER_STATS mean anything; make_player zeroes the rest.
+	PlayerData.Pos.K: {"strength": 1.3, "agility": 0.0, "dexterity": 1.3, "stamina": 0.0, "intelligence": 0.0},
 }
 
 const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
@@ -54,6 +56,7 @@ const BODY_BY_POS := {
 	PlayerData.Pos.RB: "5",
 	PlayerData.Pos.WR: "9",
 	PlayerData.Pos.TE: "1",
+	PlayerData.Pos.K: "2",   # same as the shop's kickers
 }
 
 ## The pool a player without a fixed head_id (see HeadArtDB, PlayerData) rolls
@@ -133,6 +136,12 @@ static func make_player(rng: RandomNumberGenerator, pos: PlayerData.Pos, quality
 	p.body = BODY_BY_POS.get(pos, p.body)
 	p.head_id = random_head_id(rng)
 
+	if pos == PlayerData.Pos.K:
+		# Kickers have no Agility, Stamina or Intelligence at all (see
+		# ShopPlayerDB.make_player) - add_stat below leaves them untouched.
+		p.agility = 0
+		p.stamina = 0
+		p.intelligence = 0
 	var weights: Dictionary = POS_WEIGHTS[pos]
 	for key in STAT_KEYS:
 		var w := float(weights[key])
@@ -176,8 +185,8 @@ static func _pick_ability(rng: RandomNumberGenerator, pos: PlayerData.Pos) -> St
 	return pool[rng.randi_range(0, pool.size() - 1)]
 
 
-## A full starting roster: the 11 starters (1 QB, 1 C, 4 T, 5 flex) plus
-## exactly one backup QB and one backup flex body - 13 players total.
+## A full starting roster: the 11 starters (1 QB, 1 C, 4 T, 5 flex), exactly
+## one backup QB and one backup flex body, and a kicker - 14 players total.
 ## Rookies land in the 2-4 stat band and have no special ability yet; both are
 ## things the shop is meant to fix over the course of a run.
 const ROOKIE_QUALITY := 3.0
@@ -191,6 +200,7 @@ static func starting_roster(rng: RandomNumberGenerator, quality: float = ROOKIE_
 	var counts := {
 		PlayerData.Pos.QB: 2, PlayerData.Pos.C: 1, PlayerData.Pos.T: 4,
 		PlayerData.Pos.WR: 3, PlayerData.Pos.RB: 2, PlayerData.Pos.TE: 1,
+		PlayerData.Pos.K: 1,
 	}
 	for pos in counts:
 		for i in int(counts[pos]):
@@ -257,6 +267,47 @@ static func make_defense(rng: RandomNumberGenerator, strength_rating: float, aur
 			continue
 		tagged[idx] = true
 		d[idx].aura_id = auras[rng.randi_range(0, auras.size() - 1)]
+	return d
+
+
+## A defense scouts your best playmaker. When a flex starter's rating
+## (overall plus GameState.TIER_POWER) outclasses the defense's own `quality`
+## by more than SHUTDOWN_TRIGGER, the defender who'd draw him - the best
+## defensive back for a receiver or tight end, the middle linebacker for a
+## running back - is brought up to within SHUTDOWN_GAP of him in the stats
+## that matchup turns on. He's also the man MatchSim._key_on_hot_hand puts on
+## the star once he gets going. Returns the defender it built up, or null.
+const SHUTDOWN_TRIGGER := 2.0
+const SHUTDOWN_GAP := 1
+
+static func add_shutdown_defender(defense: Array[PlayerData], starters: Array, quality: float) -> PlayerData:
+	var star: PlayerData = null
+	var star_rating := quality + SHUTDOWN_TRIGGER
+	for p in starters:
+		if p == null or not p.natural_slot_kind() == "FLEX":
+			continue
+		var rating := float(p.overall()) + float(GameState.TIER_POWER.get(p.quality, 0.0))
+		if rating > star_rating:
+			star_rating = rating
+			star = p
+	if star == null:
+		return null
+	var d: PlayerData
+	var keys: Array
+	if star.pos == PlayerData.Pos.RB:
+		d = defense[5]   # middle linebacker
+		keys = ["strength", "agility", "intelligence"]
+	else:
+		# Best defensive back by the stats coverage runs on.
+		d = defense[7]
+		for i in range(7, 11):
+			if defense[i].agility + defense[i].intelligence > d.agility + d.intelligence:
+				d = defense[i]
+		keys = ["agility", "dexterity", "intelligence"]
+	for key in keys:
+		var want := clampi(star.stat(key) - SHUTDOWN_GAP, 1, 15)
+		if d.stat(key) < want:
+			d.add_stat(key, want - d.stat(key))
 	return d
 
 

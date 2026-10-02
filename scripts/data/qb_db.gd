@@ -2,23 +2,37 @@ class_name QBDB
 extends RefCounted
 
 ## The five quarterbacks offered at the start of a run. Abilities lean into
-## each QB's tag, in the risk/accuracy/decision-making vein of the QB
-## signature mechanic.
+## each QB's tag. An entry's index is its id in MetaState's bowl marks, so
+## reordering or replacing one needs a migration there.
 
 const QUARTERBACKS := [
 	{
-		"name": "Colt Ferris",
-		"tag": "Gunslinger arm, throws before the read is finished.",
-		"strength": 3, "agility": 3, "dexterity": 5, "stamina": 3, "intelligence": 2,
-		"ability_id": "gunslinger",
+		"name": "John Football",
+		"tag": "Your average quarterback. No tricks, no gimmicks.",
+		"strength": 3, "agility": 3, "dexterity": 4, "stamina": 3, "intelligence": 4,
+		"ability_id": "",
 		"body": "1",
 	},
 	{
-		"name": "Doc Halloway",
-		"tag": "Field general, picks the defense apart before the snap.",
-		"strength": 2, "agility": 2, "dexterity": 3, "stamina": 3, "intelligence": 5,
-		"ability_id": "field_general",
+		"name": "Francis Fasthands",
+		"tag": "Quick feet, quicker hands - everyone around him speeds up.",
+		"strength": 2, "agility": 4, "dexterity": 4, "stamina": 3, "intelligence": 2,
+		"ability_id": "fast_hands",
 		"body": "2",
+	},
+	{
+		"name": "Tony Pigskin",
+		"tag": "Loves a heavy package - the more of a position, the merrier.",
+		"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 4,
+		"ability_id": "strength_in_numbers",
+		"body": "4",
+	},
+	{
+		"name": "Luke Luckyfingers",
+		"tag": "Doesn't always know how, but the ball finds its man.",
+		"strength": 2, "agility": 3, "dexterity": 4, "stamina": 3, "intelligence": 3,
+		"ability_id": "lucky_fingers",
+		"body": "5",
 	},
 	{
 		"name": "Jett Marlowe",
@@ -26,20 +40,6 @@ const QUARTERBACKS := [
 		"strength": 2, "agility": 5, "dexterity": 3, "stamina": 4, "intelligence": 2,
 		"ability_id": "down_and_distance",
 		"body": "3",
-	},
-	{
-		"name": "Boone Radcliff",
-		"tag": "Bruiser, shrugs off the rush and keeps his feet.",
-		"strength": 5, "agility": 2, "dexterity": 3, "stamina": 4, "intelligence": 2,
-		"ability_id": "escape_artist",
-		"body": "4",
-	},
-	{
-		"name": "Wyatt Cole",
-		"tag": "Steady all-rounder, no glaring weakness.",
-		"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 4,
-		"ability_id": "clutch_gene",
-		"body": "5",
 	},
 ]
 

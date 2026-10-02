@@ -15,11 +15,34 @@ from scipy import ndimage
 DROP_BELOW = 80      # rim alpha under this is cut away entirely
 RIM_PX = 3           # how far in from the transparent edge counts as rim
 INK = np.array([8, 8, 10], dtype=np.uint8)
+# The recoloured jerseys (_cut_jerseys.py) also carry fully OPAQUE paper-white
+# pixels hugging the outside of the outline, which the alpha test above never
+# sees. For those, light pixels touching the transparent outside are peeled
+# off a layer at a time; the black outline stops the peel, so the collar and
+# sleeve trim inside it are never reached.
+PEEL_PASSES = 3
+PEEL_LUM = 60
+SPECK_PX = 30
 
-for path in sorted(glob.glob("assets/players/*/body*.png")):
+# Blue art is assets/players/<view>/, every other jersey colour one level
+# deeper in assets/players/<colour>/<view>/ (JerseyDB).
+paths = glob.glob("assets/players/*/body*.png") + glob.glob("assets/players/*/*/body*.png")
+for path in sorted(paths):
     img = np.asarray(Image.open(path).convert("RGBA")).copy()
-    alpha = img[..., 3]
     lum = img[..., :3].astype(np.float32).mean(axis=2)
+    if path.replace("\\", "/").count("/") > 3:   # assets/players/<colour>/<view>/
+        for _ in range(PEEL_PASSES):
+            outside = ndimage.binary_dilation(img[..., 3] == 0) & (img[..., 3] > 0)
+            peel = outside & (lum > PEEL_LUM)
+            if not peel.any():
+                break
+            img[peel] = 0
+        # Stray specks the peel left floating off the body.
+        labels, n = ndimage.label(img[..., 3] > 0)
+        if n > 1:
+            sizes = ndimage.sum(np.ones_like(labels), labels, range(1, n + 1))
+            img[np.isin(labels, np.flatnonzero(sizes < SPECK_PX) + 1)] = 0
+    alpha = img[..., 3]
     rim = ndimage.binary_dilation(alpha == 0, iterations=RIM_PX) & (alpha > 0) & (alpha < 250)
     light = rim & (lum > 60)
     drop = light & (alpha < DROP_BELOW)

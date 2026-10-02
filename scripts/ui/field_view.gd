@@ -208,6 +208,14 @@ const LIE_DOWN_TIME := 0.55   # seconds to settle onto the turf
 ## id must not collide on the same cached texture.
 var _tex_cache: Dictionary = {}
 
+## Per-player front of _tex_cache and BodyArtDB.head_rig, so the per-frame
+## draw doesn't build a string key for every player several times a frame.
+## SimPlayer -> {"body", "head", "jersey", "ability": what it was built for,
+## "tex": {view: Texture2D}, "rig": {view: Dictionary}, "heads": {view:
+## [Texture2D, Rect2]}, "cloak": float}. Rebuilt whenever any of the first
+## four change (a sub, a dev-mode swap, a negated ability).
+var _look: Dictionary = {}
+
 ## --- Floating hands ---------------------------------------------------------
 ## Players have no arms: a pair of outlined, skin-matched hands floats beside
 ## the body only while he's DOING something with them - reaching for a pass
@@ -261,12 +269,35 @@ var _hf_partner: SimPlayer = null
 const GETUP_TIME := 0.45
 const AMBLE_SPEED := 2.4   # yd/s, walking back toward the line
 const JOG_SPEED := 5.5     # yd/s, running over to celebrate
+## Easing out of the play: how fast (1/s) a player's speed chases where it's
+## headed after the whistle. Low enough that a sprinter coasts a few strides
+## to a stop, or bends straight into his walk back, instead of braking dead.
+const COAST_RATE := 1.8     # pulling up with nowhere to go
+const BLEND_RATE := 2.6     # easing from a sprint into a walk or jog
 const GESTURE_TIME := 1.6  # how long a signal or gesture is held
 const POINT_TIME := 0.7    # the first-down point is a quick jab, not a pose
+const BIG_GAIN_YARDS := 15.0   # a gain this long (short of a score) earns a fist pump
+const STIFF_ARM_YARDS := 1.8   # a carrier sticks a hand out at a defender this close
+const THROW_FOLLOW_TIME := 0.28  # seconds the passer's arm stays out after the release
+
+## Dust kicked up where somebody hits the turf - {"pos": Vector2 yards,
+## "age": s, "seed": float}. See _advance_dust/_draw_dust.
+const DUST_LIFE := 0.55
+const DUST_COLOR := Color(0.78, 0.72, 0.55)
+var _dust: Array = []
+var _was_down: Dictionary = {}   # SimPlayer -> true while he's on the turf
+var _stomp_beat: Dictionary = {}  # SimPlayer -> last stomp landing index (for dust)
+
+## How a receiver takes a drop - one picked at random each time. "flop" isn't
+## a hand gesture: he goes down flat on his back instead (see _plan_after_play).
+const DROP_REACTIONS := ["facepalm", "stomp", "flop", "weep"]
+const STOMP_RATE := 13.0      # stomps land at this many half-cycles a second
+const TEAR_COLOR := Color(0.62, 0.84, 1.0)
 ## Idle breathing and glancing about, for anyone standing still.
 const BREATHE_RATE := 2.6
 const GLANCE_EVERY := 3.4
 const GLANCE_TIME := 0.8
+const GLANCE_TILT := 0.22   # radians the head tips over at the height of a glance
 
 ## SimPlayer -> {"getup": s after the whistle he starts getting up (-1 if he
 ## isn't down), "walk": s he starts walking, "to": Vector2 yards or null to
@@ -276,18 +307,55 @@ var _after: Dictionary = {}
 var _after_rng := RandomNumberGenerator.new()
 
 func _body_tex(sp: SimPlayer, view: String) -> Texture2D:
+	var look := _look_of(sp)
+	var texs: Dictionary = look["tex"]
+	if not texs.has(view):
+		var key := "%s:%s:%s:%s" % [view, sp.data.body, sp.data.head_id, look["jersey"]]
+		if not _tex_cache.has(key):
+			_tex_cache[key] = UIKit.body_texture(sp.data, view, look["jersey"])
+		texs[view] = _tex_cache[key]
+	return texs[view]
+
+
+## BodyArtDB.head_rig for `sp`'s body in `view`, via _look.
+func _rig(sp: SimPlayer, view: String) -> Dictionary:
+	var rigs: Dictionary = _look_of(sp)["rig"]
+	if not rigs.has(view):
+		rigs[view] = BodyArtDB.head_rig(view, sp.data.body)
+	return rigs[view]
+
+
+## [HeadArtDB.head_texture, its face_draw_rect for a 1px face] for `sp` in
+## `view`, via _look - the rect scales linearly with face height.
+func _head_art(sp: SimPlayer, head_set: String, view: String) -> Array:
+	var heads: Dictionary = _look_of(sp)["heads"]
+	if not heads.has(view):
+		var tex := HeadArtDB.head_texture(head_set, view)
+		heads[view] = [tex, HeadArtDB.face_draw_rect(head_set, view, tex, 1.0) if tex != null else Rect2()]
+	return heads[view]
+
+
+func _look_of(sp: SimPlayer) -> Dictionary:
 	# Your team is always blue; the opponent wears this match's colour.
 	var jersey := JerseyDB.BLUE if sp.is_offense else sim.defense_jersey
-	var key := "%s:%s:%s:%s" % [view, sp.data.body, sp.data.head_id, jersey]
-	if not _tex_cache.has(key):
-		_tex_cache[key] = UIKit.body_texture(sp.data, view, jersey)
-	return _tex_cache[key]
+	var look: Dictionary = _look.get(sp, {})
+	if look.is_empty() or look["body"] != sp.data.body or look["head"] != sp.data.head_id \
+			or look["jersey"] != jersey or look["ability"] != sp.ability():
+		look = {"body": sp.data.body, "head": sp.data.head_id, "jersey": jersey,
+			"ability": sp.ability(), "tex": {}, "rig": {}, "heads": {},
+			"cloak": AbilityDB.cloak_seconds(sp.ability())}
+		_look[sp] = look
+	return look
 
 
 ## Which sprite view to show and whether to mirror it, from screen-space
 ## facing direction: velocity while moving, otherwise the idle stance -
 ## offense faces upfield (away from camera, "back"), defense faces the
 ## offense (toward camera, "front"), matching real presnap alignment.
+## How much better (dot product with his direction, 0..1) a new facing has
+## to fit before he turns to it - about 13 degrees past the 45 degree line.
+const FACING_STICK := 0.16
+
 func _facing_view(sp: SimPlayer) -> Array:
 	var dir := UP if sp.is_offense else -UP
 	var foe: SimPlayer = _block_foe.get(sp)
@@ -302,20 +370,38 @@ func _facing_view(sp: SimPlayer) -> Array:
 		dir = (to_px(sim.ball_from) - to_px(sim.ball_to)).normalized()
 	elif sp.vel.length() > 0.35:
 		dir = Vector2(sp.vel.y, -sp.vel.x).normalized()
-	var best := dir.dot(UP)
-	var view := "back"
-	var flip := false
-	if dir.dot(-UP) > best:
-		best = dir.dot(-UP); view = "front"; flip = false
+	elif _after_play() and _gesturing(sp) != "":
+		# Reacting to the play: turned to the camera so it reads.
+		dir = -UP
+	elif _after_play() and not _look_of(sp).get("facing", []).is_empty():
+		# Pulled up after the whistle: stay facing the way he was going
+		# rather than snapping round to his presnap stance.
+		return _look_of(sp)["facing"]
+	# Scores for each way he could be drawn - [view, flip, how well it fits].
+	var options := [["back", false, dir.dot(UP)], ["front", false, dir.dot(-UP)]]
 	# A body with no side-view art (body 9 - the defensive backs' and a few
 	# receivers' body) sticks to front/back rather than dropping to the plain
 	# capsule whenever he runs across the field.
-	if _body_tex(sp, "left") == null and _body_tex(sp, "front") != null:
-		return [view, flip]
-	if dir.dot(Vector2.LEFT) > best:
-		best = dir.dot(Vector2.LEFT); view = "left"; flip = false
-	if dir.dot(Vector2.RIGHT) > best:
-		best = dir.dot(Vector2.RIGHT); view = "left"; flip = true
+	if not (_body_tex(sp, "left") == null and _body_tex(sp, "front") != null):
+		options.append(["left", false, dir.dot(Vector2.LEFT)])
+		options.append(["left", true, dir.dot(Vector2.RIGHT)])
+	var pick: Array = options[0]
+	for o in options:
+		if float(o[2]) > float(pick[2]):
+			pick = o
+	# Sticky: running on a near-45 degree line the best fit would flip between
+	# front and side every other frame (his head's eyes blinking in and out),
+	# so he only turns once the new facing is clearly better than his current one.
+	var look := _look_of(sp)
+	var prev: Array = look.get("facing", [])
+	if not prev.is_empty() and (pick[0] != prev[0] or pick[1] != prev[1]):
+		for o in options:
+			if o[0] == prev[0] and o[1] == prev[1] and float(o[2]) >= float(pick[2]) - FACING_STICK:
+				pick = o
+				break
+	var view: String = pick[0]
+	var flip: bool = pick[1]
+	look["facing"] = [view, flip]
 	return [view, flip]
 
 
@@ -363,6 +449,7 @@ func _process(delta: float) -> void:
 			_advance_anim(sp, delta)
 			_advance_pops(sp, delta)
 		_advance_hands(delta)
+		_advance_dust(delta)
 		# A Control only sees _gui_input while the pointer is over it, so a
 		# stroke released off the edge of the window would otherwise never
 		# commit.
@@ -501,7 +588,7 @@ func _plan_after_play() -> void:
 	for sp in sim.offense + sim.defense:
 		if sp.melted:
 			continue
-		var a := {"getup": -1.0, "walk": 0.8 + _after_rng.randf() * 0.9, "to": null,
+		var a := {"getup": -1.0, "walk": 0.15 + _after_rng.randf() * 0.5, "to": null,
 			"speed": AMBLE_SPEED, "act": "", "act_at": 0.0, "act_len": GESTURE_TIME}
 		var ready := 0.2
 		if sp.downed > 0.0:
@@ -531,20 +618,73 @@ func _plan_after_play() -> void:
 			a["to"] = sp.target_pos + Vector2(shift, 0.0)
 		_after[sp] = a
 
+	var qb := sim.offense_slot("QB")
+	if kind == "interception" and qb != null and _after.has(qb):
+		_gesture(qb, "facepalm")
+	# Whoever was nearest the scorer and couldn't stop him.
+	if td and _scorer != null:
+		var beaten := _nearest_of(sim.defense if _scorer.is_offense else sim.offense, _scorer.pos, 4.0)
+		if beaten != null and _after.has(beaten):
+			_gesture(beaten, "head")
 	if hero != null:
 		return
 	# Somebody always has something to say about how the play went.
 	var carrier: SimPlayer = sim.carrier
 	if kind == "incomplete" and sim.thrown_to != null and _after.has(sim.thrown_to):
-		_gesture(sim.thrown_to, "head")
+		var dropped := bool(res.get("drop", false))
+		# A drop is on him; a bad ball is on the QB, who shrugs it off.
+		if dropped:
+			_react_to_drop(sim.thrown_to)
+		else:
+			_gesture(sim.thrown_to, "head")
+		if not dropped and qb != null and qb != sim.thrown_to and _after.has(qb):
+			_gesture(qb, "shrug")
+		var cover := _nearest_of(sim.defense, sim.thrown_to.pos, 3.0)
+		if cover != null and _after.has(cover):
+			_gesture(cover, "wave_off")   # "no catch!"
+	if kind == "sack" and qb != null and _after.has(qb):
+		_gesture(qb, "head")
 	if kind == "missed_fg" and sim.kicker_sp != null and _after.has(sim.kicker_sp):
 		_gesture(sim.kicker_sp, "head")
 	if carrier != null and _after.has(carrier) and (kind == "run" or kind == "complete") \
+			and yards >= BIG_GAIN_YARDS:
+		_gesture(carrier, "pump")
+	elif carrier != null and _after.has(carrier) and (kind == "run" or kind == "complete") \
 			and yards >= sim.to_go:
 		_gesture(carrier, "point", POINT_TIME)   # moving the chains
 	var stop := kind == "sack" or kind == "safety" or yards < 0.0
 	if sim.tackler != null and _after.has(sim.tackler) and stop:
 		_gesture(sim.tackler, "cheer")
+
+
+## A receiver who just dropped one: facepalm, stomp, flop onto his back, or
+## weep into his hands.
+func _react_to_drop(sp: SimPlayer) -> void:
+	var how: String = DROP_REACTIONS[_after_rng.randi_range(0, DROP_REACTIONS.size() - 1)]
+	if how != "flop" or sp.downed > 0.0:
+		_gesture(sp, how if how != "flop" else "facepalm")
+		return
+	# Throws himself down backwards and lies there a beat before getting up.
+	var a: Dictionary = _after[sp]
+	var back := -sp.vel.normalized() if sp.vel.length() > 0.1 else Vector2(-1.0, 0.0)
+	sp.vel = back * 0.6
+	sp.downed = 0.0001
+	a["getup"] = 1.7 + _after_rng.randf() * 0.6
+	a["walk"] = float(a["getup"]) + GETUP_TIME + 0.3
+
+
+## The closest live player in `group` to `at`, within `max_yards`, or null.
+func _nearest_of(group: Array, at: Vector2, max_yards: float) -> SimPlayer:
+	var best: SimPlayer = null
+	var best_d := max_yards
+	for sp in group:
+		if sp.melted:
+			continue
+		var d: float = sp.pos.distance_to(at)
+		if d < best_d:
+			best_d = d
+			best = sp
+	return best
 
 
 ## Queues `act` for him as soon as he's on his feet, and holds his walk
@@ -558,6 +698,12 @@ func _gesture(sp: SimPlayer, act: String, length: float = GESTURE_TIME) -> void:
 	a["act_at"] = at
 	a["act_len"] = length
 	a["walk"] = maxf(float(a["walk"]), at + length)
+
+
+## Seconds since his current gesture started.
+func _gesture_t(sp: SimPlayer) -> float:
+	var a: Dictionary = _after.get(sp, {})
+	return 0.0 if a.is_empty() else _dead_t - float(a["act_at"])
 
 
 func _gesturing(sp: SimPlayer) -> String:
@@ -600,11 +746,56 @@ func _advance_after_play(delta: float) -> void:
 				want = to / dist * minf(float(a["speed"]), dist * 3.0)
 		# Anyone still running at the whistle pulls up over a few strides
 		# rather than stopping dead.
-		sp.vel = sp.vel.lerp(want, clampf(delta * (6.0 if want != Vector2.ZERO else 3.5), 0.0, 1.0))
+		sp.vel = sp.vel.lerp(want, clampf(delta * (BLEND_RATE if want != Vector2.ZERO else COAST_RATE), 0.0, 1.0))
 		if sp.vel.length() < 0.05:
 			sp.vel = Vector2.ZERO
 		sp.pos += sp.vel * delta
 		sp.stride += sp.vel.length() * delta * 3.2
+
+
+## A puff of dust the moment anyone hits the turf.
+func _advance_dust(delta: float) -> void:
+	for group in [sim.offense, sim.defense]:
+		for sp in group:
+			var down: bool = sp.downed > 0.0 and not sp.melted
+			if down and not _was_down.has(sp):
+				_was_down[sp] = true
+				# Kicked up a little way along the way he fell.
+				var spot: Vector2 = sp.pos
+				if sp.vel.length() > 0.1:
+					spot += sp.vel.normalized() * 0.4
+				_dust.append({"pos": spot, "age": 0.0, "seed": randf() * TAU})
+			elif not down:
+				_was_down.erase(sp)
+			# A stomp kicks up a little dust every time his foot comes down.
+			if _after_play() and _gesturing(sp) == "stomp":
+				var beat := int(floor(_gesture_t(sp) * STOMP_RATE / PI))
+				if beat != int(_stomp_beat.get(sp, -1)):
+					_stomp_beat[sp] = beat
+					_dust.append({"pos": sp.pos + Vector2(-0.3, 0.0), "age": DUST_LIFE * 0.35, "seed": randf() * TAU})
+	if _dust.is_empty():
+		return
+	var kept: Array = []
+	for d in _dust:
+		d["age"] += delta
+		if float(d["age"]) < DUST_LIFE:
+			kept.append(d)
+	_dust = kept
+
+
+func _draw_dust() -> void:
+	if _dust.is_empty():
+		return
+	var r := _player_radius()
+	for d in _dust:
+		var f: float = float(d["age"]) / DUST_LIFE
+		var c := to_px(d["pos"])
+		var seed_a: float = d["seed"]
+		# Five little clouds billowing outward and fading.
+		for i in 5:
+			var ang := seed_a + TAU * float(i) / 5.0
+			var at := c + Vector2(cos(ang), sin(ang) * 0.6) * r * (0.35 + 0.9 * f)
+			_draw_disc(at, r * (0.28 + 0.25 * f), Color(DUST_COLOR, 0.6 * (1.0 - f)))
 
 
 ## Where the two high-fivers' hands meet: above and between their heads.
@@ -642,10 +833,14 @@ func _advance_pops(sp: SimPlayer, delta: float) -> void:
 
 
 ## Snaps the locked camera straight to its target with no lerp (e.g. at the
-## start of a new drive). Has no effect while the camera is unlocked - free
-## camera position is left exactly where the player put it.
-func snap_camera() -> void:
+## start of a new drive). Without `relock` it has no effect while the camera
+## is unlocked - free camera position is left exactly where the player put it.
+func snap_camera(relock: bool = false) -> void:
 	_glide_t = 0.0
+	# A new drive always starts with the camera back on the ball, even if the
+	# coach had panned it off somewhere during the last one.
+	if relock:
+		camera_locked = true
 	if sim != null and camera_locked:
 		_cam_x = _camera_target_x()
 		_cam_y = _camera_target_y()
@@ -973,6 +1168,7 @@ func _draw() -> void:
 	if sim.phase == MatchSim.Phase.LIVE or sim.phase == MatchSim.Phase.DEAD:
 		_draw_trails()
 	_draw_ground_props()
+	_draw_dust()
 	_draw_chains()
 	_draw_players()
 	_draw_prop_overlays()
@@ -1582,6 +1778,10 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	if pose == "jump":
 		hop = absf(sin(_end_t * JUMP_RATE + _pose_phase(sp))) * r * JUMP_HEIGHT
 		center.y -= hop
+	elif _after_play() and _gesturing(sp) == "stomp":
+		# Stamping his feet after a drop - little hops, dust on each landing.
+		hop = absf(sin(_gesture_t(sp) * STOMP_RATE)) * r * 0.16
+		center.y -= hop
 
 	var body := UIKit.OFFENSE if sp.is_offense else UIKit.DEFENSE.darkened(0.08)
 	var head := Color("c9a37a") if sp.is_offense else Color("a8845f")
@@ -1607,7 +1807,7 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var b := center + axis * half
 
 	var shadow_r := r * lerpf(0.92, 0.78, fall) * (1.0 - 0.3 * hop / maxf(r * JUMP_HEIGHT, 0.01))
-	draw_circle(center + Vector2(2.0, 4.0 + hop), shadow_r, Color(0, 0, 0, 0.16))
+	_draw_disc(center + Vector2(2.0, 4.0 + hop), shadow_r, Color(0, 0, 0, 0.16))
 
 	# A bowl special player (BowlDB.GIMMICKS) - a heavy purple double ring,
 	# so he can't be mistaken for a purple Mind Reader aura's single one.
@@ -1634,7 +1834,7 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	# Route") gets his own ring for as long as that lasts, so the effect
 	# reads as something actually happening rather than an invisible number.
 	if sp.is_offense and fall <= 0.0 and sim.phase == MatchSim.Phase.LIVE:
-		var cloak_dur := AbilityDB.cloak_seconds(sp.ability())
+		var cloak_dur: float = _look_of(sp)["cloak"]
 		if cloak_dur > 0.0 and sim.time < cloak_dur:
 			var pulse3 := 0.08 * sin(Time.get_ticks_msec() * 0.01)
 			draw_arc(center, r * (1.32 + pulse3), 0, TAU, 30, Color("bfe9ff"), 3.0)
@@ -1664,9 +1864,8 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		# Team-color backdrop. Kept very faint, but it is still the only
 		# per-team cue the fixed-navy jersey art gives us, so the rim stays a
 		# little stronger than the fill to keep the sides apart at a glance.
-		draw_circle(center, r * 1.12, Color(body, DISC_ALPHA))
-		draw_arc(center, r * 1.12, 0.0, TAU, 28, Color(body, DISC_RIM_ALPHA),
-			DISC_RIM_WIDTH, true)
+		_draw_disc(center, r * 1.12, Color(body, DISC_ALPHA))
+		_draw_ring(center, r * 1.12, Color(body, DISC_RIM_ALPHA))
 
 		var tex_size := tex.get_size()
 		# Equal-area normalisation - see BODY_AREA. Fitting inside a box made
@@ -1680,7 +1879,7 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		# The rig's Body scale/position (BodyArtDB.head_rig) on top of that -
 		# e.g. shrinking a tall, skinny sprite to the others' height. tex_w/h
 		# stay unscaled: the head is placed in the rig's own space.
-		var body_rig := BodyArtDB.head_rig(view_name, sp.data.body)
+		var body_rig := _rig(sp, view_name)
 		var bs: Vector2 = body_rig["body_scale"]
 		var bo: Vector2 = body_rig["body_offset"]
 		var body_rect := Rect2(Vector2(bo.x * w - w * bs.x * 0.5, bo.y * h - h * bs.y * 0.5),
@@ -1723,7 +1922,7 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	var head_h: float
 	var head_rot := body_rot
 	if tex != null:
-		var rig := BodyArtDB.head_rig(view_name, sp.data.body)
+		var rig := _rig(sp, view_name)
 		var off: Vector2 = rig["offset"]
 		var mirror := -1.0 if mirrored else 1.0
 		hp = center + Vector2(off.x * tex_w * mirror, off.y * tex_h).rotated(body_rot)
@@ -1735,16 +1934,25 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 	head_h *= 1.0 + 0.07 * sin(sp.stride * 2.0) * moving
 	if idle:
 		hp.y -= (0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.001 * BREATHE_RATE + _pose_phase(sp) - 0.6)) 			* r * 0.025
+	var gesture := _gesturing(sp) if _after_play() else ""
+	if gesture == "facepalm":
+		hp.x += sin(_gesture_t(sp) * 9.0) * r * 0.06
+	elif gesture == "weep":
+		hp.y += r * 0.08   # head hung
 	var hr := head_h * 0.5
 	var head_set := sp.data.head_id if sp.data.head_id != "" else "1"
 	var head_view := HeadArtDB.view_for(view_name, mirrored)
 	# Standing around after the whistle, he glances off to one side now and
-	# then, each man on his own clock.
+	# then, each man on his own clock - a tilt of the head, not a swap to the
+	# side-view head art, which on a front or back body just reads as a
+	# missing eye.
 	if idle and _after_play() and (head_view == "front" or head_view == "back"):
 		var glance := fmod(_dead_t + _pose_phase(sp), GLANCE_EVERY)
 		if glance < GLANCE_TIME:
-			head_view = "left" if int(_pose_phase(sp) * 10.0) % 2 == 0 else "right"
-	var head_tex := HeadArtDB.head_texture(head_set, head_view)
+			var side := 1.0 if int(_pose_phase(sp) * 10.0) % 2 == 0 else -1.0
+			head_rot += side * GLANCE_TILT * sin(glance / GLANCE_TIME * PI)
+	var head_art := _head_art(sp, head_set, head_view)
+	var head_tex: Texture2D = head_art[0]
 	if head_tex == null:
 		draw_circle(hp, hr * 1.12, Color("241d16"))
 		draw_circle(hp, hr, head)
@@ -1754,11 +1962,19 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 		# FACE's size - hair or anything else past the round face overflows
 		# around it (HeadArtDB.face_draw_rect) rather than shrinking it.
 		draw_set_transform(hp, head_rot, Vector2.ONE)
-		draw_texture_rect(head_tex, HeadArtDB.face_draw_rect(head_set, head_view, head_tex, head_h),
-			false, head_tint)
+		var unit: Rect2 = head_art[1]
+		draw_texture_rect(head_tex, Rect2(unit.position * head_h, unit.size * head_h), false, head_tint)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	_draw_hands(sp, center, hp, head_h, r, pose, fall, head_tint)
+
+	# Weeping into his hands: tears dripping out from between the fingers.
+	if gesture == "weep":
+		for i in 4:
+			var ph := fmod(_gesture_t(sp) * 1.6 + float(i) * 0.25, 1.0)
+			var side := -1.0 if i % 2 == 0 else 1.0
+			var at := hp + Vector2(side * r * (0.32 + 0.1 * ph), r * (0.2 + 0.7 * ph))
+			_draw_disc(at, r * 0.08 * (1.0 - 0.4 * ph), Color(TEAR_COLOR, 0.9 * (1.0 - ph)))
 
 
 ## The floating hands, if he's doing anything with them right now - see
@@ -1771,7 +1987,12 @@ func _draw_hands(sp: SimPlayer, center: Vector2, hp: Vector2, head_h: float, r: 
 	# Hands never cover his own face: any pose that would put one over the
 	# head slides it out to just past the head's edge.
 	var clear := head_h * 0.5 + hand_d * 0.45
-	for i in targets.size():
+	# ...except the facepalm's right hand, which is the whole point.
+	var guarded := targets.size()
+	match _gesturing(sp):
+		"facepalm": guarded = 1
+		"weep": guarded = 0
+	for i in guarded:
 		var off: Vector2 = targets[i] - hp
 		if off.length() < clear:
 			var out := off.normalized() if off.length() > 0.01 else Vector2(-1.0 if i == 0 else 1.0, 0.0)
@@ -1856,6 +2077,32 @@ func _hand_targets(sp: SimPlayer, center: Vector2, hp: Vector2, r: float, hand_d
 				# _draw_hands keeps them to the sides of it.
 				var shake := sin(_dead_t * 10.0) * r * 0.03
 				return [hp + Vector2(-r * 0.3, -r * 0.2 + shake), hp + Vector2(r * 0.3, -r * 0.2 - shake)]
+			"facepalm":
+				# One hand slapped flat over his face, the other hanging
+				# limp; the head shakes under it (see _draw_person).
+				return [center + Vector2(-r * 0.6, r * 0.25), hp + Vector2(r * 0.05, r * 0.05)]
+			"weep":
+				# Face buried in both hands, shoulders heaving.
+				var sob := sin(_gesture_t(sp) * 7.0) * r * 0.03
+				return [hp + Vector2(-r * 0.2, r * 0.08 + sob), hp + Vector2(r * 0.2, r * 0.08 - sob)]
+			"stomp":
+				# Fists balled down at his sides, pumping with each stomp.
+				var pump2 := absf(sin(_gesture_t(sp) * STOMP_RATE)) * r * 0.12
+				return [center + Vector2(-r * 0.7, r * 0.2 - pump2), center + Vector2(r * 0.7, r * 0.2 - pump2)]
+			"shrug":
+				# Palms out at his sides, shoulders going up and down: "what
+				# was that?"
+				var lift := absf(sin(_gesture_t(sp) * 5.0)) * r * 0.22
+				return [center + Vector2(-r * 0.95, -r * 0.05 - lift), center + Vector2(r * 0.95, -r * 0.05 - lift)]
+			"wave_off":
+				# The incompletion signal: both hands swept back and forth
+				# in front of him, crossing in the middle.
+				var sweep := sin(_gesture_t(sp) * 11.0) * r * 0.75
+				return [center + Vector2(-sweep, -r * 0.15), center + Vector2(sweep, -r * 0.3)]
+			"pump":
+				# A fist pumped down and up beside his head, the other at his side.
+				var pump := absf(sin(_gesture_t(sp) * 8.0)) * r * 0.45
+				return [center + Vector2(-r * 0.6, r * 0.1), hp + Vector2(r * 0.6, r * 0.2 - pump)]
 		return []
 
 	if sim.phase != MatchSim.Phase.LIVE:
@@ -1881,6 +2128,23 @@ func _hand_targets(sp: SimPlayer, center: Vector2, hp: Vector2, r: float, hand_d
 			(center + Vector2(-r * 0.6, 0.0)).lerp(aim + Vector2(-r * 0.3, wave), reach),
 			(center + Vector2(r * 0.6, 0.0)).lerp(aim + Vector2(r * 0.3, -wave), reach),
 		]
+
+	# The release: his throwing hand snaps out after the ball, then drops.
+	if sim.ball_in_air and not sim.kick_play and sp == sim._last_passer and sim.ball_t < THROW_FOLLOW_TIME:
+		var aim_dir := (to_px(sim.ball_to) - to_px(sp.pos)).normalized()
+		var reach_out := 1.0 - sim.ball_t / THROW_FOLLOW_TIME
+		return [center + Vector2(-r * 0.55, r * 0.05),
+			center + aim_dir * r * (0.7 + 0.45 * reach_out) + Vector2(0.0, -r * 0.3)]
+
+	# Carrying it with a tackler closing in: a stiff arm at the nearest one,
+	# the ball tucked in on his other side.
+	if sp == sim.carrier and sp.downed <= 0.0:
+		var foe_near := _nearest_of(sim.defense if sp.is_offense else sim.offense, sp.pos, STIFF_ARM_YARDS)
+		if foe_near != null and not foe_near.engaged:
+			var arm := to_px(foe_near.pos) - center
+			arm = arm.normalized() if arm.length() > 0.01 else UP
+			var tuck_side := -1.0 if arm.x >= 0.0 else 1.0
+			return [center + Vector2(tuck_side * r * 0.3, 0.0), center + arm * r * 1.05]
 
 	# Locked up in a block: both hands out on the other man, shoving.
 	var foe: SimPlayer = _block_foe.get(sp)
@@ -1958,6 +2222,51 @@ func _draw_puddle(sp: SimPlayer, p: Vector2, r: float) -> void:
 	var tw := font.get_string_size(sp.label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	draw_string(font, p + Vector2(-tw * 0.5, float(fs) * 0.35), sp.label,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.16, 0.08, 0.7))
+
+
+## Filled and outline circles drawn from baked textures rather than
+## draw_circle/draw_arc, which tessellate fresh geometry on every call - with
+## a few per player per frame that was the single biggest cost of _draw,
+## badly so on the web build.
+const DISC_TEX_SIZE := 128
+## The rim's width as a fraction of its radius - DISC_RIM_WIDTH at the
+## minimum player size (PLAYER_R_MIN * 1.12 px).
+const RING_FRAC := DISC_RIM_WIDTH / (PLAYER_R_MIN * 1.12)
+static var _disc_tex: Texture2D
+static var _ring_tex: Texture2D
+
+
+func _draw_disc(c: Vector2, rad: float, col: Color) -> void:
+	if _disc_tex == null:
+		_disc_tex = _bake_circle(1.0)
+	draw_texture_rect(_disc_tex, Rect2(c - Vector2(rad, rad), Vector2(rad, rad) * 2.0), false, col)
+
+
+## A ring centred on radius `rad`, RING_FRAC * rad wide.
+func _draw_ring(c: Vector2, rad: float, col: Color) -> void:
+	if _ring_tex == null:
+		_ring_tex = _bake_circle(RING_FRAC / (1.0 + RING_FRAC * 0.5))
+	var outer := rad * (1.0 + RING_FRAC * 0.5)
+	draw_texture_rect(_ring_tex, Rect2(c - Vector2(outer, outer), Vector2(outer, outer) * 2.0), false, col)
+
+
+## White circle texture: a disc (`band` 1.0) or a ring `band` of the radius
+## wide at the outside edge, with a one-pixel soft edge so it scales cleanly.
+static func _bake_circle(band: float) -> Texture2D:
+	var n := DISC_TEX_SIZE
+	var img := Image.create_empty(n, n, true, Image.FORMAT_RGBA8)
+	var half := n * 0.5
+	var outer := half - 1.0
+	var inner := outer * (1.0 - band)
+	for y in n:
+		for x in n:
+			var d := Vector2(x + 0.5 - half, y + 0.5 - half).length()
+			var a := clampf(outer - d + 0.5, 0.0, 1.0)
+			if band < 1.0:
+				a = minf(a, clampf(d - inner + 0.5, 0.0, 1.0))
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
 
 
 func _capsule(a: Vector2, b: Vector2, width: float, col: Color) -> void:

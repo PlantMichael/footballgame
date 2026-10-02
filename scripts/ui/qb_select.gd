@@ -1,8 +1,7 @@
 extends Control
 
-## First screen of a new run: pick one of five hardcoded quarterbacks to
-## lead the offense. Abilities are left blank until they're designed; only
-## stats and flavor differ between them for now.
+## First screen of a new run: pick one of five hardcoded quarterbacks
+## (QBDB) to lead the offense.
 
 var _preview_rng := RandomNumberGenerator.new()
 
@@ -79,7 +78,9 @@ func _qb_card(id: int) -> Control:
 	v.add_child(ability_desc)
 
 	v.add_child(UIKit.rule())
-	v.add_child(_bowl_marks_row(id))
+	var marks := CenterContainer.new()
+	marks.add_child(_bowl_marks_row(id))
+	v.add_child(marks)
 
 	var sp := Control.new()
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -97,12 +98,16 @@ func _qb_card(id: int) -> Control:
 ## Isaac-style completion marks: one per bowl, its own logo lit up full
 ## color if this QB has already won it in a previous run (MetaState,
 ## persisted to user://progress.json), greyed out otherwise.
+const MARK_SIZE := 76
+
 func _bowl_marks_row(qb_id: int) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
+	var row := GridContainer.new()
+	row.columns = 3
+	row.add_theme_constant_override("h_separation", 2)
+	row.add_theme_constant_override("v_separation", 2)
 	for bowl_id in BowlDB.all_ids():
 		var won := MetaState.has_mark(qb_id, bowl_id)
-		var badge := UIKit.bowl_badge(bowl_id, 30, not won)
+		var badge := UIKit.bowl_badge(bowl_id, MARK_SIZE, not won, false)
 		if badge != null:
 			badge.tooltip_text = "%s%s" % [BowlDB.bowl_name(bowl_id), " - won" if won else ""]
 			row.add_child(badge)

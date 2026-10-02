@@ -5,6 +5,10 @@ extends Node
 ## BowlDB for the bowl ids and qb_select.gd for where the marks are shown.
 
 const SAVE_PATH := "user://progress.json"
+## Bumped whenever QBDB's roster changes in a way that moves qb ids around.
+## v1 -> v2: the roster was replaced; only Jett Marlowe survived, moving from
+## id 2 to id 4.
+const VERSION := 2
 
 ## qb_id (String, since JSON dictionary keys are always strings) -> {bowl_id: true}
 var marks: Dictionary = {}
@@ -39,6 +43,10 @@ func _load() -> void:
 	var parsed: Variant = JSON.parse_string(text)
 	if parsed is Dictionary:
 		marks = parsed.get("marks", {})
+		if int(parsed.get("version", 1)) < 2:
+			var jett: Dictionary = marks.get("2", {})
+			marks = {"4": jett} if not jett.is_empty() else {}
+			_save()
 
 
 func _save() -> void:
@@ -46,4 +54,4 @@ func _save() -> void:
 	if f == null:
 		push_error("MetaState: could not open %s for writing" % SAVE_PATH)
 		return
-	f.store_string(JSON.stringify({"marks": marks}))
+	f.store_string(JSON.stringify({"version": VERSION, "marks": marks}))

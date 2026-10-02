@@ -59,10 +59,12 @@ const BOWLS := {
 }
 
 ## assets/bowl.png is a hand-drawn 3x2 sheet of the 6 bowl logos, one square
-## cell each - see each entry's "logo_cell" above for which. Sliced with
-## AtlasTexture (a view onto the shared sheet, not a copy) and cached so
-## every call site sharing a bowl id shares one texture instance.
-const LOGO_SHEET := "res://assets/bowl.png"
+## cell each - see each entry's "logo_cell" above for which. The game uses
+## assets/bowl_cut.png, the same sheet with the white paper cut away
+## (assets/_cut_bowls.py), so a logo can sit straight on any background.
+## Sliced with AtlasTexture (a view onto the shared sheet, not a copy) and
+## cached so every call site sharing a bowl id shares one texture instance.
+const LOGO_SHEET := "res://assets/bowl_cut.png"
 const LOGO_CELL_PX := 512
 
 static var _logo_sheet: Texture2D

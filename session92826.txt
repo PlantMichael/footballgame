@@ -17,3 +17,18 @@ Each flex position gains +1/+1 for each other of the same position on the field 
 Has a higher chance of landing throws. 
 
 5. Jett Marlowe (exactly how he is)
+
+Part 2. 
+
+
+1. Camera should snap back to line of scrimmage after a new drive starts
+
+2. on a fourth down, display a little oval above (snap the ball) that says Kick??
+
+3. Add more animations on catch miss, like stomping, falling over, or head in hands weeping
+
+4. Ricky Dooper IV doesn't do anything when he fails his 50%. he should just be a normal lineman if this happens
+
+5. Game is too easy. Defenders should get a buff when offence does. Regardless, one all star/ cursed player and the game becomes neglible. Beezlebub just ran every single ball into the endzone and had like 300 yards at the end of every game. The defenders need to scale better with teams.
+
+6. Completion marks need to be cut out and way larger on the character sheet.

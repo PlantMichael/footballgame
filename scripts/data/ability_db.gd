@@ -176,6 +176,17 @@ extends RefCounted
 ##                            hasn't called a Hand Off or Scramble, default {}. Checked at the
 ##                            snap rather than presnap since the call can change until then.
 ##                            MatchSim._snap_gains.
+##   handoff_give_bonus()   -> Dictionary of stat deltas this player (a QB) hands to whoever
+##                            takes a handoff from him, default {}. MatchSim._do_handoff.
+##   kicker_assist()        -> Dictionary of stat deltas this player gives his team's kicker
+##                            on every kick while he's on the field, default {}.
+##                            MatchSim._kicker_stat.
+##   stacks_flex_positions() -> Array of stat keys, default []. Non-empty means every flex
+##                            gets +N to each of those stats, N being how many flexes of
+##                            his position are on the field, whenever that's 2 or more.
+##                            MatchSim._apply_flex_stacks.
+##   aim_noise_mult()       -> float, default 1.0. As a passer, multiplies the random
+##                            accuracy noise on every throw. MatchSim._throw.
 ##   cash_mult()            -> float, default 1.0. Multiplies every football-bucks award
 ##                            credited to him - his catches, broken tackles, and the TD/first
 ##                            down/big play bonuses on plays he finishes with the ball.
@@ -620,6 +631,24 @@ const ABILITIES := {
 		"desc": "The less curve on the kick, the higher his Dexterity - up to +4 for a dead-straight kick.",
 		"kick_dex": Callable(AbilityDB, "_kick_dex_straight_shooter"),
 	},
+	# --- Starting QBs (QBDB) ----------------------------------------------------
+	"fast_hands": {
+		"name": "Fast Hands",
+		"desc": "+3 Agility when he scrambles, +3 Agility to whoever he hands off to, and +2 Strength and +2 Dexterity to your kicker.",
+		"on_scramble_bonus": Callable(AbilityDB, "_on_scramble_bonus_fast_hands"),
+		"handoff_give_bonus": Callable(AbilityDB, "_handoff_give_bonus_fast_hands"),
+		"kicker_assist": Callable(AbilityDB, "_kicker_assist_fast_hands"),
+	},
+	"strength_in_numbers": {
+		"name": "Strength in Numbers",
+		"desc": "Flex players stack: with 2 or more of a position on the field, each of them gets +1 Strength and +1 Agility for every one there (3 TEs = +3/+3 each).",
+		"stacks_flex_positions": Callable(AbilityDB, "_stacks_flex_positions_strength_in_numbers"),
+	},
+	"lucky_fingers": {
+		"name": "Lucky Fingers",
+		"desc": "His throws land much closer to where he aimed them.",
+		"aim_noise_mult": Callable(AbilityDB, "_aim_noise_mult_lucky_fingers"),
+	},
 }
 
 
@@ -969,6 +998,26 @@ static func cash_mult(id: String) -> float:
 
 static func kick_dex(id: String, ctx: Dictionary) -> int:
 	return _dispatch(id, "kick_dex", [ctx], 0)
+
+
+## Stat deltas this QB gives whoever takes a handoff from him.
+static func handoff_give_bonus(id: String) -> Dictionary:
+	return _dispatch(id, "handoff_give_bonus", [], {})
+
+
+## Stat deltas this player gives his team's kicker on every kick.
+static func kicker_assist(id: String) -> Dictionary:
+	return _dispatch(id, "kicker_assist", [], {})
+
+
+## Stat keys every flex gets +1 of per same-position flex on the field.
+static func stacks_flex_positions(id: String) -> Array:
+	return _dispatch(id, "stacks_flex_positions", [], [])
+
+
+## Multiplier on a passer's random accuracy noise.
+static func aim_noise_mult(id: String) -> float:
+	return _dispatch(id, "aim_noise_mult", [], 1.0)
 
 
 # ============================================================================
@@ -1390,3 +1439,23 @@ static func _kick_dex_red_zone_yips(ctx: Dictionary) -> int:
 
 static func _kick_dex_straight_shooter(ctx: Dictionary) -> int:
 	return int(round(4.0 * (1.0 - clampf(float(ctx.get("curve", 1.0)), 0.0, 1.0))))
+
+
+static func _on_scramble_bonus_fast_hands() -> Dictionary:
+	return {"agility": 3}
+
+
+static func _handoff_give_bonus_fast_hands() -> Dictionary:
+	return {"agility": 3}
+
+
+static func _kicker_assist_fast_hands() -> Dictionary:
+	return {"strength": 2, "dexterity": 2}
+
+
+static func _stacks_flex_positions_strength_in_numbers() -> Array:
+	return ["strength", "agility"]
+
+
+static func _aim_noise_mult_lucky_fingers() -> float:
+	return 0.5

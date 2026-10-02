@@ -240,7 +240,7 @@ const ROSTER_OVERSHOOT_WEIGHT := 0.6
 
 func current_match_quality() -> float:
 	var base := float(current_opponent().get("quality", 3.0)) + float(matches_played) * MATCH_QUALITY_STEP
-	return base + _difficulty_overshoot() * ROSTER_OVERSHOOT_WEIGHT
+	return base + _difficulty_overshoot() * ROSTER_OVERSHOOT_WEIGHT + star_excess() * STAR_WEIGHT
 
 
 ## Average PlayerData.overall() of the 11 starters, on the same rough 1-15
@@ -259,13 +259,55 @@ func roster_overall() -> float:
 	return float(total) / float(counted)
 
 
+## A starter's rating for difficulty purposes: overall plus a bump for rarity
+## tier - an All-Star's or cursed player's ability is worth far more than his
+## raw stat line.
+const TIER_POWER := {0: 0.0, 1: 0.0, 2: 0.5, 3: 1.5, 4: 3.0, 5: 3.0}
+
+func _starter_ratings() -> Array[float]:
+	var ratings: Array[float] = []
+	for slot in SLOT_ORDER:
+		var p := player_at(slot)
+		if p != null:
+			ratings.append(float(p.overall()) + float(TIER_POWER.get(p.quality, 0.0)))
+	return ratings
+
+
+## The lineup's average rating (see _starter_ratings).
+func roster_power() -> float:
+	var ratings := _starter_ratings()
+	if ratings.is_empty():
+		return 0.0
+	var total := 0.0
+	for r in ratings:
+		total += r
+	return total / float(ratings.size())
+
+
+## How far the lineup's standouts tower over the rest of it: every starter's
+## rating past the lineup average by more than STAR_SLACK (the spread any
+## ordinary roster has), summed. Added to the defense's quality on top of
+## everything else - never netted against a roster that's behind the round's
+## ramp - so one superstar among rookies makes every match of the run
+## tougher, the bowl included, instead of only the early rounds.
+const STAR_WEIGHT := 0.18
+const STAR_SLACK := 1.5
+
+func star_excess() -> float:
+	var avg := roster_power()
+	var excess := 0.0
+	for r in _starter_ratings():
+		excess += maxf(0.0, r - avg - STAR_SLACK)
+	return excess
+
+
 ## How far the roster's actual strength has pulled ahead of the round's own
 ## base quality ramp - 0 for a roster that's still on curve (rookies, or
 ## just keeping pace round to round), positive once a signing outpaces it.
 ## Drives both current_match_quality and aura_count.
 func _difficulty_overshoot() -> float:
 	var base := float(current_opponent().get("quality", ROUND_ONE_QUALITY))
-	return maxf(0.0, roster_overall() - base)
+	return maxf(0.0, roster_power() - base)
 
 
 func is_run_over() -> bool:
@@ -290,7 +332,7 @@ func aura_count(rng_src: RandomNumberGenerator) -> int:
 		return 1 if rng_src.randf() < DEV_AURA_CHANCE else 0
 	var chance := clampf(
 		AURA_CHANCE_BASE + float(matches_played) * AURA_CHANCE_PER_MATCH
-			+ _difficulty_overshoot() * AURA_OVERSHOOT_PER_POINT,
+			+ (_difficulty_overshoot() + star_excess() * STAR_WEIGHT) * AURA_OVERSHOOT_PER_POINT,
 		0.0, AURA_CHANCE_MAX)
 	var count := 0
 	for i in MAX_AURAS:

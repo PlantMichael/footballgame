@@ -107,6 +107,7 @@ func _start_match() -> void:
 	if is_bowl:
 		# The bowl's special player, if it has one (BowlDB.GIMMICKS).
 		BowlDB.place_gimmick_player(defense, String(opp.get("bowl_id", GameState.chosen_bowl)))
+	var shutdown := Generator.add_shutdown_defender(defense, GameState.starters(), quality)
 	sim = MatchSim.new()
 	sim.setup(
 		GameState.starters(),
@@ -119,6 +120,8 @@ func _start_match() -> void:
 	sim.set_kicker(GameState.kicker())
 	sim.set_weather(GameState.next_weather)
 	sim.start_match()
+	if shutdown != null:
+		sim.log_line("%s brought #%d %s to shadow your best playmaker." % [sim.opponent_name, shutdown.number, shutdown.pname])
 	bucks_earned = 0
 	_apply_call()
 
@@ -554,9 +557,40 @@ func _playcall_bar() -> Control:
 	snap.pressed.connect(_on_snap)
 	var snap_box := _wrap_snap(snap)
 	snap_box.add_theme_constant_override("separation", 8)
+	if sim.down == 4 and sim.kicker_sp != null:
+		var hint := _kick_hint()
+		snap_box.add_child(hint)
+		snap_box.move_child(hint, 0)
 	snap_box.add_child(_kick_button())
 	body.add_child(snap_box)
 	return v
+
+
+## A little oval nudge over the snap button on 4th down - the same field goal
+## call as the KICK button below, just hard to miss when it matters.
+func _kick_hint() -> Control:
+	var b := UIKit.button("Kick??", 14)
+	for state in ["normal", "hover", "pressed"]:
+		var sb: StyleBoxFlat = b.get_theme_stylebox(state).duplicate()
+		sb.set_corner_radius_all(16)
+		sb.content_margin_left = 18
+		sb.content_margin_right = 18
+		sb.content_margin_top = 3
+		sb.content_margin_bottom = 3
+		if state == "normal":
+			sb.border_color = UIKit.ACCENT
+		b.add_theme_stylebox_override(state, sb)
+	b.add_theme_color_override("font_color", UIKit.ACCENT)
+	b.tooltip_text = "It's 4th down - bring on %s for a %d-yard field goal try?" % [
+		sim.kicker_sp.data.pname, int(round(sim.kick_distance()))]
+	b.pressed.connect(func():
+		_dismiss_overlays()
+		field.cancel_stroke()
+		sim.set_kick_mode(true)
+		_refresh_bar())
+	var center := CenterContainer.new()
+	center.add_child(b)
+	return center
 
 
 ## Switches the call to a field goal try - available on any down, as long
@@ -1157,7 +1191,7 @@ func _drive_over_bar() -> Control:
 			sim.start_overtime()
 			sim.begin_drive()
 			_apply_call()
-			field.snap_camera()
+			field.snap_camera(true)
 			_refresh_bar())
 		v.add_child(_centered(ot))
 	else:
@@ -1169,7 +1203,7 @@ func _drive_over_bar() -> Control:
 			_dismiss_overlays()
 			sim.begin_drive()
 			_apply_call()
-			field.snap_camera()
+			field.snap_camera(true)
 			_refresh_bar())
 		v.add_child(_centered(next))
 	return v
@@ -1231,7 +1265,7 @@ func _show_upgrade_choices() -> void:
 	upgrade_panel.add_child(v)
 
 	v.add_child(UIKit.label("TOUCHDOWN! PICK A BOOST", 18, UIKit.ACCENT))
-	v.add_child(UIKit.label("Lasts for the rest of this game only.", 12, UIKit.MUTED))
+	v.add_child(UIKit.label("Lasts for the rest of this game only. The defense answers with +1 in the same stat.", 12, UIKit.MUTED))
 	v.add_child(UIKit.rule())
 
 	for entry in pending_upgrades:
@@ -1277,6 +1311,7 @@ func _upgrade_choice_row(entry: Dictionary) -> Control:
 
 func _apply_upgrade(pd: PlayerData, entry: Dictionary) -> void:
 	sim.add_match_bonus(pd, String(entry.get("stat", "")), int(entry.get("amount", 0)))
+	sim.adjust_defense(String(entry.get("stat", "")))
 	pending_upgrades = []
 	upgrade_panel.visible = false
 	upgrade_panel.custom_minimum_size = Vector2(460, 0)

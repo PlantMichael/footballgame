@@ -171,8 +171,9 @@ var tackler: SimPlayer = null
 var interceptor: SimPlayer = null
 
 ## Box-score stat line per PlayerData for THIS match - see stat_line_for and
-## _credit_game_stats. Purely presentational (the match screen's Team Stats
-## panel); nothing in the sim itself reads it back.
+## _credit_game_stats. Mostly presentational (the match screen's Team Stats
+## panel); the only thing in the sim that reads it back is the defense
+## deciding who to key on (_hot_hand).
 var game_stats: Dictionary = {}
 
 ## Play-scoped bookkeeping for _credit_game_stats, reset in _begin_call.
@@ -201,6 +202,26 @@ var priority_targets: Dictionary = {}   # slot String -> true
 ## bench and back in. Lives only on this MatchSim - a fresh match starts
 ## with none, so these never carry over between games.
 var match_bonuses: Dictionary = {}   # PlayerData -> {stat String -> int amount}
+
+## The defense's answer to the offense's per-game boosts: whenever the coach
+## takes one (match.gd's pick after a touchdown), every defender gets
+## DEFENSE_ADJUST_PER_BOOST in that same stat for the rest of the match, up to
+## DEFENSE_ADJUST_MAX per stat. stat String -> int. See adjust_defense,
+## _apply_modifiers.
+const DEFENSE_ADJUST_PER_BOOST := 1
+const DEFENSE_ADJUST_MAX := 3
+var defense_adjust: Dictionary = {}
+
+## Keying on the hot hand: once a flex player has this many rushing plus
+## receiving yards in a match, the defense puts its best cover man on him and
+## has a linebacker shadow him as well - see _key_on_hot_hand. Stops one
+## superstar from simply running every play into the end zone; the trade-off
+## is a teammate left in single or no coverage.
+const HOT_HAND_YARDS := 60.0
+## Extra catch-chance penalty on a throw to the keyed player with a defender
+## right on him, fading to nothing 3 yards out. See _resolve_catch.
+const KEYED_CATCH_PENALTY := 0.35
+var keyed: PlayerData = null
 
 var pursuit_triggered: bool = false
 var handoff_done: bool = false
@@ -367,6 +388,18 @@ func match_bonus_for(pd: PlayerData) -> Dictionary:
 	return match_bonuses.get(pd, {})
 
 
+## The defense matching a boost the offense just took in `stat` - see
+## defense_adjust. Returns how much it actually went up (0 once capped).
+func adjust_defense(stat: String) -> int:
+	var cur := int(defense_adjust.get(stat, 0))
+	var gain := mini(DEFENSE_ADJUST_PER_BOOST, DEFENSE_ADJUST_MAX - cur)
+	if gain <= 0:
+		return 0
+	defense_adjust[stat] = cur + gain
+	log_line("%s's defense adjusts: +%d %s." % [opponent_name, gain, stat.capitalize()])
+	return gain
+
+
 # --- Box score ----------------------------------------------------------
 
 ## This match's counting stats for `pd` - see the field comment on
@@ -437,6 +470,8 @@ func start_match() -> void:
 	score_them = 0
 	in_overtime = false
 	regulation_drives = 0
+	defense_adjust = {}
+	keyed = null
 	begin_drive()
 
 
@@ -746,6 +781,9 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
 	for key in AbilityDB.snap_bonus(sp.ability(), pd, ctx):
 		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(sp.ability(), pd, ctx)[key])
+	if not sp.is_offense:
+		for key in defense_adjust:
+			base[key] = int(base[key]) + int(defense_adjust[key])
 	_apply_weather(sp, base)
 	var agi_cap := AbilityDB.speed_cap(sp.ability())
 	if agi_cap < 99:
@@ -938,6 +976,7 @@ func _align_offense() -> void:
 		_out_of_position_penalty(offense_slot("F%d" % i), str(slot_pos[i]))
 
 	_apply_team_buffs()
+	_apply_flex_stacks()
 	_apply_alignment_buffs()
 	_apply_tier_buffs()
 	_apply_stat_shield()
@@ -1040,6 +1079,32 @@ func _apply_team_buffs() -> void:
 			other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
 
 
+## "Strength in Numbers" (AbilityDB.stacks_flex_positions): with its holder
+## on the field, every flex whose position has 2+ flexes gets +N to the listed
+## stats, N being that count. A multi-position flex uses his biggest group.
+func _apply_flex_stacks() -> void:
+	var stats: Array = []
+	for sp in offense:
+		stats = AbilityDB.stacks_flex_positions(sp.ability())
+		if not stats.is_empty():
+			break
+	if stats.is_empty():
+		return
+	var counts := {}
+	var flexes := flex_players()
+	for f in flexes:
+		for pos in _effective_positions(f.data):
+			counts[pos] = int(counts.get(pos, 0)) + 1
+	for f in flexes:
+		var n := 0
+		for pos in _effective_positions(f.data):
+			n = maxi(n, int(counts.get(pos, 0)))
+		if n < 2:
+			continue
+		for stat in stats:
+			f.eff[stat] = clampi(f.stat(stat) + n, 1, 15)
+
+
 func _align_defense() -> void:
 	var cy := FIELD_W * 0.5
 	var ctx := {"down": down, "to_go": to_go, "yards_to_endzone": yards_to_endzone()}
@@ -1131,11 +1196,69 @@ func _align_defense() -> void:
 	# Linebackers only crash downhill once _trigger_pursuit fires after the
 	# handoff, and their reaction time is set by Intelligence.
 
+	_key_on_hot_hand(backs, lbs, blitz)
 	_apply_distraction()
 	_apply_taunt()
 	_apply_snap_push()
 	_apply_curse()
 	_apply_chain()
+
+
+## The flex player with the most rushing plus receiving yards this match, if
+## he's past HOT_HAND_YARDS and on the field - or null.
+func _hot_hand() -> SimPlayer:
+	var best: SimPlayer = null
+	var best_yards := HOT_HAND_YARDS
+	for f in flex_players():
+		if f.clone_of != null or AbilityDB.evades_man_coverage(f.ability()):
+			continue
+		var line := stat_line_for(f.data)
+		var yards := float(line.get("rec_yards", 0.0)) + float(line.get("rush_yards", 0.0))
+		if yards >= best_yards:
+			best_yards = yards
+			best = f
+	return best
+
+
+## Double-teams the hot hand (see HOT_HAND_YARDS): the defensive back with the
+## best Agility + Intelligence takes him man-to-man - swapping assignments
+## with whoever had him, so the rest of the coverage stays intact - and the
+## middle linebacker (unless he's blitzing) shadows him too, leaving his own
+## man or zone open. Whoever else is out there gets the easier look.
+func _key_on_hot_hand(backs: Array[SimPlayer], lbs: Array[SimPlayer], blitz: bool) -> void:
+	var hot := _hot_hand()
+	if hot == null:
+		return
+	if keyed != hot.data:
+		keyed = hot.data
+		_grant_event(hot, "DOUBLE TEAMED")
+		log_line("%s's defense keys on %s." % [opponent_name, hot.data.pname])
+
+	var cover: SimPlayer = backs[0]
+	for d in backs:
+		if d.stat("agility") + d.stat("intelligence") > cover.stat("agility") + cover.stat("intelligence"):
+			cover = d
+	var had: SimPlayer = null
+	for d in defense:
+		if d.role == SimPlayer.Role.MAN and d.mark == hot:
+			had = d
+			break
+	if had != cover:
+		if had != null:
+			# Trade jobs: the old man-defender picks up the cover man's assignment.
+			had.role = cover.role
+			had.mark = cover.mark
+			had.zone_point = cover.zone_point
+			had.target_pos = cover.target_pos
+		cover.role = SimPlayer.Role.MAN
+		cover.mark = hot
+		cover.target_pos = Vector2(hot.target_pos.x + rng.randf_range(5.0, 7.0),
+			hot.target_pos.y + rng.randf_range(-1.0, 1.0))
+
+	var spy: SimPlayer = lbs[1]
+	if not blitz and spy != cover and spy != had:
+		spy.role = SimPlayer.Role.MAN
+		spy.mark = hot
 
 
 ## "Dark Chains": the 2 defenders nearest the holder's alignment spot are
@@ -1962,6 +2085,9 @@ func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 	var handoff_bonus := AbilityDB.on_handoff_bonus(rb.ability())
 	for stat in handoff_bonus:
 		_gain_stat(rb, stat, int(handoff_bonus[stat]))
+	var given := AbilityDB.handoff_give_bonus(qb.ability())
+	for stat in given:
+		_gain_stat(rb, stat, int(given[stat]))
 	_trigger_pursuit()
 	_apply_misdirection(rb)
 	_block_for_handoff(rb)
@@ -2520,6 +2646,7 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	if pressure != null and pressure.pos.distance_to(qb.pos) < 3.5:
 		acc += 0.7
 	acc *= lerpf(1.35, 1.0, clampf(qb.energy, 0.0, 1.0))
+	acc *= AbilityDB.aim_noise_mult(qb.ability())
 	if AbilityDB.perfect_aim(qb.ability()):
 		acc = 0.0
 	aim += Vector2(rng.randfn(0.0, acc), rng.randfn(0.0, acc))
@@ -2855,6 +2982,12 @@ func _resolve_catch() -> void:
 	# design contract, and heavy coverage penalties on top of it made every
 	# covered pass a drop regardless of how the curve was tuned.
 	p -= 0.11 * clampf(1.0 - def_dist / 2.6, 0.0, 1.0)
+	# Double-teamed (see _key_on_hot_hand): with the bracket on him, every
+	# throw his way is a fight for the ball. This is the part of keying on
+	# him that actually bites - the small general penalty above is there so
+	# ordinary coverage doesn't turn every pass into a drop.
+	if keyed != null and rec.data == keyed:
+		p -= KEYED_CATCH_PENALTY * clampf(1.0 - def_dist / 3.0, 0.0, 1.0)
 	p -= clampf((rec_dist - 1.8) * 0.07, 0.0, 0.11)
 	# Butter Fingers' Dexterity penalty, same 0.015-per-point coefficient
 	# catch_chance_base uses internally for Dexterity.
@@ -2908,6 +3041,7 @@ func _resolve_catch() -> void:
 		_grant_event(rec, "DROP")
 		_end_play({
 			"kind": "incomplete",
+			"drop": true,
 			"yards": 0.0,
 			"text": String(DROP_LINES.pick_random()) % rec.data.pname,
 		})
@@ -3478,7 +3612,18 @@ func kick_curve(line: PackedVector2Array) -> float:
 func _kicker_stat(key: String) -> int:
 	var base := kicker_sp.data.stat(key)
 	var mods := ItemDB.total_stat_mods(kicker_sp.data.items)
-	return clampi(base + int(mods.get(key, 0)), 1, 15)
+	return clampi(base + int(mods.get(key, 0)) + int(_kicker_assist().get(key, 0)), 1, 15)
+
+
+## Stat deltas the kicker gets from teammates' abilities (AbilityDB.
+## kicker_assist, e.g. Francis Fasthands'), summed across the offense.
+func _kicker_assist() -> Dictionary:
+	var total := {}
+	for sp in offense:
+		var assist := AbilityDB.kicker_assist(sp.ability())
+		for stat in assist:
+			total[stat] = int(total.get(stat, 0)) + int(assist[stat])
+	return total
 
 
 ## The kicker's Dexterity for this kick, after his ability. Pops the ability's
@@ -3524,6 +3669,9 @@ func _launch_kick() -> void:
 		length += line[i - 1].distance_to(line[i])
 	length = maxf(length, 1.0)
 	var dex := _kick_dex(line, true)
+	var assist := _kicker_assist()
+	for stat in assist:
+		_grant_stat_gain(kicker_sp, stat, int(assist[stat]))
 	var dir := (line[line.size() - 1] - line[0]).normalized()
 	var side := Vector2(-dir.y, dir.x)
 	_kick = {

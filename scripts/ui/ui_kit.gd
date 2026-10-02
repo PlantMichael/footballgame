@@ -257,13 +257,20 @@ static func player_portrait(p: PlayerData, size: int = 56) -> Control:
 ## cutouts, so this leans into that as a deliberate patch/badge look
 ## instead of fighting it. `dim` greys out an unearned bowl - see
 ## qb_select.gd's completion marks.
-static func bowl_badge(bowl_id: String, size: int = 64, dim: bool = false) -> Control:
+## `boxed` sits the logo on a white rounded tile; without it the cut-out logo
+## is drawn straight onto whatever's behind it. `dim` greys it out (a bowl
+## not yet won).
+static func bowl_badge(bowl_id: String, size: int = 64, dim: bool = false, boxed: bool = true) -> Control:
 	var tex := BowlDB.logo(bowl_id)
 	if tex == null:
 		return null
-	var box := Panel.new()
+	var box: Control
+	if boxed:
+		box = Panel.new()
+		box.add_theme_stylebox_override("panel", stylebox(Color.WHITE, 8, 1, LINE))
+	else:
+		box = Control.new()
 	box.custom_minimum_size = Vector2(size, size)
-	box.add_theme_stylebox_override("panel", stylebox(Color.WHITE, 8, 1, LINE))
 	box.tooltip_text = BowlDB.bowl_name(bowl_id)
 	var t := TextureRect.new()
 	t.texture = tex
@@ -271,12 +278,13 @@ static func bowl_badge(bowl_id: String, size: int = 64, dim: bool = false) -> Co
 	t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	t.set_anchors_preset(Control.PRESET_FULL_RECT)
-	t.offset_left = 3
-	t.offset_top = 3
-	t.offset_right = -3
-	t.offset_bottom = -3
+	var pad := 3 if boxed else 0
+	t.offset_left = pad
+	t.offset_top = pad
+	t.offset_right = -pad
+	t.offset_bottom = -pad
 	if dim:
-		t.modulate = Color(0.55, 0.55, 0.55, 0.6)
+		t.modulate = Color(0.55, 0.55, 0.55, 0.6) if boxed else Color(0.3, 0.3, 0.3, 0.45)
 	box.add_child(t)
 	return box
 
