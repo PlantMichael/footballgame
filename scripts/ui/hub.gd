@@ -71,7 +71,10 @@ func _build() -> void:
 
 
 func _on_stop_clicked(row: int, col: int) -> void:
-	if not GameState.can_go_to(row, col) and not _is_current_shop(row, col):
+	# Reachable stops, the Shop you're standing in, and any locked stop - the
+	# last just to read what unlocks it.
+	var readable := GameState.can_go_to(row, col) or _is_current_shop(row, col) or GameState.stop_locked(row, col)
+	if not readable:
 		return
 	_sel = Vector2i(row, col)
 	_map.set("selected", _sel)
@@ -110,6 +113,12 @@ func _fill_detail() -> void:
 	var desc := UIKit.label(String(info.get("desc", "")), 14, UIKit.MUTED)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_detail.add_child(desc)
+	if GameState.stop_locked(_sel.x, _sel.y):
+		var how := UIKit.label("LOCKED - unlock it by completing this challenge in a match that leads here: %s." %
+			GameState.STOP_CHALLENGES[t]["text"], 14, UIKit.BAD)
+		how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_detail.add_child(how)
+		return
 	if t == GameState.STOP_LAB and GameState.bucks < Laboratory.PRICE:
 		_detail.add_child(UIKit.label("You have $%d - not enough for an Oddity yet." % GameState.bucks, 13, UIKit.BAD))
 	_spacer(_detail)
@@ -180,6 +189,10 @@ func _match_detail(node: Dictionary) -> void:
 				BowlDB.gimmick_effect(gimmick)], 13, BowlDB.GIMMICK_COLOR)
 			special.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			_detail.add_child(special)
+	for ch in GameState.challenges_for(_sel.x, _sel.y):
+		var line := UIKit.label("Challenge: %s - unlocks %s ahead." % [ch["text"], ch["name"]], 14, UIKit.GOOD)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_detail.add_child(line)
 
 	_spacer(_detail)
 	if not GameState.lineup_is_valid():

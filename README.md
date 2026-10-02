@@ -205,8 +205,16 @@ The non-match stops:
   whose choices shape the NEXT match (weather, a banged-up starter, banana
   peels on the field, a tougher defense, double touchdown bucks), queued in
   `GameState.next_match_mods` and applied in `match.gd _apply_match_mods`.
-- **The Ritual Site** - sacrifice players for a Cursed one, once per visit.
-- **The Laboratory** (`laboratory.gd`) - $500 buys a random **Oddity**
+- **The Ritual Site** and **the Laboratory** start every run **locked**
+  (padlock on the map). A match that leads to one offers a challenge
+  (`GameState.STOP_CHALLENGES`: win or lose by 10+ for the Ritual Site, one
+  player with 150+ receiving or rushing yards for the Laboratory), shown on
+  the map and live during the match; completing it unlocks that stop
+  (`complete_challenges`). Every match always has an unlocked way forward too.
+- **The Ritual Site** (`ritual_site.gd`, over `assets/ritual.png`) - one
+  "+" square per player owed, on the pentagram; click one to pick who goes in
+  it. Fill them all for a random Cursed player. Once per visit.
+- **The Laboratory** (`laboratory.gd`, over `assets/lab.png`) - $500 buys a random **Oddity**
   (`OddityPlayerDB`, tier `ShopPlayerDB.QUALITY_ODDITY`): a fixed name and
   bespoke ability, but a stat line rolled fresh on the spot - 30 points split
   at random over Strength/Agility/Dexterity/Intelligence (Sfdsvd Kytgseg gets

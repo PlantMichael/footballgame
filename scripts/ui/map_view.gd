@@ -108,6 +108,17 @@ func _draw_links() -> void:
 			draw_line(Vector2(6.0, p.y), p, Color(UIKit.TEXT, 0.5), 2.0, true)
 
 
+## A little padlock centered on `at`, `s` pixels tall-ish: shackle arc over
+## a solid body with a keyhole.
+func _draw_padlock(at: Vector2, s: float) -> void:
+	var lock_col := Color("cfd8d3")
+	draw_arc(at + Vector2(0.0, -s * 0.15), s * 0.42, PI, TAU, 12, lock_col, maxf(2.0, s * 0.18), true)
+	var body := Rect2(at + Vector2(-s * 0.6, -s * 0.15), Vector2(s * 1.2, s * 0.95))
+	draw_rect(body.grow(1.5), Color(0, 0, 0, 0.8))
+	draw_rect(body, lock_col)
+	draw_circle(at + Vector2(0.0, s * 0.28), s * 0.13, Color(0.1, 0.1, 0.1))
+
+
 func _draw_stop(r: int, c: int) -> void:
 	var node := GameState.map_node(r, c)
 	var t := String(node["type"])
@@ -145,6 +156,10 @@ func _draw_stop(r: int, c: int) -> void:
 		var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(font, p + Vector2(-w * 0.5, fs * 0.36), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(col, 1.0 if lit else 0.4))
+
+	# A Ritual Site / Laboratory still waiting on its challenge: a padlock.
+	if bool(node.get("locked", false)):
+		_draw_padlock(p + Vector2(rad * 0.72, -rad * 0.72), rad * 0.42)
 
 	# A finished match shows how it went.
 	var result := String(node.get("result", ""))

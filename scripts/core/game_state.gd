@@ -698,6 +698,18 @@ const ELITE_QUALITY_BONUS := 0.6
 const ELITE_EXTRA_AURAS := 1
 const ELITE_BONUS_MULT := 1.5
 
+## The Ritual Site and Laboratory start every run locked: they show on the
+## map, but you only get in by completing a challenge in a match that leads
+## to them (complete_challenges). One challenge per stop type:
+##   margin - win or lose by at least `value` points
+##   yards  - one player with at least `value` receiving or rushing yards
+const STOP_CHALLENGES := {
+	STOP_RITUAL: {"kind": "margin", "value": 10,
+		"text": "Win or lose by 10 or more points"},
+	STOP_LAB: {"kind": "yards", "value": 150,
+		"text": "Get one player to 150+ receiving or rushing yards"},
+}
+
 ## Rows of stop Dictionaries: type, row, col, y (0-1 spread within the row,
 ## for drawing), next (col indices in the row after), done, result,
 ## opponent (match/elite/bowl), bowl_id (bowl), event (mystery), used
@@ -749,7 +761,60 @@ func reachable() -> Array[Vector2i]:
 			out.append(Vector2i(0, c))
 		return out
 	for c in current_node().get("next", []):
-		out.append(Vector2i(map_row + 1, int(c)))
+		if not stop_locked(map_row + 1, int(c)):
+			out.append(Vector2i(map_row + 1, int(c)))
+	return out
+
+
+## A Ritual Site or Laboratory nobody has unlocked yet (see STOP_CHALLENGES).
+func stop_locked(row: int, col: int) -> bool:
+	return bool(map_node(row, col).get("locked", false))
+
+
+## The challenges a match stop offers: one per still-locked stop it leads to,
+## as [{"text", "stop" (its type), "name"}]. For the map screen and the match.
+func challenges_for(row: int, col: int) -> Array:
+	var out: Array = []
+	var node := map_node(row, col)
+	for c in node.get("next", []):
+		var to := map_node(row + 1, int(c))
+		if bool(to.get("locked", false)):
+			var t := String(to["type"])
+			out.append({"text": String(STOP_CHALLENGES[t]["text"]), "stop": t, "name": stop_name(t)})
+	return out
+
+
+func stop_name(t: String) -> String:
+	return {STOP_RITUAL: "the Ritual Site", STOP_LAB: "the Laboratory"}.get(t, t)
+
+
+## Whether a finished match met challenge `t`'s goal. `stats` is
+## {"margin": points either way, "best_yards": one player's best of
+## receiving or rushing yards}.
+func challenge_met(t: String, stats: Dictionary) -> bool:
+	var ch: Dictionary = STOP_CHALLENGES.get(t, {})
+	match String(ch.get("kind", "")):
+		"margin":
+			return int(stats.get("margin", 0)) >= int(ch["value"])
+		"yards":
+			return float(stats.get("best_yards", 0.0)) >= float(ch["value"])
+	return false
+
+
+## Call after finish_match: checks the match just played (the stop you're now
+## on) against the challenges on the stops ahead, and unlocks the ones met.
+## Returns [{"name", "done"}] for every challenge that was on offer.
+func complete_challenges(stats: Dictionary) -> Array:
+	var out: Array = []
+	for c in current_node().get("next", []):
+		var to := map_node(map_row + 1, int(c))
+		if not bool(to.get("locked", false)):
+			continue
+		var t := String(to["type"])
+		var done := challenge_met(t, stats)
+		if done:
+			to["locked"] = false
+		out.append({"name": stop_name(t), "done": done})
 	return out
 
 
@@ -892,6 +957,8 @@ func _build_map() -> void:
 				node["bowl_id"] = _bowl_order()[c]
 			if is_match_stop(t):
 				node["opponent"] = _make_opponent(r, node)
+			if STOP_CHALLENGES.has(t):
+				node["locked"] = true
 			if t == STOP_MYSTERY:
 				var ev := EventDB.random_id(rng, events_used)
 				node["event"] = ev
@@ -1043,6 +1110,24 @@ func _link_rows(r: int) -> void:
 			if nearest >= 0:
 				a[i]["next"].append(nearest)
 				a[i]["next"].sort()
+	# A match whose only ways forward are locked stops (STOP_CHALLENGES) would
+	# strand a coach who fails the challenge - always add an open way on.
+	for i in n:
+		var open := false
+		for k in a[i]["next"]:
+			if not STOP_CHALLENGES.has(String(b[int(k)]["type"])):
+				open = true
+		if open:
+			continue
+		var nearest := -1
+		for j in m:
+			if STOP_CHALLENGES.has(String(b[j]["type"])):
+				continue
+			if nearest < 0 or absf(float(b[j]["y"]) - float(a[i]["y"])) < absf(float(b[nearest]["y"]) - float(a[i]["y"])):
+				nearest = j
+		if nearest >= 0:
+			a[i]["next"].append(nearest)
+			a[i]["next"].sort()
 
 
 # --- Shop stock -------------------------------------------------------------

@@ -50,6 +50,8 @@ var log_label: Label
 var scout_panel: PanelContainer
 var scout_text: Label
 var _scout_shown: String = ""
+var challenge_label: Label
+var _challenges: Array = []
 var cam_btn: Button
 var speed_btns: Dictionary = {}   # float speed -> Button, see _build_speed_buttons
 
@@ -169,6 +171,7 @@ func _build_layout() -> void:
 	_build_top_bar()
 	_build_log()
 	_build_scout_panel()
+	_build_challenge_label()
 	_build_play_bar()
 	_build_float_panel()
 	_build_side_panel()
@@ -384,6 +387,7 @@ func _process(delta: float) -> void:
 	_update_top_bar()
 	_update_log()
 	_update_scout_panel()
+	_update_challenge_label()
 
 	if _match_ended:
 		_tick_end_countdown(delta)
@@ -492,6 +496,46 @@ func _build_scout_panel() -> void:
 	scout_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	scout_text.custom_minimum_size = Vector2(306, 0)
 	v.add_child(scout_text)
+
+
+## Top-center: the challenge(s) this match offers for the locked stops ahead
+## on the map (GameState.challenges_for), with live progress. Hidden when
+## there are none.
+func _build_challenge_label() -> void:
+	_challenges = [] if GameState.dev_mode else GameState.challenges_for(GameState.target_row, GameState.target_col)
+	challenge_label = UIKit.label("", 14, UIKit.GOOD)
+	challenge_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	challenge_label.offset_top = TOP_BAR_H + 8
+	challenge_label.offset_left = -330
+	challenge_label.offset_right = 330
+	challenge_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	challenge_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	challenge_label.add_theme_constant_override("outline_size", 4)
+	challenge_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	challenge_label.visible = not _challenges.is_empty()
+	add_child(challenge_label)
+	for ch in _challenges:
+		sim.log_line("Challenge: %s to unlock %s." % [ch["text"], ch["name"]])
+
+
+func _update_challenge_label() -> void:
+	if _challenges.is_empty():
+		return
+	var stats := _challenge_stats()
+	var lines: Array = []
+	for ch in _challenges:
+		var t := String(ch["stop"])
+		var mark := "DONE"
+		if not GameState.challenge_met(t, stats):
+			if String(GameState.STOP_CHALLENGES[t]["kind"]) == "margin":
+				mark = "margin now %d" % int(stats["margin"])
+			else:
+				mark = "best so far %d" % int(stats["best_yards"])
+		lines.append("CHALLENGE: %s to unlock %s  (%s)" % [ch["text"], ch["name"], mark])
+	var text := "\n".join(lines)
+	if challenge_label.text != text:
+		challenge_label.text = text
+	challenge_label.visible = not _match_ended
 
 
 ## Kept in sync every frame, but only rebuilt when the reads actually change.
@@ -1570,7 +1614,24 @@ func _finish_match() -> Array:
 		var item := GameState.grant_elite_item()
 		if item != "":
 			unlocks.append({"text": "Elite win! Free item: %s" % ItemDB.item_name(item), "color": UIKit.ACCENT})
+	# Challenges for the locked stops ahead (GameState.STOP_CHALLENGES).
+	if not _run_just_ended():
+		for ch in GameState.complete_challenges(_challenge_stats()):
+			if bool(ch["done"]):
+				unlocks.append({"text": "Challenge complete - %s is open." % ch["name"], "color": UIKit.GOOD})
+			else:
+				unlocks.append({"text": "Challenge failed - %s stays locked." % ch["name"], "color": UIKit.MUTED})
 	return unlocks
+
+
+## What the stop challenges are judged on: the final margin either way, and
+## the best receiving or rushing yardage by any one player.
+func _challenge_stats() -> Dictionary:
+	var best := 0.0
+	for pd in sim.game_stats:
+		var line: Dictionary = sim.game_stats[pd]
+		best = maxf(best, maxf(float(line.get("rec_yards", 0.0)), float(line.get("rush_yards", 0.0))))
+	return {"margin": absi(sim.score_us - sim.score_them), "best_yards": best}
 
 
 func _final_bar() -> Control:

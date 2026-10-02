@@ -343,6 +343,32 @@ static func scroll(child: Control) -> ScrollContainer:
 	return s
 
 
+## A full-screen illustrated background (e.g. assets/ritual.png), scaled to
+## cover the window, with a black `shade` over it so text stays readable.
+## Call it in _ready right after background() and before building anything
+## else - it adds to the end of the child list, so it lands above the plain
+## background (still there as a fallback) and under everything built after.
+## Both nodes carry the "backdrop" meta: screens that rebuild by clearing
+## their children should skip anything with it.
+static func backdrop(root: Control, path: String, shade: float = 0.3) -> void:
+	var tex := load(path) as Texture2D
+	if tex != null:
+		var art := TextureRect.new()
+		art.texture = tex
+		art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		art.set_anchors_preset(Control.PRESET_FULL_RECT)
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		art.set_meta("backdrop", true)
+		root.add_child(art)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, shade)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.set_meta("backdrop", true)
+	root.add_child(dim)
+
+
 static func background(root: Control) -> void:
 	var cr := ColorRect.new()
 	cr.color = BG

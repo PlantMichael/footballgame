@@ -8,18 +8,21 @@ extends Control
 ## visit.
 
 const PRICE := 500
+const BACKGROUND := "res://assets/lab.png"
 
 var _revealed: PlayerData = null
 
 
 func _ready() -> void:
 	UIKit.background(self)
+	get_child(0).set_meta("backdrop", true)
+	UIKit.backdrop(self, BACKGROUND, 0.15)
 	_build()
 
 
 func _build() -> void:
 	for c in get_children():
-		if c is ColorRect:
+		if c.has_meta("backdrop"):
 			continue
 		c.queue_free()
 
@@ -29,9 +32,27 @@ func _build() -> void:
 		margin.add_theme_constant_override("margin_" + side, 28)
 	add_child(margin)
 
+	# Everything sits on a dark glass panel down the left side so it reads
+	# over the lab art, leaving the big tanks on the right in view.
+	var split := HBoxContainer.new()
+	margin.add_child(split)
+	var glass := PanelContainer.new()
+	glass.custom_minimum_size = Vector2(760, 0)
+	var sb := UIKit.stylebox(Color(0.02, 0.05, 0.08, 0.82), 12, 2, Color(OddityPlayerDB.COLOR, 0.55))
+	sb.content_margin_left = 22
+	sb.content_margin_right = 22
+	sb.content_margin_top = 16
+	sb.content_margin_bottom = 16
+	glass.add_theme_stylebox_override("panel", sb)
+	split.add_child(glass)
+	var art_space := Control.new()
+	art_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art_space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	split.add_child(art_space)
+
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 14)
-	margin.add_child(root)
+	glass.add_child(root)
 
 	if _revealed != null:
 		_build_reveal(root)
@@ -71,7 +92,7 @@ func _build() -> void:
 	buy.pressed.connect(_buy)
 	footer.add_child(buy)
 
-	var back := UIKit.button("  <- Back to hub  ", 15)
+	var back := UIKit.button("  <- Back to the map  ", 15)
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
 	root.add_child(back)
 
@@ -134,7 +155,7 @@ func _build_reveal(root: VBoxContainer) -> void:
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(sp)
 
-	var back := UIKit.primary_button("  Back to hub  ", 18)
+	var back := UIKit.primary_button("  Back to the map  ", 18)
 	back.custom_minimum_size = Vector2(0, 44)
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
 	root.add_child(back)
