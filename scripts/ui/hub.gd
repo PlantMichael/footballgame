@@ -1,7 +1,16 @@
 extends Control
 
-## Between-rounds hub: shows the bracket and routes to lineup, route book,
-## shop, and the next match.
+## Between matches: the run map (map_view.gd, GameState.run_map). Click a
+## stop you can reach to see what it is, then go there - kick off a match,
+## or step into a Shop, Ritual Site, Laboratory, Practice or Mystery stop.
+## The lineup and Route Book are reachable from here at any time.
+
+const MapView := preload("res://scripts/ui/map_view.gd")
+
+## The stop whose details are showing (-1, -1 for none).
+var _sel := Vector2i(-1, -1)
+var _map: Control
+var _detail: VBoxContainer
 
 
 func _ready() -> void:
@@ -24,189 +33,197 @@ func _build() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 28)
+		margin.add_theme_constant_override("margin_" + side, 24)
 	add_child(margin)
 
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 16)
+	root.add_theme_constant_override("separation", 12)
 	margin.add_child(root)
 
-	root.add_child(UIKit.header(GameState.team_name, "%s round" % GameState.round_label()))
-	root.add_child(UIKit.rule())
-
-	var body := HBoxContainer.new()
-	body.add_theme_constant_override("separation", 20)
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(body)
-
-	body.add_child(_bracket_panel())
-	body.add_child(_matchup_panel())
-
-
-func _bracket_panel() -> Control:
-	var p := UIKit.panel()
-	p.custom_minimum_size = Vector2(420, 0)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	p.add_child(v)
-
-	v.add_child(UIKit.label("THE BRACKET", 18, UIKit.ACCENT))
-	v.add_child(UIKit.rule())
-
-	for i in GameState.bracket.size():
-		var b: Dictionary = GameState.bracket[i]
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
-
-		# A round only ever counts as won once round_index has moved past it -
-		# a loss just spends a life and sends you right back at the same
-		# round, so mid-run its result field can say "L" while it's still
-		# the one you're about to try again.
-		var status := "  "
-		var col := UIKit.MUTED
-		if i < GameState.round_index:
-			status = "W "
-			col = UIKit.GOOD
-		elif i == GameState.round_index and GameState.run_active:
-			status = "> "
-			col = UIKit.ACCENT
-		elif b["result"] == "L":
-			status = "L "
-			col = UIKit.BAD
-		elif b["result"] == "T":
-			status = "T "
-			col = UIKit.MUTED
-
-		row.add_child(UIKit.label(status, 15, col))
-		var bowl_id := String(b.get("bowl_id", ""))
-		if bowl_id != "":
-			var badge := UIKit.bowl_badge(bowl_id, 22)
-			if badge != null:
-				row.add_child(badge)
-		var name_label := UIKit.label(b["round"], 15, col)
-		name_label.custom_minimum_size = Vector2(120, 0)
-		row.add_child(name_label)
-		row.add_child(UIKit.label(b["name"], 15, col if i <= GameState.round_index else UIKit.MUTED))
-		var sp := Control.new()
-		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(sp)
-		row.add_child(UIKit.label("%d drives" % b["drives"], 12, UIKit.MUTED))
-		v.add_child(row)
-
 	var lives_left := GameState.MAX_LOSSES - GameState.losses
-	v.add_child(UIKit.label("%d loss%s left before the season is over" % [
-		lives_left, "" if lives_left == 1 else "es"
-	], 13, UIKit.MUTED if lives_left > 1 else UIKit.BAD))
+	root.add_child(UIKit.header(GameState.team_name, "Next: %s   -   %d loss%s left before the season is over" % [
+		GameState.round_label(), lives_left, "" if lives_left == 1 else "es"]))
 
-	v.add_child(UIKit.vsep(10))
-	v.add_child(UIKit.rule())
-	v.add_child(UIKit.label("ROSTER", 18, UIKit.ACCENT))
+	var map_panel := UIKit.panel()
+	map_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(map_panel)
+	_map = MapView.new()
+	_map.custom_minimum_size = Vector2(0, 360)
+	_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_map.set("selected", _sel)
+	_map.connect("stop_clicked", _on_stop_clicked)
+	map_panel.add_child(_map)
 
-	var starters_count := 0
-	for slot in GameState.SLOT_ORDER:
-		if GameState.player_at(slot) != null:
-			starters_count += 1
-	v.add_child(UIKit.label("%d players signed, %d/11 starters set" % [GameState.roster.size(), starters_count], 14))
-	var drawn: int = GameState.drawn_routes.size()
-	v.add_child(UIKit.label("%d of 5 routes chalked up (the rest run free)" % drawn, 14))
-	v.add_child(UIKit.label("%d items in the bag" % GameState.inventory.size(), 14))
+	var bottom := HBoxContainer.new()
+	bottom.add_theme_constant_override("separation", 14)
+	bottom.custom_minimum_size = Vector2(0, 250)
+	root.add_child(bottom)
 
-	var sp2 := Control.new()
-	sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(sp2)
-	return p
+	var detail_panel := UIKit.panel()
+	detail_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom.add_child(detail_panel)
+	_detail = VBoxContainer.new()
+	_detail.add_theme_constant_override("separation", 8)
+	detail_panel.add_child(_detail)
+	_fill_detail()
+
+	bottom.add_child(_side_panel())
 
 
-func _matchup_panel() -> Control:
+func _on_stop_clicked(row: int, col: int) -> void:
+	if not GameState.can_go_to(row, col) and not _is_current_shop(row, col):
+		return
+	_sel = Vector2i(row, col)
+	_map.set("selected", _sel)
+	for c in _detail.get_children():
+		c.queue_free()
+	_fill_detail()
+
+
+## Standing on a Shop you haven't left yet - you can walk back in (say,
+## after a trip to the lineup screen).
+func _is_current_shop(row: int, col: int) -> bool:
+	return row == GameState.map_row and col == GameState.map_col \
+		and String(GameState.current_node().get("type", "")) == GameState.STOP_SHOP
+
+
+func _fill_detail() -> void:
+	if _sel.x < 0:
+		_detail.add_child(UIKit.label("PICK YOUR NEXT STOP", 18, UIKit.ACCENT))
+		var hint := UIKit.label("The stops you can reach next are pulsing on the map. Click one to see what's there.", 14, UIKit.MUTED)
+		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_detail.add_child(hint)
+		if _is_current_shop(GameState.map_row, GameState.map_col):
+			var back := UIKit.button("  Back into the Shop  ", 16)
+			back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/shop.tscn"))
+			_detail.add_child(back)
+		return
+
+	var node := GameState.map_node(_sel.x, _sel.y)
+	var t := String(node["type"])
+	if GameState.is_match_stop(t):
+		_match_detail(node)
+		return
+
+	var info: Dictionary = STOP_INFO.get(t, {})
+	_detail.add_child(UIKit.label(String(info.get("title", t)).to_upper(), 22, info.get("color", UIKit.ACCENT)))
+	var desc := UIKit.label(String(info.get("desc", "")), 14, UIKit.MUTED)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail.add_child(desc)
+	if t == GameState.STOP_LAB and GameState.bucks < Laboratory.PRICE:
+		_detail.add_child(UIKit.label("You have $%d - not enough for an Oddity yet." % GameState.bucks, 13, UIKit.BAD))
+	_spacer(_detail)
+	var scene := String(info.get("scene", ""))
+	if _is_current_shop(_sel.x, _sel.y):
+		var back := UIKit.primary_button("BACK INTO THE SHOP", 20)
+		back.pressed.connect(func(): get_tree().change_scene_to_file(scene))
+		_detail.add_child(back)
+		return
+	var go := UIKit.primary_button("GO THERE", 20)
+	var at := _sel
+	go.pressed.connect(func():
+		GameState.enter_stop(at.x, at.y)
+		get_tree().change_scene_to_file(scene))
+	_detail.add_child(go)
+
+
+## Each non-match stop's look and blurb on the detail panel, and its scene.
+const STOP_INFO := {
+	"shop": {"title": "Shop", "color": Color("f2c14e"), "scene": "res://scenes/shop.tscn",
+		"desc": "Spend football bucks on players and items. Every Shop on the map has its own stock - this is the only place to buy."},
+	"ritual": {"title": "Ritual Site", "color": Color("b060e0"), "scene": "res://scenes/ritual_site.tscn",
+		"desc": "Sacrifice players, permanently, for one random Cursed player. Each ritual costs one more player than the last."},
+	"lab": {"title": "Laboratory", "color": Color("39ff5a"), "scene": "res://scenes/laboratory.tscn",
+		"desc": "Pay $500 for a random Oddity: a strange player with a one-of-a-kind ability and a stat line rolled on the spot."},
+	"practice": {"title": "Practice", "color": Color("6ec46e"), "scene": "res://scenes/practice.tscn",
+		"desc": "Run a drill: pick 1 of 3 permanent stat boosts for your starters."},
+	"mystery": {"title": "Mystery", "color": Color("5aa9e6"), "scene": "res://scenes/mystery.tscn",
+		"desc": "Something's going on. Whatever it is, it'll shape your next match."},
+}
+
+
+func _match_detail(node: Dictionary) -> void:
+	var opp: Dictionary = node["opponent"]
+	var t := String(node["type"])
+	var bowl_id := String(opp.get("bowl_id", ""))
+
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	if bowl_id != "":
+		var badge := UIKit.bowl_badge(bowl_id, 56)
+		if badge != null:
+			top.add_child(badge)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	var kind := "ELITE MATCH" if t == GameState.STOP_ELITE else ("BOWL GAME" if bowl_id != "" else "MATCH")
+	var kind_col: Color = MapView.STYLE[t]["color"]
+	if t == GameState.STOP_MATCH:
+		kind_col = UIKit.ACCENT
+	col.add_child(UIKit.label(kind, 15, kind_col))
+	col.add_child(UIKit.label(String(opp["name"]), 28))
+	top.add_child(col)
+	_detail.add_child(top)
+
+	_detail.add_child(UIKit.label("%s  -  %d drives  -  difficulty %s" % [
+		opp["round"], opp["drives"], _difficulty_stars(GameState.quality_against(opp))], 14, UIKit.MUTED))
+	if t == GameState.STOP_ELITE:
+		_detail.add_child(UIKit.label("Tougher defense with an extra aura. Win it: +50% win bonus and a free item.", 13, kind_col))
+	if bowl_id != "":
+		var desc := UIKit.label("%s  Win bonus $%d." % [BowlDB.bowl_desc(bowl_id), BowlDB.win_bonus(bowl_id)], 13, UIKit.MUTED)
+		desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_detail.add_child(desc)
+		if MetaState.has_mark(GameState.qb_id, bowl_id):
+			_detail.add_child(UIKit.label("Already won with this QB", 12, UIKit.GOOD))
+		var gimmick := BowlDB.gimmick_for_bowl(bowl_id)
+		if gimmick != "":
+			var special := UIKit.label("Special player: %s - %s" % [BowlDB.gimmick_name(gimmick),
+				BowlDB.gimmick_effect(gimmick)], 13, BowlDB.GIMMICK_COLOR)
+			special.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_detail.add_child(special)
+
+	_spacer(_detail)
+	if not GameState.lineup_is_valid():
+		_detail.add_child(UIKit.label("Your lineup is incomplete.", 14, UIKit.BAD))
+	var kick := UIKit.primary_button("KICKOFF", 22)
+	kick.disabled = not GameState.lineup_is_valid()
+	var at := _sel
+	kick.pressed.connect(func():
+		GameState.select_match(at.x, at.y)
+		get_tree().change_scene_to_file("res://scenes/match.tscn"))
+	_detail.add_child(kick)
+
+
+## Right-hand column: lineup / Route Book, the next match's conditions, and
+## who's taking the field.
+func _side_panel() -> Control:
 	var p := UIKit.panel()
-	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p.custom_minimum_size = Vector2(520, 0)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
+	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
 
-	var opp := GameState.current_opponent()
-	if opp.is_empty():
-		v.add_child(UIKit.label("You won it all.", 24, UIKit.ACCENT))
-		return p
+	var nav := HBoxContainer.new()
+	nav.add_theme_constant_override("separation", 10)
+	nav.add_child(_nav_button("Lineup", "Starters and items.", "res://scenes/lineup.tscn"))
+	nav.add_child(_nav_button("Route Book", "Classic concepts to chalk.", "res://scenes/playbook.tscn"))
+	v.add_child(nav)
 
-	var bowl_id := String(opp.get("bowl_id", ""))
-	var next_up_row := HBoxContainer.new()
-	next_up_row.add_theme_constant_override("separation", 10)
-	if bowl_id != "":
-		var badge := UIKit.bowl_badge(bowl_id, 40)
-		if badge != null:
-			next_up_row.add_child(badge)
-	var next_up_col := VBoxContainer.new()
-	next_up_col.add_theme_constant_override("separation", 0)
-	next_up_col.add_child(UIKit.label("NEXT UP", 18, UIKit.ACCENT))
-	next_up_col.add_child(UIKit.label(opp["name"], 34))
-	next_up_row.add_child(next_up_col)
-	v.add_child(next_up_row)
-	v.add_child(UIKit.label("%s  -  %d drives  -  difficulty %s" % [
-		opp["round"], opp["drives"], _difficulty_stars(GameState.current_match_quality())
-	], 15, UIKit.MUTED))
-	var forecast := UIKit.label("Forecast: %s - %s" % [WeatherDB.weather_name(GameState.next_weather),
-		WeatherDB.weather_desc(GameState.next_weather)], 14,
+	var forecast := UIKit.label("Next match forecast: %s - %s" % [WeatherDB.weather_name(GameState.next_weather),
+		WeatherDB.weather_desc(GameState.next_weather)], 13,
 		UIKit.MUTED if GameState.next_weather == WeatherDB.CLEAR else UIKit.ACCENT)
 	forecast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(forecast)
-	var gimmick := BowlDB.gimmick_for_bowl(bowl_id)
-	if gimmick != "":
-		var special := UIKit.label("Special player: %s - %s" % [BowlDB.gimmick_name(gimmick),
-			BowlDB.gimmick_effect(gimmick)], 14, BowlDB.GIMMICK_COLOR)
-		special.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		v.add_child(special)
+	for note in GameState.next_match_mods.get("notes", []):
+		v.add_child(UIKit.label("Next match: %s" % note, 13, Color("5aa9e6")))
 
-	v.add_child(UIKit.vsep(6))
-	v.add_child(UIKit.rule())
-
-	var warn := ""
-	if not GameState.lineup_is_valid():
-		warn = "Your lineup is incomplete."
-	if warn != "":
-		v.add_child(UIKit.label(warn, 15, UIKit.BAD))
-
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 12)
-	v.add_child(grid)
-
-	grid.add_child(_nav_button("Lineup", "Set your 11 starters and hand out items.", "res://scenes/lineup.tscn"))
-	grid.add_child(_nav_button("Route Book", "Learn the classic concepts you can chalk up.", "res://scenes/playbook.tscn"))
-	grid.add_child(_nav_button("Shop", "Spend football bucks on players and items.", "res://scenes/shop.tscn"))
-	# Unlocked by the last match; gone once the next one kicks off.
-	if GameState.ritual_available:
-		grid.add_child(_nav_button("Ritual Site", "Sacrifice players for a Cursed one. Open until kickoff.",
-			"res://scenes/ritual_site.tscn", Color("b060e0")))
-	if GameState.lab_available:
-		grid.add_child(_nav_button("Laboratory", "$%d for a random Oddity player. Open until kickoff." % Laboratory.PRICE,
-			"res://scenes/laboratory.tscn", OddityPlayerDB.COLOR))
-
-	v.add_child(UIKit.vsep(4))
 	v.add_child(_starters_summary())
+	return p
 
+
+func _spacer(box: Container) -> void:
 	var sp := Control.new()
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(sp)
-
-	# A coach who skipped straight to the shop after winning might not have
-	# picked a branch/bowl yet - block kickoff until that's settled instead of
-	# playing the next round with an unresolved path.
-	if GameState.needs_branch_choice():
-		var to_path := UIKit.primary_button("CHOOSE YOUR PATH", 22)
-		to_path.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/path_choice.tscn"))
-		v.add_child(to_path)
-	elif GameState.needs_bowl_choice():
-		var to_bowl := UIKit.primary_button("CHOOSE YOUR BOWL", 22)
-		to_bowl.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/bowl_choice.tscn"))
-		v.add_child(to_bowl)
-	else:
-		var kick := UIKit.primary_button("KICKOFF", 22)
-		kick.disabled = not GameState.lineup_is_valid()
-		kick.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/match.tscn"))
-		v.add_child(kick)
-	return p
+	box.add_child(sp)
 
 
 ## Compact read-out of who is actually taking the field.
@@ -216,8 +233,8 @@ func _starters_summary() -> Control:
 	box.add_child(UIKit.label("TAKING THE FIELD", 14, UIKit.ACCENT))
 
 	var grid := GridContainer.new()
-	grid.columns = 4
-	grid.add_theme_constant_override("h_separation", 18)
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 2)
 
 	var total := 0
@@ -227,7 +244,7 @@ func _starters_summary() -> Control:
 		var cell := HBoxContainer.new()
 		cell.add_theme_constant_override("separation", 6)
 		var tag := UIKit.label(GameState.slot_kind(slot) if slot.begins_with("F") else GameState.slot_label(slot), 12, UIKit.MUTED)
-		tag.custom_minimum_size = Vector2(42, 0)
+		tag.custom_minimum_size = Vector2(38, 0)
 		cell.add_child(tag)
 		if p == null:
 			cell.add_child(UIKit.label("empty", 13, UIKit.BAD))
@@ -247,16 +264,16 @@ func _starters_summary() -> Control:
 
 func _nav_button(title: String, desc: String, path: String, title_color: Color = UIKit.ACCENT) -> Control:
 	var b := UIKit.button("", 16)
-	b.custom_minimum_size = Vector2(240, 80)
+	b.custom_minimum_size = Vector2(240, 64)
 	b.pressed.connect(func(): get_tree().change_scene_to_file(path))
 
 	var v := VBoxContainer.new()
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	v.offset_left = 12
-	v.offset_top = 10
+	v.offset_top = 8
 	v.offset_right = -12
-	v.add_child(UIKit.label(title, 19, title_color))
+	v.add_child(UIKit.label(title, 18, title_color))
 	var d := UIKit.label(desc, 12, UIKit.MUTED)
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(d)
@@ -264,7 +281,7 @@ func _nav_button(title: String, desc: String, path: String, title_color: Color =
 	return b
 
 
-## One star per bracket round, matching the quality ramp in GameState.
+## One star per difficulty tier, matching the quality ramp in GameState.
 func _difficulty_stars(q: float) -> String:
 	var n := clampi(int(round((q - GameState.ROUND_ONE_QUALITY) / GameState.QUALITY_PER_ROUND)) + 1, 1, 5)
 	return "*".repeat(n)

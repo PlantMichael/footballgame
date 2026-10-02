@@ -1,8 +1,8 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/path_choice.gd" id="1_scr"]
+[ext_resource type="Script" path="res://scripts/ui/practice.gd" id="1_scr"]
 
-[node name="PathChoice" type="Control"]
+[node name="Practice" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0

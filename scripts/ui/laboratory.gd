@@ -4,9 +4,7 @@ extends Control
 ## The Laboratory: the Ritual Site's alternative. Instead of sacrificing
 ## players, pay PRICE football bucks for one random Oddity (OddityPlayerDB) -
 ## a strange experimental player with a bespoke ability and a stat line
-## rolled fresh on the spot. Unlocked when one of your players goes over 200
-## receiving or rushing yards in a match (GameState.lab_available, set by
-## match.gd), and open from the hub until the next kickoff. One Oddity per
+## rolled fresh on the spot. A stop on the run map (hub.gd); one Oddity per
 ## visit.
 
 const PRICE := 500
@@ -115,8 +113,8 @@ func _buy() -> void:
 		return
 	var oddity := OddityPlayerDB.random_oddity(GameState.rng, _owned_names())
 	GameState.add_player(oddity)
-	# One Oddity per unlock - the hub's button goes away with it.
-	GameState.lab_available = false
+	# One Oddity per visit to this stop.
+	GameState.mark_stop_used()
 	_revealed = oddity
 	_build()
 

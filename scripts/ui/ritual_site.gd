@@ -1,9 +1,8 @@
 extends Control
 
 ## The Ritual Site: sacrifice roster players, permanently, for one random
-## Cursed player (CursedPlayerDB) in return. Unlocked by post_match.gd after
-## a loss, or a win by 10+ points (GameState.ritual_available, reached from
-## the hub). The cost escalates with GameState.
+## Cursed player (CursedPlayerDB) in return. A stop on the run map (hub.gd) -
+## one ritual per visit. The cost escalates with GameState.
 ## rituals_completed - 2 players the first visit, 3 the next, and so on - so
 ## it stays a real trade instead of a repeatable freebie once a run has a
 ## few cursed players already.
@@ -185,8 +184,8 @@ func _sacrifice() -> void:
 	GameState.add_player(cursed)
 	# Next visit costs one more - see GameState.rituals_completed.
 	GameState.rituals_completed += 1
-	# One ritual per unlock - the hub's button goes away with it.
-	GameState.ritual_available = false
+	# One ritual per visit to this stop.
+	GameState.mark_stop_used()
 	_selected.clear()
 	_revealed = cursed
 	_build()

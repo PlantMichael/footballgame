@@ -1,11 +1,10 @@
 class_name BowlDB
 extends RefCounted
 
-## The 6 bowls a run can end in, and the 3 branch choices that funnel toward
-## them. GameState._build_bracket appends the bowl as the run's 5th and final
-## match; needs_branch_choice/needs_bowl_choice/choose_branch/choose_bowl walk
-## the coach through picking one after rounds 0 and 1. Each starting QB earns
-## a permanent completion mark per bowl won (see MetaState), Isaac-style.
+## The 6 bowls a run can end in - the last row of the run map (GameState
+## _build_map) - grouped in BRANCHES of 2: each stop on the row before the
+## bowls leads to one branch's pair. Each starting QB earns a permanent
+## completion mark per bowl won (see MetaState), Isaac-style.
 
 const BOWLS := {
 	"superbowl": {

@@ -1,12 +1,12 @@
 # Gridiron Run
 
-A 2D football roguelike in Godot 4.3. You coach the offense of one team through a
-five-round bracket. Every match is 4-5 drives; you set the lineup, hand out items,
+A 2D football roguelike in Godot 4.7. You coach the offense of one team across a
+branching run map that ends in one of six bowls. Every match is 4-5 drives; you set the lineup, hand out items,
 and then **draw the routes** — each of your five flex players gets 30 yards of chalk,
 and you drag his route straight onto the field before the snap. The play then
 simulates in real time and the QB throws to whoever actually gets open. Football
-bucks earned on the field buy players and items between rounds. You get 3 losses across the whole run before the season is over; a loss that
-doesn't end it just sends you back to retry the same round.
+bucks earned on the field buy players and items at Shop stops on the map. You get 3 losses across the whole run before the season is over; a loss that
+doesn't end it costs you the win bonus and you move on along the map.
 
 ## Running
 
@@ -19,7 +19,7 @@ godot --path .
 ## Dev mode
 
 The main menu's "Dev mode" button (`GameState.start_dev_mode`) drops you
-straight into an endless scrimmage, skipping the QB pick, bracket, and shop
+straight into an endless scrimmage, skipping the QB pick, run map, and shop
 economy entirely: a maxed-out roster (`Generator.full_roster`, which unlike
 `starting_roster` doesn't clamp everyone into the rookie 2-4 band) plus every
 hardcoded shop player for their unique abilities, and every item,
@@ -38,7 +38,7 @@ from the lineup screen, since the in-match sub panel only swaps players.
 scripts/
   data/        player_data, ability_db, item_db, route_book, play_db, generator,
                qb_db, shop_player_db
-  core/        game_state.gd  (autoload: roster, lineup, drawn routes, bucks, bracket, shop)
+  core/        game_state.gd  (autoload: roster, lineup, drawn routes, bucks, run map, shop)
   sim/         sim_player.gd, match_sim.gd  (the play simulation)
   ui/          ui_kit, field_view, route_thumb, play_diagram, one script per screen
 scenes/        one .tscn per screen; each is a bare Control that its script fills in
@@ -171,7 +171,7 @@ backup QB stays procedural.
 **The match ends on its own.** Once the last drive (or overtime) is over,
 `match.gd` banks the result straight away (`_begin_match_end`) and puts up a
 WIN/LOSE panel with the score and a 5 second countdown, then goes back to the
-hub - or to `post_match.tscn` if the run just ended. While it counts down the
+run map (`hub.tscn`) - or to `post_match.tscn` if the run just ended. While it counts down the
 winning side jumps up and down and the losing side lies flat on the turf
 (`field_view.end_pose`); a tie just stands there.
 
@@ -185,13 +185,28 @@ slots' abilities are negated - `SimPlayer.ability_negated`; every ability
 lookup in the sim goes through `SimPlayer.ability()` for this reason).
 Weather still rolls for bowl games as usual.
 
-**Two special visits between matches**, both unlocked by the last match,
-shown as buttons on the hub and forfeited at the next kickoff
-(`GameState.ritual_available` / `lab_available`):
+**The run map** (`GameState._build_map`, drawn by `map_view.gd` on the hub).
+A run is a Slay the Spire-style map of 9 rows walked left to right, each
+stop linked to 1-2 in the next row. Rows 0/2/4/6 are matches - tiers 0-3 of
+`bracket`, sometimes an **Elite** (+0.6 quality, an extra aura, 1.5x win
+bonus, a free item) - rows 1/3/5 are other stops, row 7 is one last Shop or
+Practice per bowl pair, and row 8 is the 6 bowls (`bracket`'s 5th tier
+times the bowl's `quality_mult`). Five matches a run, like the old bracket.
+Losing a match costs a life (`GameState._apply_loss`) and the win bonus,
+but you still move on; losing the bowl ends the run.
 
-- **The Ritual Site** - win or lose by 10+. Sacrifice players for a Cursed one.
-- **The Laboratory** (`laboratory.gd`) - one of your players went over 200
-  receiving or rushing yards. $500 buys a random **Oddity**
+The non-match stops:
+
+- **Shop** - the only place to buy. Every Shop stop rolls its own stock
+  (`ensure_shop` keys it to the stop); every row has one, and the stops just
+  before the middle stop row and the pre-bowl row can always reach one.
+- **Practice** (`practice.gd`) - 1 of 3 permanent +2 stat boosts for a starter.
+- **Mystery** (`mystery.gd`, `EventDB`) - Mewgenics-style: a short event
+  whose choices shape the NEXT match (weather, a banged-up starter, banana
+  peels on the field, a tougher defense, double touchdown bucks), queued in
+  `GameState.next_match_mods` and applied in `match.gd _apply_match_mods`.
+- **The Ritual Site** - sacrifice players for a Cursed one, once per visit.
+- **The Laboratory** (`laboratory.gd`) - $500 buys a random **Oddity**
   (`OddityPlayerDB`, tier `ShopPlayerDB.QUALITY_ODDITY`): a fixed name and
   bespoke ability, but a stat line rolled fresh on the spot - 30 points split
   at random over Strength/Agility/Dexterity/Intelligence (Sfdsvd Kytgseg gets

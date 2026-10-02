@@ -78,7 +78,7 @@ var _side_panel_mode: String = ""
 var pending_upgrades: Array = []
 
 ## End of the match: the result panel counts down from END_COUNTDOWN and
-## then leaves for the team screen (hub) on its own - or the post-match
+## then leaves for the run map (hub) on its own - or the post-match
 ## screen if the run just ended. The field keeps rendering underneath, with
 ## the winners jumping and the losers flat on the turf (field_view.end_pose).
 const END_COUNTDOWN := 5.0
@@ -88,9 +88,6 @@ var _match_ended: bool = false
 var _end_countdown: float = 0.0
 var _leaving: bool = false
 
-## "The Laboratory": one of your players has to go over this many receiving
-## or rushing yards in a single match to unlock a visit.
-const LAB_YARDS := 200.0
 
 ## The scouting report's color - shared with field_view's crosshair on the
 ## keyed player.
@@ -105,14 +102,15 @@ func _ready() -> void:
 
 
 func _start_match() -> void:
-	# A Ritual Site / Laboratory visit unlocked by the last match has to be
-	# taken before this one - kicking off forfeits it.
-	GameState.ritual_available = false
-	GameState.lab_available = false
+	# Whatever the map's mystery events queued up for this match (EventDB).
+	var mods: Dictionary = {} if GameState.dev_mode else GameState.take_match_mods()
 	var opp := GameState.current_opponent()
-	var quality := GameState.current_match_quality()
-	var is_bowl := not GameState.dev_mode and GameState.round_index == GameState.bracket.size() - 1
-	var defense := Generator.make_defense(GameState.rng, quality, GameState.aura_count(GameState.rng))
+	var quality := GameState.current_match_quality() + float(mods.get("defense_quality", 0.0))
+	var is_bowl := GameState.is_bowl_match()
+	var auras := GameState.aura_count(GameState.rng)
+	if GameState.is_elite_match():
+		auras += GameState.ELITE_EXTRA_AURAS
+	var defense := Generator.make_defense(GameState.rng, quality, auras)
 	if is_bowl:
 		# The bowl's special player, if it has one (BowlDB.GIMMICKS).
 		BowlDB.place_gimmick_player(defense, String(opp.get("bowl_id", GameState.chosen_bowl)))
@@ -128,11 +126,28 @@ func _start_match() -> void:
 	sim.is_bowl_game = is_bowl
 	sim.set_kicker(GameState.kicker())
 	sim.set_weather(GameState.next_weather)
+	_apply_match_mods(mods)
 	sim.start_match()
 	if shutdown != null:
 		sim.log_line("%s brought #%d %s to shadow your best playmaker." % [sim.opponent_name, shutdown.number, shutdown.pname])
 	bucks_earned = 0
 	_apply_call()
+
+
+## Mystery-event effects on this match (see GameState.add_match_mod). The
+## weather one is already in GameState.next_weather by now.
+func _apply_match_mods(mods: Dictionary) -> void:
+	sim.field_peels = int(mods.get("peels", 0))
+	sim.td_bucks_mult = float(mods.get("td_bucks_mult", 1.0))
+	for pm in mods.get("player_mods", []):
+		sim.add_match_bonus(pm["player"], String(pm["stat"]), int(pm["amount"]))
+	var qb := GameState.player_at("QB")
+	var qb_mods: Dictionary = mods.get("qb_mods", {})
+	if qb != null:
+		for stat in qb_mods:
+			sim.add_match_bonus(qb, String(stat), int(qb_mods[stat]))
+	for note in mods.get("notes", []):
+		sim.log_line(String(note))
 
 
 # ============================================================================
@@ -1386,7 +1401,7 @@ func _match_is_over() -> bool:
 
 
 ## The final whistle: bank the result, set the players celebrating (or not),
-## and put up the result panel with its countdown back to the team screen.
+## and put up the result panel with its countdown back to the map.
 func _begin_match_end() -> void:
 	if _match_ended:
 		return
@@ -1458,7 +1473,7 @@ func _show_end_panel(won: bool, tied: bool, unlocks: Array) -> void:
 	# post-match screen that used to say this.
 	var stakes := ""
 	if tied:
-		stakes = "No loss counted - but you'll have to play this round again."
+		stakes = "No loss counted - and no win bonus either."
 	elif not won and not out_of_lives:
 		var lives_left := GameState.MAX_LOSSES - GameState.losses
 		stakes = "%d loss%s left before the season is over." % [lives_left, "" if lives_left == 1 else "es"]
@@ -1475,7 +1490,7 @@ func _show_end_panel(won: bool, tied: bool, unlocks: Array) -> void:
 
 	v.add_child(UIKit.rule())
 
-	var dest_name := "the results" if _run_just_ended() else "the team screen"
+	var dest_name := "the results" if _run_just_ended() else "the map"
 	_end_countdown_label = UIKit.label("", 15, UIKit.MUTED)
 	_end_countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_end_countdown_label.set_meta("dest", dest_name)
@@ -1504,7 +1519,7 @@ func _update_end_countdown_label() -> void:
 	if _end_countdown_label == null:
 		return
 	_end_countdown_label.text = "Back to %s in %d..." % [
-		String(_end_countdown_label.get_meta("dest", "the team screen")),
+		String(_end_countdown_label.get_meta("dest", "the map")),
 		maxi(1, int(ceil(_end_countdown)))]
 
 
@@ -1517,22 +1532,21 @@ func _leave_match() -> void:
 		return
 	_leaving = true
 	# A finished run still gets the full post-match screen (champion's bowl
-	# badge, "start a new run"); anything else goes straight back to the hub,
-	# which already routes to the path/bowl choice, the shop, and any Ritual
-	# Site or Laboratory visit this match unlocked.
+	# badge, "start a new run"); anything else goes straight back to the run
+	# map (hub.tscn) to pick the next stop.
 	var dest := "res://scenes/post_match.tscn" if _run_just_ended() else "res://scenes/hub.tscn"
 	get_tree().change_scene_to_file(dest)
 
 
-## Banks the match into GameState. Returns the special visits it unlocked, as
-## [{"text", "color"}] lines for the result panel.
+## Banks the match into GameState. Returns any extra reward lines for the
+## result panel, as [{"text", "color"}].
 func _finish_match() -> Array:
 	var won := sim.won()
 	var tied := sim.tied()
-	# The bowl game (the bracket's last entry) pays out per the chosen bowl's
-	# prestige tier instead of the flat build-up-round bonus - see BowlDB.
-	var is_bowl_game := GameState.round_index == GameState.bracket.size() - 1
-	var win_bonus := BowlDB.win_bonus(GameState.chosen_bowl) if is_bowl_game else 150
+	# The bowl pays its prestige bonus, an Elite stop a bigger one - read before
+	# finish_match moves the run off this stop.
+	var win_bonus := GameState.match_win_bonus()
+	var was_elite := GameState.is_elite_match()
 	if won:
 		bucks_earned += win_bonus
 	GameState.add_bucks(bucks_earned)
@@ -1550,32 +1564,13 @@ func _finish_match() -> Array:
 	GameState.finish_match(won, tied)
 	_check_sacrificial_gloves()
 
-	# Special visits only matter to a run that's still going.
+	# An Elite win's prize: a free item.
 	var unlocks: Array = []
-	if _run_just_ended():
-		return unlocks
-	if absi(sim.score_us - sim.score_them) >= 10:
-		GameState.ritual_available = true
-		unlocks.append({"text": "The Ritual Site has opened.", "color": Color("b060e0")})
-	var lab_by := _lab_trigger()
-	if lab_by != "":
-		GameState.lab_available = true
-		unlocks.append({"text": "%s - the Laboratory has opened." % lab_by, "color": OddityPlayerDB.COLOR})
+	if won and was_elite:
+		var item := GameState.grant_elite_item()
+		if item != "":
+			unlocks.append({"text": "Elite win! Free item: %s" % ItemDB.item_name(item), "color": UIKit.ACCENT})
 	return unlocks
-
-
-## "" unless somebody went over LAB_YARDS receiving or rushing this match, in
-## which case a short "Name: 214 receiving yards" line for the result panel.
-func _lab_trigger() -> String:
-	for pd in sim.game_stats:
-		var line: Dictionary = sim.game_stats[pd]
-		var rec := float(line.get("rec_yards", 0.0))
-		var rush := float(line.get("rush_yards", 0.0))
-		if rec > LAB_YARDS:
-			return "%s: %d receiving yards" % [(pd as PlayerData).pname, int(rec)]
-		if rush > LAB_YARDS:
-			return "%s: %d rushing yards" % [(pd as PlayerData).pname, int(rush)]
-	return ""
 
 
 func _final_bar() -> Control:

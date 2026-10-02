@@ -135,6 +135,14 @@ const PEEL_RADIUS := 0.9
 const SLIP_STUN := 1.2
 const SLIP_COOLDOWN := 2.5
 
+## Next-match effects from the run map's mystery events (EventDB), set by
+## match.gd before the match starts:
+##   field_peels    - banana peels scattered downfield at the start of every
+##                    drive ("Banana Truck Overturned")
+##   td_bucks_mult  - multiplies the touchdown payout ("Hype Machine")
+var field_peels: int = 0
+var td_bucks_mult: float = 1.0
+
 ## "dark_chains": [SimPlayer, SimPlayer, float length] per chained pair. Set
 ## in _align_defense so the chain is visible before the snap.
 var chains: Array = []
@@ -508,6 +516,9 @@ func begin_drive() -> void:
 	planned_action = ""
 	planned_handoff_slot = ""
 	banana_peels.clear()
+	for i in field_peels:
+		banana_peels.append(Vector2(rng.randf_range(los + 3.0, minf(los + 35.0, GOAL_LINE)),
+			rng.randf_range(3.0, FIELD_W - 3.0)))
 	# The rain keeps coming: a few more puddles every drive after the first.
 	if weather == WeatherDB.RAINY and drive_num > 1:
 		_spawn_puddles(WeatherDB.PUDDLES_PER_DRIVE)
@@ -3591,7 +3602,7 @@ func _end_play(res: Dictionary) -> void:
 	# and neither of those pays a play bonus anyway.)
 	var mult := AbilityDB.cash_mult(carrier.ability()) if carrier != null else 1.0
 	if res["td"]:
-		var td_bucks := int(round(100.0 * mult))
+		var td_bucks := int(round(100.0 * mult * td_bucks_mult))
 		res["bucks"] = int(res["bucks"]) + td_bucks
 		res["events"].append("Touchdown! +%d" % td_bucks)
 	elif not res["turnover"] and gained >= to_go:
