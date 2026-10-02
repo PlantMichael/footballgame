@@ -203,21 +203,51 @@ var priority_targets: Dictionary = {}   # slot String -> true
 ## with none, so these never carry over between games.
 var match_bonuses: Dictionary = {}   # PlayerData -> {stat String -> int amount}
 
-## The defense's answer to the offense's per-game boosts: whenever the coach
-## takes one (match.gd's pick after a touchdown), every defender gets
-## DEFENSE_ADJUST_PER_BOOST in that same stat for the rest of the match, up to
-## DEFENSE_ADJUST_MAX per stat. stat String -> int. See adjust_defense,
-## _apply_modifiers.
-const DEFENSE_ADJUST_PER_BOOST := 1
-const DEFENSE_ADJUST_MAX := 3
-var defense_adjust: Dictionary = {}
-
-## Keying on the hot hand: once a flex player has this many rushing plus
-## receiving yards in a match, the defense puts its best cover man on him and
-## has a linebacker shadow him as well - see _key_on_hot_hand. Stops one
+## Keying on the hot hand: the scouting report's favorite target (see
+## _update_scout_reads), or failing that any flex player with this many
+## rushing plus receiving yards in the match, gets the defense's best cover
+## man plus a linebacker shadowing him - see _key_on_hot_hand. Stops one
 ## superstar from simply running every play into the end zone; the trade-off
 ## is a teammate left in single or no coverage.
 const HOT_HAND_YARDS := 60.0
+
+## --- Scouting: the defense adapts within a match ---------------------------
+## Every snap is logged (_scout_record) and, from the first new down after
+## _scout_min_plays() snaps, the defense reads the coach's last SCOUT_WINDOW
+## plays for tendencies and game-plans against them (_update_scout_reads,
+## applied in _begin_call/_align_defense). Only recent plays count, so
+## changing it up makes a read fade back out. Each active read is a plain
+## line in scout_lines for the match screen - the point is a defense you can
+## see adapting and play around, not one that quietly gets harder.
+const SCOUT_WINDOW := 8
+## Fraction of the window one player has to account for to be keyed on.
+const SCOUT_KEY_SHARE := 0.4
+const SCOUT_KEY_MIN := 3
+## Throws at least this deep (yards past the LOS) count as deep, under
+## SCOUT_SHORT_DEPTH as short.
+const SCOUT_DEEP_DEPTH := 15.0
+const SCOUT_SHORT_DEPTH := 8.0
+const SCOUT_DEEP_SHARE := 0.5
+const SCOUT_SHORT_SHARE := 0.6
+## Plays further than this from the middle of the field count toward a side.
+const SCOUT_SIDE_MIN_OFFSET := 6.0
+const SCOUT_SIDE_SHARE := 0.65
+const SCOUT_RUN_SHARE := 0.5
+## Average seconds from snap to throw (or sack/throwaway) that reads as a QB
+## who holds the ball.
+const SCOUT_HOLD_TIME := 2.6
+## How far the defense shifts on each read, in yards.
+const SCOUT_DEEP_SHIFT := 4.0
+const SCOUT_SHORT_SHIFT := 3.0
+const SCOUT_SIDE_SHIFT := 4.0
+const SCOUT_BLITZ_BONUS := 0.2
+const SCOUT_RUN_BLITZ_BONUS := 0.1
+const SCOUT_DEEP_ZONE_BONUS := 0.2
+
+var scout_log: Array = []           # one Dictionary per snap, see _scout_record
+var scout_reads: Dictionary = {}    # read id -> value, see _update_scout_reads
+var scout_lines: Array[String] = [] # the active reads, as text for the match screen
+var _scout_play: Dictionary = {}    # this snap's record, filled as it happens
 ## Extra catch-chance penalty on a throw to the keyed player with a defender
 ## right on him, fading to nothing 3 yards out. See _resolve_catch.
 const KEYED_CATCH_PENALTY := 0.35
@@ -388,18 +418,6 @@ func match_bonus_for(pd: PlayerData) -> Dictionary:
 	return match_bonuses.get(pd, {})
 
 
-## The defense matching a boost the offense just took in `stat` - see
-## defense_adjust. Returns how much it actually went up (0 once capped).
-func adjust_defense(stat: String) -> int:
-	var cur := int(defense_adjust.get(stat, 0))
-	var gain := mini(DEFENSE_ADJUST_PER_BOOST, DEFENSE_ADJUST_MAX - cur)
-	if gain <= 0:
-		return 0
-	defense_adjust[stat] = cur + gain
-	log_line("%s's defense adjusts: +%d %s." % [opponent_name, gain, stat.capitalize()])
-	return gain
-
-
 # --- Box score ----------------------------------------------------------
 
 ## This match's counting stats for `pd` - see the field comment on
@@ -470,8 +488,10 @@ func start_match() -> void:
 	score_them = 0
 	in_overtime = false
 	regulation_drives = 0
-	defense_adjust = {}
 	keyed = null
+	scout_log.clear()
+	scout_reads = {}
+	scout_lines.clear()
 	begin_drive()
 
 
@@ -653,6 +673,7 @@ func _begin_call(instant: bool, walk: bool = false) -> void:
 	_last_passer = null
 	_last_completion_target = null
 	_pass_completed_this_play = false
+	_scout_play = {}
 	result = {}
 	phase = Phase.PRESNAP
 	for sp in offense:
@@ -666,8 +687,19 @@ func _begin_call(instant: bool, walk: bool = false) -> void:
 	# re-running _align_defense on every redraw let the defense visibly "react" to
 	# whatever the coach just drew - a real defense's call is locked in before that.
 	if instant:
-		_blitz_this_play = rng.randf() < (0.12 + (0.10 if down >= 3 else 0.0))
-		_zone_scheme_this_play = rng.randf() < clampf(0.25 + opponent_quality * 0.02, 0.2, 0.55)
+		# The scouting report is part of that call: what the coach has been
+		# doing lately changes how often they blitz and sit in zone.
+		_update_scout_reads()
+		var blitz_chance := 0.12 + (0.10 if down >= 3 else 0.0)
+		if scout_reads.has("hold"):
+			blitz_chance += SCOUT_BLITZ_BONUS
+		if scout_reads.has("run"):
+			blitz_chance += SCOUT_RUN_BLITZ_BONUS
+		var zone_chance := clampf(0.25 + opponent_quality * 0.02, 0.2, 0.55)
+		if scout_reads.has("deep"):
+			zone_chance += SCOUT_DEEP_ZONE_BONUS
+		_blitz_this_play = rng.randf() < blitz_chance
+		_zone_scheme_this_play = rng.randf() < zone_chance
 		_align_defense()
 		for sp in offense:
 			if not walk:
@@ -781,9 +813,6 @@ func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
 	for key in AbilityDB.snap_bonus(sp.ability(), pd, ctx):
 		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(sp.ability(), pd, ctx)[key])
-	if not sp.is_offense:
-		for key in defense_adjust:
-			base[key] = int(base[key]) + int(defense_adjust[key])
 	_apply_weather(sp, base)
 	var agi_cap := AbilityDB.speed_cap(sp.ability())
 	if agi_cap < 99:
@@ -1197,6 +1226,7 @@ func _align_defense() -> void:
 	# handoff, and their reaction time is set by Intelligence.
 
 	_key_on_hot_hand(backs, lbs, blitz)
+	_apply_scout_shading(backs, lbs)
 	_apply_distraction()
 	_apply_taunt()
 	_apply_snap_push()
@@ -1204,9 +1234,16 @@ func _align_defense() -> void:
 	_apply_chain()
 
 
-## The flex player with the most rushing plus receiving yards this match, if
-## he's past HOT_HAND_YARDS and on the field - or null.
+## Who the defense keys on: the scouting report's favorite target if he's on
+## the field (see _update_scout_reads), otherwise the flex player with the
+## most rushing plus receiving yards this match if he's past HOT_HAND_YARDS -
+## or null.
 func _hot_hand() -> SimPlayer:
+	var scouted: PlayerData = scout_reads.get("key", null)
+	if scouted != null:
+		for f in flex_players():
+			if f.data == scouted and f.clone_of == null and not AbilityDB.evades_man_coverage(f.ability()):
+				return f
 	var best: SimPlayer = null
 	var best_yards := HOT_HAND_YARDS
 	for f in flex_players():
@@ -1228,6 +1265,9 @@ func _hot_hand() -> SimPlayer:
 func _key_on_hot_hand(backs: Array[SimPlayer], lbs: Array[SimPlayer], blitz: bool) -> void:
 	var hot := _hot_hand()
 	if hot == null:
+		# Nobody worth keying on any more (the coach spread it around, or he
+		# went to the bench) - the double team, and the crosshair, come off.
+		keyed = null
 		return
 	if keyed != hot.data:
 		keyed = hot.data
@@ -1259,6 +1299,160 @@ func _key_on_hot_hand(backs: Array[SimPlayer], lbs: Array[SimPlayer], blitz: boo
 	if not blitz and spy != cover and spy != had:
 		spy.role = SimPlayer.Role.MAN
 		spy.mark = hot
+
+
+# --- Scouting (see SCOUT_WINDOW) ----------------------------------------------
+
+## Snaps the defense needs to see before it starts adapting - a good defense
+## reads you sooner: 6 plays at the first round's quality, down to 3.
+func _scout_min_plays() -> int:
+	return clampi(int(round(7.0 - opponent_quality * 0.4)), 3, 6)
+
+
+## Logs the play that just ended for the scouting report. `_scout_play` was
+## filled in as it happened (a throw or a handoff); anything else is worked
+## out from the result. Kicks aren't offensive tendencies and don't count.
+func _scout_record(res: Dictionary) -> void:
+	if bool(res.get("kick", false)):
+		return
+	var rec := _scout_play.duplicate()
+	var kind := String(res.get("kind", ""))
+	if rec.is_empty():
+		if kind == "sack" or (kind == "incomplete" and _last_passer != null and thrown_to == null):
+			# Sacked, or threw it away: the QB held it until something gave.
+			rec = {"kind": "pressure", "hold": time}
+		elif qb_scrambling and carrier != null:
+			rec = {"kind": "run", "target": carrier.data}
+		else:
+			return
+	if String(rec["kind"]) == "run" and carrier != null:
+		rec["y"] = carrier.pos.y   # where the run actually went, not where it started
+	scout_log.append(rec)
+
+
+## Reads the coach's last SCOUT_WINDOW plays into `scout_reads`:
+##   "key"   PlayerData - one player getting the ball on SCOUT_KEY_SHARE of plays
+##   "deep" / "short"   true - where the throws have been going
+##   "side"  -1.0 / 1.0 - one side of the field (field y below/above the middle)
+##   "run"   true - mostly running it
+##   "hold"  true - the QB has been holding the ball
+## Logs each read the first time it appears. Runs once per new down.
+func _update_scout_reads() -> void:
+	var before := scout_reads
+	scout_reads = {}
+	if scout_log.size() < _scout_min_plays():
+		return
+	var window: Array = scout_log.slice(maxi(0, scout_log.size() - SCOUT_WINDOW))
+	var plays := float(window.size())
+	var cy := FIELD_W * 0.5
+
+	var touches := {}
+	var passes := 0
+	var deep := 0
+	var short := 0
+	var runs := 0
+	var sided := 0
+	var side_sum := 0.0
+	var holds: Array = []
+	for rec in window:
+		var kind := String(rec["kind"])
+		var who: PlayerData = rec.get("target", null)
+		if who != null:
+			touches[who] = int(touches.get(who, 0)) + 1
+		if kind == "pass":
+			passes += 1
+			var depth := float(rec.get("depth", 0.0))
+			if depth >= SCOUT_DEEP_DEPTH:
+				deep += 1
+			elif depth < SCOUT_SHORT_DEPTH:
+				short += 1
+		elif kind == "run":
+			runs += 1
+		if kind == "pass" or kind == "pressure":
+			holds.append(float(rec.get("hold", 0.0)))
+		if rec.has("y"):
+			var off := float(rec["y"]) - cy
+			if absf(off) >= SCOUT_SIDE_MIN_OFFSET:
+				sided += 1
+				side_sum += signf(off)
+
+	var best_count := 0
+	for who in touches:
+		if int(touches[who]) > best_count:
+			best_count = int(touches[who])
+			scout_reads["key"] = who
+	if best_count < SCOUT_KEY_MIN or float(best_count) / plays < SCOUT_KEY_SHARE:
+		scout_reads.erase("key")
+	if passes >= 3 and float(deep) / float(passes) >= SCOUT_DEEP_SHARE:
+		scout_reads["deep"] = true
+	elif passes >= 3 and float(short) / float(passes) >= SCOUT_SHORT_SHARE:
+		scout_reads["short"] = true
+	if sided >= 3 and absf(side_sum) / plays >= SCOUT_SIDE_SHARE:
+		scout_reads["side"] = signf(side_sum)
+	if runs >= 3 and float(runs) / plays >= SCOUT_RUN_SHARE:
+		scout_reads["run"] = true
+	if holds.size() >= 3:
+		var total := 0.0
+		for h in holds:
+			total += float(h)
+		if total / float(holds.size()) >= SCOUT_HOLD_TIME:
+			scout_reads["hold"] = true
+
+	for id in scout_reads:
+		if id != "key" and not before.has(id):
+			log_line("%s's defense adjusts: %s." % [opponent_name, _scout_text(id)])
+
+
+## The coach-facing line for read `id` - what the defense is doing about it,
+## worded so the counter is obvious.
+func _scout_text(id: String) -> String:
+	match id:
+		"key":
+			return "keying on #%d %s - double coverage" % [keyed.number, keyed.pname] if keyed != null else ""
+		"deep":
+			return "playing deep - the underneath is open"
+		"short":
+			return "sitting on short routes - deep is open"
+		"side":
+			# Field y maps to screen x (field_view), so a low y is screen left.
+			return "shading to the %s side" % ("left" if float(scout_reads["side"]) < 0.0 else "right")
+		"run":
+			return "selling out on the run - linebackers creeping up"
+		"hold":
+			return "your QB holds the ball - they're blitzing more"
+	return ""
+
+
+## Moves the called coverage to match the scouting reads (after the key/double
+## team is in place), then rebuilds scout_lines for the match screen.
+func _apply_scout_shading(backs: Array[SimPlayer], lbs: Array[SimPlayer]) -> void:
+	var side := float(scout_reads.get("side", 0.0))
+	for d in backs + lbs:
+		if d.role == SimPlayer.Role.ZONE:
+			if scout_reads.has("deep"):
+				d.zone_point.x += SCOUT_DEEP_SHIFT
+			elif scout_reads.has("short"):
+				d.zone_point.x = maxf(los + 5.0, d.zone_point.x - SCOUT_SHORT_SHIFT)
+			d.zone_point.y = clampf(d.zone_point.y + side * SCOUT_SIDE_SHIFT, 2.0, FIELD_W - 2.0)
+			d.target_pos = Vector2(d.zone_point.x - 3.0, d.zone_point.y)
+		elif d.role == SimPlayer.Role.MAN and d.mark != null:
+			# Press against a quick game, extra cushion against the deep ball.
+			if scout_reads.has("short"):
+				d.target_pos.x = d.mark.target_pos.x + 2.0
+			elif scout_reads.has("deep"):
+				d.target_pos.x += 2.0
+	if scout_reads.has("run"):
+		for lb in lbs:
+			lb.target_pos.x = los + 3.5
+			if lb.role == SimPlayer.Role.ZONE:
+				lb.zone_point.x = los + 4.5
+
+	scout_lines.clear()
+	if keyed != null:
+		scout_lines.append(_scout_text("key"))
+	for id in ["deep", "short", "side", "run", "hold"]:
+		if scout_reads.has(id):
+			scout_lines.append(_scout_text(id))
 
 
 ## "Dark Chains": the 2 defenders nearest the holder's alignment spot are
@@ -2079,6 +2273,7 @@ func request_scramble() -> bool:
 
 func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 	handoff_done = true
+	_scout_play = {"kind": "run", "target": rb.data}
 	qb.has_ball = false
 	rb.has_ball = true
 	_set_carrier(rb)
@@ -2661,6 +2856,7 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	carrier = null
 	thrown_to = target
 	_last_passer = qb
+	_scout_play = {"kind": "pass", "target": target.data, "depth": aim.x - los, "y": aim.y, "hold": time}
 	# The passer_dex_bonus itself is applied in _resolve_catch, not here -
 	# it should land the moment the ball actually reaches the receiver, not
 	# the instant it leaves the QB's hand.
@@ -3410,6 +3606,7 @@ func _end_play(res: Dictionary) -> void:
 	res["duration"] = time
 	result = res
 	_credit_game_stats(res)
+	_scout_record(res)
 	log_line(res["text"])
 
 

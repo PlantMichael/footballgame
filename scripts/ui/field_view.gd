@@ -62,6 +62,9 @@ const PLAYER_R := 0.72          # yards of radius per player, times _scale
 const PLAYER_R_MIN := 12.0
 ## Defensive linemen (slots DL0-DL3) are drawn this much bigger - see _draw_person.
 const DL_SCALE := 1.15
+## The crosshair on the player the defense is keyed on - same color as the
+## match screen's scouting report (match.gd SCOUT_COLOR).
+const SCOUT_CROSSHAIR := Color("ff6a4d")
 
 ## Bodies are normalised to equal AREA rather than fitted inside a box. The
 ## source sprites are framed very inconsistently - front-view aspect ratios
@@ -1080,7 +1083,7 @@ func _begin_stroke(sp: SimPlayer) -> void:
 
 
 ## RouteBook.BUDGET_YARDS, scaled up for a player with "boundless" (route
-## budget quadrupled) - the only ability that touches how much chalk the
+## budget doubled) - the only ability that touches how much chalk the
 ## coach gets, so this is the one place it needs to be threaded through
 ## rather than changing the global constant.
 func _route_budget() -> float:
@@ -1975,6 +1978,23 @@ func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
 			var side := -1.0 if i % 2 == 0 else 1.0
 			var at := hp + Vector2(side * r * (0.32 + 0.1 * ph), r * (0.2 + 0.7 * ph))
 			_draw_disc(at, r * 0.08 * (1.0 - 0.4 * ph), Color(TEAR_COLOR, 0.9 * (1.0 - ph)))
+
+	# The defense's scouting report is keyed on him (MatchSim.keyed): a slowly
+	# turning crosshair over him, every phase, so the coach can see who's
+	# drawing the double team before he calls the play.
+	if sp.is_offense and sim.keyed != null and sp.data == sim.keyed and fall < 0.5:
+		_draw_crosshair(center, r)
+
+
+## A circular crosshair - a ring with four ticks crossing it - turning slowly.
+func _draw_crosshair(at: Vector2, r: float) -> void:
+	var ring := r * 1.62
+	var spin := Time.get_ticks_msec() * 0.0006
+	draw_arc(at, ring, 0.0, TAU, 40, SCOUT_CROSSHAIR, 2.5, true)
+	draw_arc(at, ring * 0.34, 0.0, TAU, 16, SCOUT_CROSSHAIR, 2.0, true)
+	for i in 4:
+		var dir := Vector2.from_angle(spin + float(i) * TAU * 0.25)
+		draw_line(at + dir * ring * 0.72, at + dir * ring * 1.22, SCOUT_CROSSHAIR, 2.5, true)
 
 
 ## The floating hands, if he's doing anything with them right now - see

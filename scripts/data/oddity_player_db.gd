@@ -34,6 +34,10 @@ const ODDITIES := [
 		"pos": "T",
 		"ability_id": "rogue_lineman",
 		"stat_pool": BASE_POOL,
+		# Half his snaps he stays home and blocks, so a roll that leaves him
+		# with 2 Strength made him dead weight on the line. The floor comes
+		# out of the pool - he's not stronger overall, just never useless.
+		"stat_floor": {"strength": 8},
 		"body": "2",
 	},
 	{
@@ -98,7 +102,7 @@ static func _make(rng: RandomNumberGenerator, e: Dictionary) -> PlayerData:
 	p.pname = String(e["name"])
 	p.pos = ShopPlayerDB.POS_BY_NAME.get(String(e["pos"]), PlayerData.Pos.WR)
 	p.number = Generator.random_number(rng, p.pos)
-	var split := split_pool(rng, int(e["stat_pool"]))
+	var split := split_pool(rng, int(e["stat_pool"]), e.get("stat_floor", {}))
 	p.strength = split["strength"]
 	p.agility = split["agility"]
 	p.dexterity = split["dexterity"]
@@ -115,14 +119,17 @@ static func _make(rng: RandomNumberGenerator, e: Dictionary) -> PlayerData:
 ## gets a random weight up front and points are then handed out one at a time
 ## in proportion to those weights - so a roll can come out genuinely lopsided
 ## (a plain uniform one-at-a-time split just converges on ~7 each), and a stat
-## that hits 15 simply stops taking points.
-static func split_pool(rng: RandomNumberGenerator, pool: int) -> Dictionary:
+## that hits 15 simply stops taking points. `floors` (stat -> minimum) lets an
+## entry guarantee a stat; those points come out of the pool first.
+static func split_pool(rng: RandomNumberGenerator, pool: int, floors: Dictionary = {}) -> Dictionary:
 	var out := {}
 	var weights := {}
+	var spent := 0
 	for key in POOL_STATS:
-		out[key] = 1
+		out[key] = clampi(int(floors.get(key, 1)), 1, 15)
+		spent += int(out[key])
 		weights[key] = rng.randf_range(0.1, 1.0)
-	var left := clampi(pool, POOL_STATS.size(), POOL_STATS.size() * 15) - POOL_STATS.size()
+	var left := clampi(pool, POOL_STATS.size(), POOL_STATS.size() * 15) - spent
 	while left > 0:
 		var total := 0.0
 		for key in POOL_STATS:

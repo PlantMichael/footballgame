@@ -45,6 +45,11 @@ var side_panel: PanelContainer
 var card: PanelContainer
 var upgrade_panel: PanelContainer
 var log_label: Label
+## Top-left "SCOUTING REPORT" box: what the defense has picked up on and is
+## adjusting to (MatchSim.scout_lines). Hidden until it has read something.
+var scout_panel: PanelContainer
+var scout_text: Label
+var _scout_shown: String = ""
 var cam_btn: Button
 var speed_btns: Dictionary = {}   # float speed -> Button, see _build_speed_buttons
 
@@ -86,6 +91,10 @@ var _leaving: bool = false
 ## "The Laboratory": one of your players has to go over this many receiving
 ## or rushing yards in a single match to unlock a visit.
 const LAB_YARDS := 200.0
+
+## The scouting report's color - shared with field_view's crosshair on the
+## keyed player.
+const SCOUT_COLOR := Color("ff6a4d")
 
 
 func _ready() -> void:
@@ -144,6 +153,7 @@ func _build_layout() -> void:
 
 	_build_top_bar()
 	_build_log()
+	_build_scout_panel()
 	_build_play_bar()
 	_build_float_panel()
 	_build_side_panel()
@@ -358,6 +368,7 @@ func _build_end_panel() -> void:
 func _process(delta: float) -> void:
 	_update_top_bar()
 	_update_log()
+	_update_scout_panel()
 
 	if _match_ended:
 		_tick_end_countdown(delta)
@@ -439,6 +450,48 @@ func _set_sb(key: String, value: String) -> void:
 	var l: Label = _sb.get(key)
 	if l != null and l.text != value:
 		l.text = value
+
+
+func _build_scout_panel() -> void:
+	scout_panel = PanelContainer.new()
+	var sb := UIKit.stylebox(Color(UIKit.PANEL, 0.88), 8, 2, SCOUT_COLOR)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	scout_panel.add_theme_stylebox_override("panel", sb)
+	scout_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	scout_panel.offset_left = 16
+	scout_panel.offset_top = TOP_BAR_H + 8
+	scout_panel.custom_minimum_size = Vector2(330, 0)
+	scout_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scout_panel.visible = false
+	add_child(scout_panel)
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scout_panel.add_child(v)
+	v.add_child(UIKit.label("SCOUTING REPORT - THE DEFENSE IS", 12, SCOUT_COLOR))
+	scout_text = UIKit.label("", 14, UIKit.TEXT)
+	scout_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scout_text.custom_minimum_size = Vector2(306, 0)
+	v.add_child(scout_text)
+
+
+## Kept in sync every frame, but only rebuilt when the reads actually change.
+func _update_scout_panel() -> void:
+	var lines: Array = []
+	if not _match_ended:
+		for l in sim.scout_lines:
+			lines.append("- " + l)
+	var shown := "\n".join(lines)
+	if shown == _scout_shown:
+		return
+	_scout_shown = shown
+	scout_text.text = shown
+	scout_panel.visible = shown != ""
+	scout_panel.reset_size()
 
 
 func _update_log() -> void:
@@ -1265,7 +1318,7 @@ func _show_upgrade_choices() -> void:
 	upgrade_panel.add_child(v)
 
 	v.add_child(UIKit.label("TOUCHDOWN! PICK A BOOST", 18, UIKit.ACCENT))
-	v.add_child(UIKit.label("Lasts for the rest of this game only. The defense answers with +1 in the same stat.", 12, UIKit.MUTED))
+	v.add_child(UIKit.label("Lasts for the rest of this game only.", 12, UIKit.MUTED))
 	v.add_child(UIKit.rule())
 
 	for entry in pending_upgrades:
@@ -1311,7 +1364,6 @@ func _upgrade_choice_row(entry: Dictionary) -> Control:
 
 func _apply_upgrade(pd: PlayerData, entry: Dictionary) -> void:
 	sim.add_match_bonus(pd, String(entry.get("stat", "")), int(entry.get("amount", 0)))
-	sim.adjust_defense(String(entry.get("stat", "")))
 	pending_upgrades = []
 	upgrade_panel.visible = false
 	upgrade_panel.custom_minimum_size = Vector2(460, 0)

@@ -470,7 +470,7 @@ const ABILITIES := {
 	},
 	"boundless": {
 		"name": "Boundless",
-		"desc": "His route limit is quadrupled.",
+		"desc": "His route limit is doubled.",
 		"route_budget_mult": Callable(AbilityDB, "_route_budget_mult_boundless"),
 	},
 	"corruption": {
@@ -1293,7 +1293,7 @@ static func _explodes_after_seconds_combustion() -> float:
 
 
 static func _route_budget_mult_boundless() -> float:
-	return 4.0
+	return 2.0
 
 
 static func _curses_nearest_defender_corruption() -> bool:

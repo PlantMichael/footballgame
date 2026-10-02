@@ -307,6 +307,16 @@ defense wins comfortably, an even matchup wins roughly 40%.
   shortest outlet available. Keying it off the deepest route instead made deep
   concepts doubly punishing — long routes *and* a QB frozen in place — and gave
   the coach no way to trade depth for protection.
+- **The defense scouts you during a match** (`MatchSim._update_scout_reads`).
+  Every snap is logged; once it has seen a few (6 at the first round's
+  quality, down to 3 for a strong defense) it reads your last 8 plays and
+  game-plans at each new down: double-teams whoever is getting the ball on
+  40%+ of plays (crosshair on him), sits deep or short, shades to a side,
+  crowds the box against the run, or blitzes a QB who holds it. Active reads
+  are listed in the match screen's "Scouting report" box. Only recent plays
+  count, so changing it up makes a read fade out - the counter is always
+  visible and always available. This replaced the defense's flat +1 answer
+  to every per-game boost. Note the `tools/` tuning baselines predate it.
 - **The defense gets no pre-snap tell** about run vs pass. Linebackers only crash
   downhill after the handoff, on a reaction timer set by their Intelligence.
 - **Blocking is assigned centrally**, one blocker per rusher, so linemen never
