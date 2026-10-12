@@ -38,10 +38,6 @@ func _ready() -> void:
 	t.add_theme_constant_override("shadow_outline_size", 14)
 	v.add_child(t)
 
-	var s := UIKit.outlined(UIKit.marker_label(
-		"Chart a path to one of 6 bowls. 3 losses and the season is over.", 22, UIKit.TEXT))
-	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(s)
 
 	v.add_child(UIKit.vsep(36))
 
@@ -65,13 +61,6 @@ func _ready() -> void:
 		v.add_child(quit)
 
 	v.add_child(UIKit.vsep(36))
-
-	var help := UIKit.outlined(UIKit.label(
-		"You coach the offense. Set your lineup, chalk up your routes, and score.\n"
-		+ "Football bucks earned on the field buy players and items at Shop stops on the map.",
-		15, Color(UIKit.TEXT, 0.75)), 5)
-	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(help)
 
 
 ## One entry in the menu list: flat, boxless, widely spaced lettering like
