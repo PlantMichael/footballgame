@@ -3,13 +3,14 @@ extends RefCounted
 
 ## Special abilities. Every player has exactly one.
 ##
-## Each ability is a name/desc pair plus whichever hook methods it actually
-## needs, wired up as Callables rather than dispatched through one big match
-## statement per hook. To add an ability: write a `_snap_<id>`, `_catch_<id>`,
-## `_contact_<id>`, etc. method below for whichever hooks it uses, then add
-## one entry to ABILITIES pointing at them. A hook nobody defines just falls
-## through to the neutral default in that hook's getter, so an ability only
-## needs the methods it actually uses.
+## Each ability is a name/desc pair plus whichever hooks it actually needs.
+## A hook is either a plain value (a flag, a number, a stat-delta Dictionary)
+## when it never depends on the situation, or a Callable to a `_snap_<id>`,
+## `_catch_<id>`, etc. method below when it does - see _dispatch. A hook
+## nobody defines just falls through to the neutral default in that hook's
+## getter, so an ability only lists the hooks it actually uses. Plain values
+## live in a const Dictionary and are read-only - callers must not mutate
+## what a getter returns.
 ##
 ## Hook signatures and where the sim calls them:
 ##   snap(p, ctx)        -> Dictionary of stat deltas, default {}. MatchSim._apply_modifiers.
@@ -80,8 +81,8 @@ extends RefCounted
 ##   max_agility_on_catch() -> bool, default false. Effective Agility jumps straight to 15
 ##                            the instant he catches a pass. MatchSim._resolve_catch.
 ##   explodes_after_seconds() -> float, default 0.0. Holding the ball this many seconds as
-##                            carrier ends the play immediately as a turnover, with a big
-##                            screen-shake. MatchSim._step_offense / SimPlayer.carry_seconds.
+##                            carrier ends the play on the spot (scored like a tackle - the
+##                            drive goes on), with a big screen-shake. MatchSim._step_offense / SimPlayer.carry_seconds.
 ##   route_budget_mult()    -> float, default 1.0. Multiplies RouteBook.BUDGET_YARDS while
 ##                            the coach is drawing for this player. field_view.gd's
 ##                            _extend_stroke/_draw_stroke.
@@ -221,7 +222,7 @@ const ABILITIES := {
 	"deep_threat": {
 		"name": "Deep Threat",
 		"desc": "+2 Agility the moment a pass 20+ yards downfield is thrown his way, and +10% catch chance on it.",
-		"deep_throw_bonus": Callable(AbilityDB, "_deep_throw_bonus_deep_threat"),
+		"deep_throw_bonus": {"agility": 2},
 		"catch": Callable(AbilityDB, "_catch_deep_threat"),
 	},
 	"red_zone_beast": {
@@ -272,7 +273,7 @@ const ABILITIES := {
 	"blindside_wall": {
 		"name": "Blindside Wall",
 		"desc": "+3 Strength and +2 Intelligence on pass plays (no Hand Off or Scramble called).",
-		"pass_block_bonus": Callable(AbilityDB, "_pass_block_bonus_blindside_wall"),
+		"pass_block_bonus": {"strength": 3, "intelligence": 2},
 	},
 	"escape_artist": {
 		"name": "Escape Artist",
@@ -294,7 +295,7 @@ const ABILITIES := {
 		"name": "Workhorse",
 		"desc": "+5 Stamina. Never slows below 85% speed.",
 		"snap": Callable(AbilityDB, "_snap_workhorse"),
-		"fatigue_floor": Callable(AbilityDB, "_fatigue_floor_workhorse"),
+		"fatigue_floor": 0.85,
 	},
 	"clutch_gene": {
 		"name": "Clutch Gene",
@@ -314,18 +315,18 @@ const ABILITIES := {
 	"dash_start": {
 		"name": "Track Start",
 		"desc": "Dashes forward 5 yards the instant the ball is snapped.",
-		"dashes_at_snap": Callable(AbilityDB, "_dashes_at_snap_dash_start"),
+		"dashes_at_snap": true,
 	},
 	"cant_miss": {
 		"name": "Can't Miss",
 		"desc": "Never drops a catchable ball, but top speed is capped as if Agility were 4.",
-		"speed_cap": Callable(AbilityDB, "_speed_cap_cant_miss"),
-		"guarantees_catch": Callable(AbilityDB, "_guarantees_catch_cant_miss"),
+		"speed_cap": 4,
+		"guarantees_catch": true,
 	},
 	"quick_recovery": {
 		"name": "Quick Recovery",
 		"desc": "Shakes off a jam and is back to full speed 80% faster than normal.",
-		"disrupted_mult": Callable(AbilityDB, "_disrupted_mult_quick_recovery"),
+		"disrupted_mult": 0.2,
 	},
 	"trusted_target_wr": {
 		"name": "Trusted Target (WR)",
@@ -340,67 +341,67 @@ const ABILITIES := {
 	"misdirection": {
 		"name": "Misdirection",
 		"desc": "50% chance to fool each defender into reacting late on a handoff, as if the QB still had the ball.",
-		"fake_chance": Callable(AbilityDB, "_fake_chance_misdirection"),
+		"fake_chance": 0.5,
 	},
 	"power_surge": {
 		"name": "Power Surge",
 		"desc": "+6 Strength the instant he gets the ball.",
-		"on_carry_bonus": Callable(AbilityDB, "_on_carry_bonus_power_surge"),
+		"on_carry_bonus": {"strength": 6},
 	},
 	"phantom_step": {
 		"name": "Phantom Step",
 		"desc": "Once per play, dashes clean through a tackle attempt for free - but it costs him 5 Agility for the rest of the play.",
-		"dodges_once": Callable(AbilityDB, "_dodges_once_phantom_step"),
+		"dodges_once": true,
 	},
 	"guardian_angel": {
 		"name": "Guardian Angel",
 		"desc": "If a teammate would drop a catchable pass, swaps in and hauls it in himself instead.",
-		"catches_drops": Callable(AbilityDB, "_catches_drops_guardian_angel"),
+		"catches_drops": true,
 	},
 	"lockdown_block": {
 		"name": "Lockdown Block",
 		"desc": "At the snap, immediately locks onto the closest defensive lineman instead of waiting to be assigned one.",
-		"locks_dl_at_snap": Callable(AbilityDB, "_locks_dl_at_snap_lockdown_block"),
+		"locks_dl_at_snap": true,
 	},
 	"field_command": {
 		"name": "Field Command",
 		"desc": "+2 Intelligence to every tight end on the field.",
-		"team_buff": Callable(AbilityDB, "_team_buff_field_command"),
+		"team_buff": {"pos": PlayerData.Pos.TE, "stat": "intelligence", "amount": 2},
 	},
 	"spacing_coach": {
 		"name": "Spacing Coach",
 		"desc": "+2 Agility to every wide receiver on the field.",
-		"team_buff": Callable(AbilityDB, "_team_buff_spacing_coach"),
+		"team_buff": {"pos": PlayerData.Pos.WR, "stat": "agility", "amount": 2},
 	},
 	"power_scheme": {
 		"name": "Power Scheme",
 		"desc": "+2 Strength to every running back on the field.",
-		"team_buff": Callable(AbilityDB, "_team_buff_power_scheme"),
+		"team_buff": {"pos": PlayerData.Pos.RB, "stat": "strength", "amount": 2},
 	},
 	"line_captain": {
 		"name": "Line Captain",
 		"desc": "+2 Strength to every Tackle on the field.",
-		"team_buff": Callable(AbilityDB, "_team_buff_line_captain"),
+		"team_buff": {"pos": PlayerData.Pos.T, "stat": "strength", "amount": 2},
 	},
 	"qb_whisperer": {
 		"name": "QB Whisperer",
 		"desc": "+3 Intelligence to his quarterback.",
-		"team_buff": Callable(AbilityDB, "_team_buff_qb_whisperer"),
+		"team_buff": {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 3},
 	},
 	"qb_confidant": {
 		"name": "QB Confidant",
 		"desc": "+5 Intelligence to his quarterback.",
-		"team_buff": Callable(AbilityDB, "_team_buff_qb_confidant"),
+		"team_buff": {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 5},
 	},
 	"attention_hog": {
 		"name": "Attention Hog",
 		"desc": "The 2 defenders nearest him at the snap take -1 Intelligence for the play, distracted trying to account for him.",
-		"distracts_defenders": Callable(AbilityDB, "_distracts_defenders_attention_hog"),
+		"distracts_defenders": true,
 	},
 	"ghost_route": {
 		"name": "Ghost Route",
 		"desc": "No defender is ever assigned to cover him man-to-man.",
-		"evades_man_coverage": Callable(AbilityDB, "_evades_man_coverage_ghost_route"),
+		"evades_man_coverage": true,
 	},
 	"down_and_distance": {
 		"name": "Down and Distance",
@@ -415,22 +416,22 @@ const ABILITIES := {
 	"instant_burst": {
 		"name": "Instant Burst",
 		"desc": "+4 Agility the instant he takes the ball, handoff or catch.",
-		"on_carry_bonus": Callable(AbilityDB, "_on_carry_bonus_instant_burst"),
+		"on_carry_bonus": {"agility": 4},
 	},
 	"cloaked_route": {
 		"name": "Cloaked Route",
 		"desc": "For the first 2 seconds of the play, his man defender doesn't react to him at all.",
-		"cloak_seconds": Callable(AbilityDB, "_cloak_seconds_cloaked_route"),
+		"cloak_seconds": 2.0,
 	},
 	"decoy": {
 		"name": "Decoy",
 		"desc": "The 2 defenders nearest him at the snap take a flat -2 Strength for the play, taunted into keying on him instead of squaring up the real tackle.",
-		"taunts_defenders": Callable(AbilityDB, "_taunts_defenders_decoy"),
+		"taunts_defenders": true,
 	},
 	"positionless": {
 		"name": "Positionless",
 		"desc": "Counts as an RB, TE, and WR at once for every personnel-based effect on the field.",
-		"counts_as_positions": Callable(AbilityDB, "_counts_as_positions_positionless"),
+		"counts_as_positions": [PlayerData.Pos.RB, PlayerData.Pos.TE, PlayerData.Pos.WR],
 	},
 	"bowl_jitters": {
 		"name": "Bowl Jitters",
@@ -440,129 +441,129 @@ const ABILITIES := {
 	"enforcer": {
 		"name": "Enforcer",
 		"desc": "Never runs a route or takes a handoff. Locks onto the strongest non-lineman defender all game and blocks him alone.",
-		"dedicated_blocker": Callable(AbilityDB, "_dedicated_blocker_enforcer"),
+		"dedicated_blocker": true,
 	},
 	"right_side_coach": {
 		"name": "Right Side Coach",
 		"desc": "The 2 flex players aligned furthest right get +2 Dexterity.",
-		"right_side_buff": Callable(AbilityDB, "_right_side_buff_right_side_coach"),
+		"right_side_buff": {"stat": "dexterity", "amount": 2, "count": 2},
 	},
 	"tackle_pride": {
 		"name": "Tackle Pride",
 		"desc": "+1 Strength to every other Tackle on the field.",
-		"team_buff": Callable(AbilityDB, "_team_buff_tackle_pride"),
+		"team_buff": {"pos": PlayerData.Pos.T, "stat": "strength", "amount": 1},
 	},
 	"veteran_mentor": {
 		"name": "Veteran Mentor",
-		"desc": "+1 to every stat for every Rookie or Sophomore-tier signed player on the field.",
-		"tier_buff": Callable(AbilityDB, "_tier_buff_veteran_mentor"),
+		"desc": "Every Rookie or Sophomore-tier signed player on the field gets +1 to every stat.",
+		"tier_buff": {"qualities": [ShopPlayerDB.QUALITY_ROOKIE, ShopPlayerDB.QUALITY_SOPHOMORE], "amount": 1},
 	},
 	"drive_block": {
 		"name": "Drive Block",
 		"desc": "At the snap, the whole defense lines up 5 extra yards off the ball.",
-		"pushes_defense_at_snap": Callable(AbilityDB, "_pushes_defense_at_snap_drive_block"),
+		"pushes_defense_at_snap": 5.0,
 	},
 	"combustion": {
 		"name": "Combustion",
 		"desc": "When catching the ball, gains max Agility - but explodes 3 seconds later, ending the play.",
-		"max_agility_on_catch": Callable(AbilityDB, "_max_agility_on_catch_combustion"),
-		"explodes_after_seconds": Callable(AbilityDB, "_explodes_after_seconds_combustion"),
+		"max_agility_on_catch": true,
+		"explodes_after_seconds": 3.0,
 	},
 	"boundless": {
 		"name": "Boundless",
 		"desc": "His route limit is doubled.",
-		"route_budget_mult": Callable(AbilityDB, "_route_budget_mult_boundless"),
+		"route_budget_mult": 2.0,
 	},
 	"corruption": {
 		"name": "Corruption",
 		"desc": "At the snap, curses the nearest defender - he blocks for your team instead of his own for the rest of the play.",
-		"curses_nearest_defender": Callable(AbilityDB, "_curses_nearest_defender_corruption"),
+		"curses_nearest_defender": true,
 	},
 	"aftershock": {
 		"name": "Aftershock",
 		"desc": "When receiving the ball, triggers an earthquake that stuns every other player on the field for 1 second.",
-		"earthquake_on_catch": Callable(AbilityDB, "_earthquake_on_catch_aftershock"),
+		"earthquake_on_catch": true,
 	},
 	"stat_pad": {
 		"name": "Stat Pad",
 		"desc": "Starts every drive at 7 in every stat, then loses 1 in every stat after each play, down to a floor of 2.",
-		"decaying_stat_start": Callable(AbilityDB, "_decaying_stat_start_stat_pad"),
-		"decaying_stat_floor": Callable(AbilityDB, "_decaying_stat_floor_stat_pad"),
+		"decaying_stat_start": 7,
+		"decaying_stat_floor": 2,
 	},
 	"stat_shield": {
 		"name": "Stat Shield",
 		"desc": "No player on your team can lose stats - they can still gain them.",
-		"blocks_stat_loss": Callable(AbilityDB, "_blocks_stat_loss_stat_shield"),
+		"blocks_stat_loss": true,
 	},
 	"twohands_aim": {
 		"name": "Twohands Aim",
 		"desc": "Every throw is pinpoint accurate, whatever the rest of his stat line says.",
-		"perfect_aim": Callable(AbilityDB, "_perfect_aim_twohands_aim"),
+		"perfect_aim": true,
 	},
 	"gunslinger_growth": {
 		"name": "Gunslinger Growth",
 		"desc": "Permanently gains 1 Dexterity for every 10 air yards he throws.",
-		"dex_per_throw_yards": Callable(AbilityDB, "_dex_per_throw_yards_gunslinger_growth"),
+		"dex_per_throw_yards": 0.1,
 	},
 	"slippery_trail": {
 		"name": "Slippery Trail",
 		"desc": "Leaves 2 banana peels at random spots along his route every play. They stay on the field until the next drive, and any defender who steps on one goes down.",
-		"drops_banana_peels": Callable(AbilityDB, "_drops_banana_peels_slippery_trail"),
+		"drops_banana_peels": 2,
 	},
 	"warming_up": {
 		"name": "Warming Up",
 		"desc": "+1 Strength for every second the play goes on. Resets when the play is over.",
-		"gain_per_second": Callable(AbilityDB, "_gain_per_second_warming_up"),
+		"gain_per_second": {"stat": "strength", "amount": 1},
 	},
 	"sigma_grindset": {
 		"name": "Sigma Grindset",
 		"desc": "+4 Agility if no route is drawn for him.",
-		"undrawn_route_bonus": Callable(AbilityDB, "_undrawn_route_bonus_sigma_grindset"),
+		"undrawn_route_bonus": {"agility": 4},
 	},
 	"dark_chains": {
 		"name": "Dark Chains",
 		"desc": "Chains the 2 defenders nearest him together with a 5 yard chain for the play.",
-		"chains_defenders": Callable(AbilityDB, "_chains_defenders_dark_chains"),
+		"chains_defenders": 5.0,
 	},
 	"wasted_potential": {
 		"name": "Wasted Potential",
 		"desc": "Great hands everywhere except the end zone, where his Dexterity drops to 0 and he can't catch the ball at all.",
-		"zero_dex_in_endzone": Callable(AbilityDB, "_zero_dex_in_endzone_wasted_potential"),
+		"zero_dex_in_endzone": true,
 	},
 	"kneecapper": {
 		"name": "Kneecapper",
 		"desc": "At the snap, shoots the defender closest to him, who runs at half speed for 5 seconds.",
-		"cripples_nearest_defender": Callable(AbilityDB, "_cripples_nearest_defender_kneecapper"),
+		"cripples_nearest_defender": 5.0,
 	},
 	"power_scramble": {
 		"name": "Power Scramble",
 		"desc": "+4 Strength when he takes off running with the ball.",
-		"on_scramble_bonus": Callable(AbilityDB, "_on_scramble_bonus_power_scramble"),
+		"on_scramble_bonus": {"strength": 4},
 	},
 	"knock_knock": {
 		"name": "Knock Knock",
 		"desc": "+3 Agility and +3 Strength when he takes a handoff.",
-		"on_handoff_bonus": Callable(AbilityDB, "_on_handoff_bonus_knock_knock"),
+		"on_handoff_bonus": {"agility": 3, "strength": 3},
 	},
 	"copycat": {
 		"name": "Copycat",
 		"desc": "Whenever a teammate gains stats during a play, he gains them too.",
-		"copies_team_gains": Callable(AbilityDB, "_copies_team_gains_copycat"),
+		"copies_team_gains": true,
 	},
 	"tainted_blessing": {
 		"name": "Tainted Blessing",
 		"desc": "+4 to a random stat at the start of every play.",
-		"random_stat_at_snap": Callable(AbilityDB, "_random_stat_at_snap_tainted_blessing"),
+		"random_stat_at_snap": 4,
 	},
 	"keg_stand": {
 		"name": "Keg Stand",
 		"desc": "10 yards into his route, drops a beer keg. The 2 defenders nearest it drop what they're doing and go to it.",
-		"drops_keg_after_yards": Callable(AbilityDB, "_drops_keg_after_yards_keg_stand"),
+		"drops_keg_after_yards": 10.0,
 	},
 	"jackpot": {
 		"name": "Jackpot",
 		"desc": "Drops a slot machine at the start of the play. If it hits (33%), every teammate gets +2 to every stat for the play.",
-		"slot_machine_chance": Callable(AbilityDB, "_slot_machine_chance_jackpot"),
+		"slot_machine_chance": 0.33,
 	},
 	"dooper_wr": {
 		"name": "Dooper Blood (WR)",
@@ -582,38 +583,38 @@ const ABILITIES := {
 	"weatherproof": {
 		"name": "Weatherproof",
 		"desc": "Immune to weather effects.",
-		"weather_immune": Callable(AbilityDB, "_weather_immune_weatherproof"),
+		"weather_immune": true,
 	},
 	"snow_plow": {
 		"name": "Snow Plow",
 		"desc": "Immune to snow - and so is your entire offensive line.",
-		"snow_immune_line": Callable(AbilityDB, "_snow_immune_line_snow_plow"),
+		"snow_immune_line": true,
 	},
 	"mitosis": {
 		"name": "Mitosis",
 		"desc": "At the start of the play, splits in half. Both halves run his route, one second apart, and his stats are divided evenly between them.",
-		"splits_at_snap": Callable(AbilityDB, "_splits_at_snap_mitosis"),
+		"splits_at_snap": 1.0,
 	},
 	"rogue_lineman": {
 		"name": "Line Abandonment",
 		"desc": "50% chance each play to abandon the line and run a random route. If he does, the lineman next to him gets all of his Strength and takes his man as well.",
-		"abandons_line_chance": Callable(AbilityDB, "_abandons_line_chance_rogue_lineman"),
+		"abandons_line_chance": 0.5,
 	},
 	"flip_flop": {
 		"name": "Flip Flop",
 		"desc": "50% chance each play to ignore his route and run a random one. If he does, +3 to all stats.",
-		"freelance_chance": Callable(AbilityDB, "_freelance_chance_flip_flop"),
-		"freelance_bonus": Callable(AbilityDB, "_freelance_bonus_flip_flop"),
+		"freelance_chance": 0.5,
+		"freelance_bonus": {"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 3},
 	},
 	"meltdown": {
 		"name": "Meltdown",
 		"desc": "Unusually high stats, but a 15% chance every second of melting and being out for the rest of the play.",
-		"melt_chance_per_second": Callable(AbilityDB, "_melt_chance_per_second_meltdown"),
+		"melt_chance_per_second": 0.15,
 	},
 	"golden_touch": {
 		"name": "Golden Touch",
 		"desc": "Everything he does pays out double football bucks.",
-		"cash_mult": Callable(AbilityDB, "_cash_mult_golden_touch"),
+		"cash_mult": 2.0,
 	},
 	# --- Kickers --------------------------------------------------------------
 	"comeback_kicker": {
@@ -635,25 +636,21 @@ const ABILITIES := {
 	"fast_hands": {
 		"name": "Fast Hands",
 		"desc": "+3 Agility when he scrambles, +3 Agility to whoever he hands off to, and +2 Strength and +2 Dexterity to your kicker.",
-		"on_scramble_bonus": Callable(AbilityDB, "_on_scramble_bonus_fast_hands"),
-		"handoff_give_bonus": Callable(AbilityDB, "_handoff_give_bonus_fast_hands"),
-		"kicker_assist": Callable(AbilityDB, "_kicker_assist_fast_hands"),
+		"on_scramble_bonus": {"agility": 3},
+		"handoff_give_bonus": {"agility": 3},
+		"kicker_assist": {"strength": 2, "dexterity": 2},
 	},
 	"strength_in_numbers": {
 		"name": "Strength in Numbers",
 		"desc": "Flex players stack: with 2 or more of a position on the field, each of them gets +1 Strength and +1 Agility for every one there (3 TEs = +3/+3 each).",
-		"stacks_flex_positions": Callable(AbilityDB, "_stacks_flex_positions_strength_in_numbers"),
+		"stacks_flex_positions": ["strength", "agility"],
 	},
 	"lucky_fingers": {
 		"name": "Lucky Fingers",
 		"desc": "His throws land much closer to where he aimed them.",
-		"aim_noise_mult": Callable(AbilityDB, "_aim_noise_mult_lucky_fingers"),
+		"aim_noise_mult": 0.5,
 	},
 }
-
-
-static func get_ability(id: String) -> Dictionary:
-	return ABILITIES.get(id, {})
 
 
 static func ability_name(id: String) -> String:
@@ -671,18 +668,20 @@ static func all_ids() -> Array:
 
 
 # ============================================================================
-# Hook dispatch - one Callable lookup per call, nothing to edit as the
-# ability list grows.
+# Hook dispatch - one lookup per call, nothing to edit as the ability list
+# grows.
 # ============================================================================
 
 static func _dispatch(id: String, hook: String, args: Array, default: Variant) -> Variant:
 	if id == "":
 		return default
 	var entry: Dictionary = ABILITIES.get(id, {})
-	var fn: Callable = entry.get(hook, Callable())
-	if not fn.is_valid():
+	if not entry.has(hook):
 		return default
-	return fn.callv(args)
+	var value: Variant = entry[hook]
+	if value is Callable:
+		return (value as Callable).callv(args)
+	return value
 
 
 ## Stat deltas granted at the snap. Returns {stat_key: int}.
@@ -830,7 +829,7 @@ static func max_agility_on_catch(id: String) -> bool:
 
 
 ## Seconds of holding the ball as carrier before this player's ability ends
-## the play as a turnover, default 0.0 (never).
+## the play where he stands, default 0.0 (never).
 static func explodes_after_seconds(id: String) -> float:
 	return _dispatch(id, "explodes_after_seconds", [], 0.0)
 
@@ -1046,10 +1045,6 @@ static func _catch_contested_king(ctx: Dictionary) -> float:
 	return 0.0
 
 
-static func _deep_throw_bonus_deep_threat() -> Dictionary:
-	return {"agility": 2}
-
-
 static func _catch_deep_threat(ctx: Dictionary) -> float:
 	if bool(ctx.get("target_is_deep", false)):
 		return 0.10
@@ -1105,10 +1100,6 @@ static func _catch_possession_man(ctx: Dictionary) -> float:
 	return 0.0
 
 
-static func _pass_block_bonus_blindside_wall() -> Dictionary:
-	return {"strength": 3, "intelligence": 2}
-
-
 static func _snap_escape_artist(_p: PlayerData, _ctx: Dictionary) -> Dictionary:
 	return {"agility": 1}
 
@@ -1131,10 +1122,6 @@ static func _snap_workhorse(_p: PlayerData, _ctx: Dictionary) -> Dictionary:
 	return {"stamina": 5}
 
 
-static func _fatigue_floor_workhorse() -> float:
-	return 0.85
-
-
 static func _snap_clutch_gene(_p: PlayerData, ctx: Dictionary) -> Dictionary:
 	if int(ctx.get("down", 1)) == 4:
 		return {"strength": 2, "agility": 2, "dexterity": 2, "stamina": 2, "intelligence": 2}
@@ -1153,80 +1140,12 @@ static func _snap_goal_line_back(_p: PlayerData, ctx: Dictionary) -> Dictionary:
 	return {}
 
 
-static func _dashes_at_snap_dash_start() -> bool:
-	return true
-
-
-static func _speed_cap_cant_miss() -> int:
-	return 4
-
-
-static func _guarantees_catch_cant_miss() -> bool:
-	return true
-
-
-static func _disrupted_mult_quick_recovery() -> float:
-	return 0.2
-
-
 static func _passer_dex_bonus_trusted_target_wr(target_pos: PlayerData.Pos) -> int:
 	return 4 if target_pos == PlayerData.Pos.WR else 0
 
 
 static func _passer_dex_bonus_trusted_target_te(target_pos: PlayerData.Pos) -> int:
 	return 4 if target_pos == PlayerData.Pos.TE else 0
-
-
-static func _fake_chance_misdirection() -> float:
-	return 0.5
-
-
-static func _on_carry_bonus_power_surge() -> Dictionary:
-	return {"strength": 6}
-
-
-static func _dodges_once_phantom_step() -> bool:
-	return true
-
-
-static func _catches_drops_guardian_angel() -> bool:
-	return true
-
-
-static func _locks_dl_at_snap_lockdown_block() -> bool:
-	return true
-
-
-static func _team_buff_field_command() -> Dictionary:
-	return {"pos": PlayerData.Pos.TE, "stat": "intelligence", "amount": 2}
-
-
-static func _team_buff_spacing_coach() -> Dictionary:
-	return {"pos": PlayerData.Pos.WR, "stat": "agility", "amount": 2}
-
-
-static func _team_buff_power_scheme() -> Dictionary:
-	return {"pos": PlayerData.Pos.RB, "stat": "strength", "amount": 2}
-
-
-static func _team_buff_line_captain() -> Dictionary:
-	return {"pos": PlayerData.Pos.T, "stat": "strength", "amount": 2}
-
-
-static func _team_buff_qb_whisperer() -> Dictionary:
-	return {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 3}
-
-
-static func _team_buff_qb_confidant() -> Dictionary:
-	return {"pos": PlayerData.Pos.QB, "stat": "intelligence", "amount": 5}
-
-
-static func _distracts_defenders_attention_hog() -> bool:
-	return true
-
-
-static func _evades_man_coverage_ghost_route() -> bool:
-	return true
 
 
 static func _snap_down_and_distance(_p: PlayerData, ctx: Dictionary) -> Dictionary:
@@ -1242,134 +1161,10 @@ static func _snap_pressure_reader(_p: PlayerData, ctx: Dictionary) -> Dictionary
 	return {}
 
 
-static func _on_carry_bonus_instant_burst() -> Dictionary:
-	return {"agility": 4}
-
-
-static func _cloak_seconds_cloaked_route() -> float:
-	return 2.0
-
-
-static func _taunts_defenders_decoy() -> bool:
-	return true
-
-
-static func _counts_as_positions_positionless() -> Array:
-	return [PlayerData.Pos.RB, PlayerData.Pos.TE, PlayerData.Pos.WR]
-
-
 static func _snap_bowl_jitters(_p: PlayerData, ctx: Dictionary) -> Dictionary:
 	if bool(ctx.get("is_bowl_game", false)):
 		return {}
 	return {"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 3}
-
-
-static func _dedicated_blocker_enforcer() -> bool:
-	return true
-
-
-static func _right_side_buff_right_side_coach() -> Dictionary:
-	return {"stat": "dexterity", "amount": 2, "count": 2}
-
-
-static func _team_buff_tackle_pride() -> Dictionary:
-	return {"pos": PlayerData.Pos.T, "stat": "strength", "amount": 1}
-
-
-static func _tier_buff_veteran_mentor() -> Dictionary:
-	return {"qualities": [ShopPlayerDB.QUALITY_ROOKIE, ShopPlayerDB.QUALITY_SOPHOMORE], "amount": 1}
-
-
-static func _pushes_defense_at_snap_drive_block() -> float:
-	return 5.0
-
-
-static func _max_agility_on_catch_combustion() -> bool:
-	return true
-
-
-static func _explodes_after_seconds_combustion() -> float:
-	return 3.0
-
-
-static func _route_budget_mult_boundless() -> float:
-	return 2.0
-
-
-static func _curses_nearest_defender_corruption() -> bool:
-	return true
-
-
-static func _earthquake_on_catch_aftershock() -> bool:
-	return true
-
-
-static func _decaying_stat_start_stat_pad() -> int:
-	return 7
-
-
-static func _decaying_stat_floor_stat_pad() -> int:
-	return 2
-
-
-static func _blocks_stat_loss_stat_shield() -> bool:
-	return true
-
-
-static func _perfect_aim_twohands_aim() -> bool:
-	return true
-
-
-static func _dex_per_throw_yards_gunslinger_growth() -> float:
-	return 0.1
-
-
-static func _drops_banana_peels_slippery_trail() -> int:
-	return 2
-
-
-static func _gain_per_second_warming_up() -> Dictionary:
-	return {"stat": "strength", "amount": 1}
-
-
-static func _undrawn_route_bonus_sigma_grindset() -> Dictionary:
-	return {"agility": 4}
-
-
-static func _chains_defenders_dark_chains() -> float:
-	return 5.0
-
-
-static func _zero_dex_in_endzone_wasted_potential() -> bool:
-	return true
-
-
-static func _cripples_nearest_defender_kneecapper() -> float:
-	return 5.0
-
-
-static func _on_scramble_bonus_power_scramble() -> Dictionary:
-	return {"strength": 4}
-
-
-static func _on_handoff_bonus_knock_knock() -> Dictionary:
-	return {"agility": 3, "strength": 3}
-
-
-static func _copies_team_gains_copycat() -> bool:
-	return true
-
-
-static func _random_stat_at_snap_tainted_blessing() -> int:
-	return 4
-
-
-static func _drops_keg_after_yards_keg_stand() -> float:
-	return 10.0
-
-
-static func _slot_machine_chance_jackpot() -> float:
-	return 0.33
 
 
 ## Shared by the three Ricky Dooper abilities: +1 to every stat per OTHER
@@ -1397,38 +1192,6 @@ static func _snap_dooper_rb(p: PlayerData, ctx: Dictionary) -> Dictionary:
 	return _dooper_bonus(p, ctx, PlayerData.Pos.RB, "rb_count")
 
 
-static func _weather_immune_weatherproof() -> bool:
-	return true
-
-
-static func _snow_immune_line_snow_plow() -> bool:
-	return true
-
-
-static func _splits_at_snap_mitosis() -> float:
-	return 1.0
-
-
-static func _abandons_line_chance_rogue_lineman() -> float:
-	return 0.5
-
-
-static func _freelance_chance_flip_flop() -> float:
-	return 0.5
-
-
-static func _freelance_bonus_flip_flop() -> Dictionary:
-	return {"strength": 3, "agility": 3, "dexterity": 3, "stamina": 3, "intelligence": 3}
-
-
-static func _melt_chance_per_second_meltdown() -> float:
-	return 0.15
-
-
-static func _cash_mult_golden_touch() -> float:
-	return 2.0
-
-
 static func _kick_dex_comeback_kicker(ctx: Dictionary) -> int:
 	return int(ctx.get("points_down", 0))
 
@@ -1439,23 +1202,3 @@ static func _kick_dex_red_zone_yips(ctx: Dictionary) -> int:
 
 static func _kick_dex_straight_shooter(ctx: Dictionary) -> int:
 	return int(round(4.0 * (1.0 - clampf(float(ctx.get("curve", 1.0)), 0.0, 1.0))))
-
-
-static func _on_scramble_bonus_fast_hands() -> Dictionary:
-	return {"agility": 3}
-
-
-static func _handoff_give_bonus_fast_hands() -> Dictionary:
-	return {"agility": 3}
-
-
-static func _kicker_assist_fast_hands() -> Dictionary:
-	return {"strength": 2, "dexterity": 2}
-
-
-static func _stacks_flex_positions_strength_in_numbers() -> Array:
-	return ["strength", "agility"]
-
-
-static func _aim_noise_mult_lucky_fingers() -> float:
-	return 0.5

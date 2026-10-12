@@ -164,7 +164,7 @@ const JACKPOT_BONUS := 2
 ## Purely for field_view.gd's muzzle-flash tracer.
 var shots: Array = []
 
-const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
+const STAT_KEYS := PlayerData.STAT_KEYS
 
 ## For flexes nobody drew a route for: slot -> the RouteBook.STOCK id they
 ## were handed this snap, so the chalkboard can name it instead of just
@@ -450,7 +450,9 @@ func _credit_game_stats(res: Dictionary) -> void:
 	var yards: float = res.get("yards", 0.0)
 	var td := bool(res.get("td", false))
 
-	if kind == "touchdown":
+	# A touchdown or a "combustion" explosion ends a catch-and-run or a
+	# carry like any other - credit the yards to whichever it was.
+	if kind == "touchdown" or kind == "explosion":
 		kind = "complete" if _pass_completed_this_play else "run"
 
 	match kind:
@@ -804,26 +806,19 @@ func _effective_positions(pd: PlayerData) -> Array:
 ## Bake item and ability modifiers into `eff` for the duration of this play.
 func _apply_modifiers(sp: SimPlayer, ctx: Dictionary) -> void:
 	var pd := sp.data
-	var base := {
-		"strength": pd.strength,
-		"agility": pd.agility,
-		"dexterity": pd.dexterity,
-		"stamina": pd.stamina,
-		"intelligence": pd.intelligence,
-	}
+	var base := {}
+	for key in STAT_KEYS:
+		base[key] = pd.stat(key)
 	var decay_start := AbilityDB.decaying_stat_start(sp.ability())
 	if decay_start > 0:
 		var decayed := clampi(decay_start - sp.stat_decay, AbilityDB.decaying_stat_floor(sp.ability()), 15)
 		for key in base:
 			base[key] = decayed
 	sp.stat_base = base.duplicate()
-	var item_mods := ItemDB.total_stat_mods(pd.items)
-	for key in item_mods:
-		base[key] = int(base[key]) + int(item_mods[key])
-	for key in match_bonus_for(pd):
-		base[key] = int(base[key]) + int(match_bonus_for(pd)[key])
-	for key in AbilityDB.snap_bonus(sp.ability(), pd, ctx):
-		base[key] = int(base[key]) + int(AbilityDB.snap_bonus(sp.ability(), pd, ctx)[key])
+	for mods: Dictionary in [ItemDB.total_stat_mods(pd.items), match_bonus_for(pd),
+			AbilityDB.snap_bonus(sp.ability(), pd, ctx)]:
+		for key in mods:
+			base[key] = int(base[key]) + int(mods[key])
 	_apply_weather(sp, base)
 	var agi_cap := AbilityDB.speed_cap(sp.ability())
 	if agi_cap < 99:
@@ -907,13 +902,14 @@ func _team_blocks_stat_loss() -> bool:
 ## Penalty for lining a player up somewhere he does not belong.
 func _out_of_position_penalty(sp: SimPlayer, wanted: String) -> void:
 	var natural := sp.data.pos_name()
-	if natural == wanted:
+	var fits: Array = RouteBook.SLOT_ROLE_FITS if wanted == RouteBook.SLOT_ROLE else [wanted]
+	if fits.has(natural):
 		return
 	for pos in _effective_positions(sp.data):
-		if PlayerData.POS_NAMES[pos] == wanted:
+		if fits.has(PlayerData.POS_NAMES[pos]):
 			return
 	var family_ok := (
-		(wanted in ["WR", "TE", "RB"] and natural in ["WR", "TE", "RB"])
+		(wanted in ["WR", "TE", "RB", RouteBook.SLOT_ROLE] and natural in ["WR", "TE", "RB"])
 	)
 	# Proportional, not flat: subtracting 3 from a rookie with 3 Strength
 	# wiped him out entirely.
@@ -1097,7 +1093,7 @@ func _apply_tier_buffs() -> void:
 		for other in offense:
 			if other == sp or not qualities.has(other.data.quality):
 				continue
-			for stat in ["strength", "agility", "dexterity", "stamina", "intelligence"]:
+			for stat in STAT_KEYS:
 				other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
 
 
@@ -2959,8 +2955,10 @@ func _step_defense(delta: float) -> void:
 
 		# Mind Reader ignores his assigned man/zone and beelines for whoever's
 		# actually most open, the same way the QB reads the field - see
-		# _most_open_receiver.
-		if d.data.aura_id == AuraDB.MIND_READER and d.role != SimPlayer.Role.RUSH:
+		# _most_open_receiver. Only while the QB still has it in the pocket -
+		# once anyone is running with the ball he pursues like everyone else.
+		var pocket := carrier == null or (carrier.slot == "QB" and not qb_scrambling)
+		if d.data.aura_id == AuraDB.MIND_READER and d.role != SimPlayer.Role.RUSH and pocket:
 			var target := _most_open_receiver()
 			if target != null:
 				d.move_toward_point(target.pos, delta, 1.0)
@@ -3524,6 +3522,16 @@ func _tackle(d: SimPlayer) -> void:
 	# He goes down in the pile with him (purely visual - the play is over).
 	d.downed = 0.0001
 	tackler = d
+	# Likewise the other way: dragged down in his own end zone is a safety,
+	# even when the tackle lands the same frame he crossed into it.
+	if carrier.pos.x <= OWN_GOAL:
+		_end_play({
+			"kind": "safety",
+			"yards": carrier.pos.x - los,
+			"turnover": true,
+			"text": "Tackled in the end zone. Safety!",
+		})
+		return
 	var end_x := carrier.pos.x
 	var is_sack := carrier.slot == "QB" and not qb_scrambling and not _play_was_a_run()
 	var kind := "sack" if is_sack else ("run" if _play_was_a_run() else "complete")
@@ -3566,7 +3574,14 @@ func _check_dead() -> void:
 		var yards := 0.0
 		if carrier != null:
 			yards = carrier.pos.x - los
-		_end_play({"kind": "run", "yards": yards, "timeout": true, "text": "The play is whistled dead."})
+		# Credited as whatever the play actually was - a carry, a catch-and-
+		# run, or (nobody ever got the ball out) nothing at all.
+		var kind := "timeout"
+		if _play_was_a_run():
+			kind = "run"
+		elif _pass_completed_this_play:
+			kind = "complete"
+		_end_play({"kind": kind, "yards": yards, "timeout": true, "text": "The play is whistled dead."})
 
 
 ## "Combustion"'s fuse running out - ends the play on the spot, same as an
@@ -4086,10 +4101,17 @@ func won() -> bool:
 ## Rebuild the offense from a new lineup between drives, keeping the fatigue
 ## already accumulated by players who stay on the field.
 func resync_offense(new_starters: Array) -> void:
+	_remove_clones()
 	var prev := {}
+	var spots := {}   # slot -> [pos, target_pos], so a sub appears where his man stood
 	for sp in offense:
 		prev[sp.data] = sp.energy
+		spots[sp.slot] = [sp.pos, sp.target_pos]
 	_build_offense(new_starters)
+	for sp in offense:
+		if spots.has(sp.slot):
+			sp.pos = spots[sp.slot][0]
+			sp.target_pos = spots[sp.slot][1]
 	if kick_mode and kicker_sp != null:
 		offense.append(kicker_sp)
 		_align_kick()

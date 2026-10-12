@@ -32,6 +32,10 @@ window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[gui]
+
+theme/custom_font="res://assets/fonts/Oswald.ttf"
+
 [rendering]
 
 textures/canvas_textures/default_texture_filter=2

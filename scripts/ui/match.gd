@@ -751,7 +751,7 @@ func _kick_bar() -> Control:
 	body.add_child(info)
 	info.add_child(UIKit.label("#%d %s   K" % [pd.number, pd.pname], 16, UIKit.TEXT))
 	info.add_child(UIKit.stat_row(pd, 13))
-	info.add_child(UIKit.label("%s: %s" % [AbilityDB.ability_name(pd.ability_id), AbilityDB.ability_desc(pd.ability_id)],
+	info.add_child(UIKit.label(AbilityDB.ability_desc(pd.ability_id),
 		12, Color("9fc0b2")))
 	var range_yd := sim.kick_range()
 	var reach := UIKit.label("Range: %d yd of flight   -   the uprights are %d yd away" % [
@@ -1656,8 +1656,18 @@ func _check_sacrificial_gloves() -> void:
 				if cursed_names.has(p.pname):
 					exclude[p.pname] = true
 			var cursed := CursedPlayerDB.random_cursed(GameState.rng, exclude)
+			var vacated := ""
+			for slot in GameState.lineup:
+				if int(GameState.lineup[slot]) == i:
+					vacated = slot
 			GameState.cut_player(i)
 			GameState.add_player(cursed)
+			# He takes the wearer's spot if he can play it; any hole left
+			# over gets the best bench fit, so the next kickoff isn't blocked.
+			var new_idx := GameState.roster.size() - 1
+			if vacated != "" and GameState.fits_slot(new_idx, vacated):
+				GameState.set_slot(vacated, new_idx, false)
+			GameState.fill_empty_slots()
 			return
 
 
@@ -1851,9 +1861,8 @@ func _show_card(sp: SimPlayer) -> void:
 		effect.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		effect.custom_minimum_size = Vector2(300, 0)
 		v.add_child(effect)
-	var ab_name := AbilityDB.ability_name(pd.ability_id)
 	if sp.ability_negated and pd.ability_id != "":
-		v.add_child(UIKit.label("%s - NEGATED" % ab_name, 13, BowlDB.GIMMICK_COLOR))
+		v.add_child(UIKit.label("ABILITY NEGATED", 13, BowlDB.GIMMICK_COLOR))
 		var why := UIKit.label("Shut off by %s." % BowlDB.gimmick_name(BowlDB.IRON_WALL), 12, UIKit.MUTED)
 		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		why.custom_minimum_size = Vector2(300, 0)
@@ -1863,7 +1872,6 @@ func _show_card(sp: SimPlayer) -> void:
 	elif pd.ability_id == "":
 		v.add_child(UIKit.label("No special ability", 12, UIKit.MUTED))
 	else:
-		v.add_child(UIKit.label(ab_name, 13, UIKit.ACCENT))
 		var ab := UIKit.label(AbilityDB.ability_desc(pd.ability_id), 12, Color("9fc0b2"))
 		ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		ab.custom_minimum_size = Vector2(300, 0)
@@ -2001,11 +2009,16 @@ func _sub_row(idx: int, kind: String, slot: String) -> Control:
 	var b := UIKit.button("", 12)
 	b.custom_minimum_size = Vector2(0, 72)
 	b.pressed.connect(func():
-		GameState.set_slot(slot, idx)
+		# A tactical sub never cuts the benched man (see GameState.set_slot).
+		GameState.set_slot(slot, idx, false)
 		sim.resync_offense(GameState.starters())
 		# Personnel changed, so the formation may reshuffle - re-hang every
-		# drawn route off the new alignment.
-		_apply_call(false)
+		# drawn route off the new alignment. Only before a snap: between
+		# drives the next drive's begin_drive/_apply_call does it, and
+		# re-calling here would drop the sim back to PRESNAP on the drive
+		# that just ended.
+		if sim.phase == MatchSim.Phase.PRESNAP:
+			_apply_call(false)
 		_dismiss_overlays())
 
 	var h := HBoxContainer.new()
@@ -2025,8 +2038,11 @@ func _sub_row(idx: int, kind: String, slot: String) -> Control:
 	line.add_child(UIKit.label(p.pos_name(), 11, UIKit.MUTED if fit else UIKit.BAD))
 	col.add_child(line)
 	col.add_child(UIKit.stat_row(p, 11))
-	var ab_text := "No special ability" if p.ability_id == "" else "* %s" % AbilityDB.ability_name(p.ability_id)
+	var ab_text := "No special ability" if p.ability_id == "" else "* %s" % AbilityDB.ability_desc(p.ability_id)
 	var ab := UIKit.label(ab_text, 11, UIKit.MUTED if p.ability_id == "" else Color("9fc0b2"))
+	# One line in the bench row; the full text is on his card.
+	ab.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	ab.clip_text = true
 	col.add_child(ab)
 	h.add_child(col)
 

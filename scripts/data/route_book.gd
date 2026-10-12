@@ -91,11 +91,16 @@ static func _spots_for(p) -> Array:
 ## The position a flex is effectively playing at `spot`, used for the
 ## out-of-position penalty. A back split out wide is doing a receiver's job,
 ## so the formation reports what the spot asks for, not what the player is.
+## The two slot spots are SLOT: a tight end and a slot receiver both belong
+## there, so neither takes the penalty for lining up in one.
+const SLOT_ROLE := "SLOT"
+const SLOT_ROLE_FITS := ["WR", "TE"]
+
 static func role_name_for_spot(spot: Vector2) -> String:
 	if spot.x < -1.0:
 		return "RB"
 	if absf(spot.y) < 14.0:
-		return "TE"
+		return SLOT_ROLE
 	return "WR"
 
 

@@ -272,12 +272,29 @@ func _pick_row(idx: int) -> Control:
 	var current := _slots[_picking] == idx
 	var offer := UIKit.button("  In this square  " if current else "  Offer  ", 14)
 	offer.add_theme_color_override("font_color", RITUAL_COLOR if current else Color("d9534f"))
+	if not current and not _can_offer(idx):
+		# Taking him would leave too few at his position to field a lineup,
+		# and nothing else on the map is guaranteed to replace him.
+		offer.text = "  Can't spare him  "
+		offer.disabled = true
+		offer.tooltip_text = "Without him you couldn't field a full lineup."
 	offer.pressed.connect(func():
 		_slots[_picking] = idx
 		_picking = -1
 		_build())
 	h.add_child(offer)
 	return row
+
+
+## Whether `idx` can go in the square being filled, alongside whoever is
+## already in the other squares, and still leave a fieldable roster (the
+## Cursed player who rises is always a flex).
+func _can_offer(idx: int) -> bool:
+	var removed: Array = [idx]
+	for i in _slots.size():
+		if i != _picking and _slots[i] >= 0:
+			removed.append(_slots[i])
+	return GameState.can_field_lineup_without(removed, {"FLEX": 1})
 
 
 ## Where he stands on the team: which lineup spot he starts at (or bench),
@@ -337,6 +354,8 @@ func _sacrifice() -> void:
 	for idx in order:
 		GameState.cut_player(idx)
 	GameState.add_player(cursed)
+	# Sacrificed starters leave holes; refill them so kickoff isn't blocked.
+	GameState.fill_empty_slots()
 	# Next visit costs one more - see GameState.rituals_completed.
 	GameState.rituals_completed += 1
 	# One ritual per visit to this stop.
@@ -361,9 +380,11 @@ func _build_reveal(root: VBoxContainer) -> void:
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
 	v.add_child(UIKit.rule())
-	var card := UIKit.player_card(_revealed)
-	card.custom_minimum_size = Vector2(460, 0)
-	v.add_child(card)
+	var card := TradingCard.new(_revealed, "Cursed", RITUAL_COLOR)
+	card.custom_minimum_size = Vector2(260, 0)
+	var holder := CenterContainer.new()
+	holder.add_child(card)
+	v.add_child(holder)
 	var back := UIKit.primary_button("  Back to the map  ", 18)
 	back.custom_minimum_size = Vector2(0, 44)
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))

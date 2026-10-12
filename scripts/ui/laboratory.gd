@@ -114,7 +114,7 @@ func _specimen_row(e: Dictionary, owned: bool) -> Control:
 	v.add_child(head)
 
 	var id := String(e["ability_id"])
-	var ab := UIKit.label("* %s: %s" % [AbilityDB.ability_name(id), AbilityDB.ability_desc(id)], 12, Color("9fc0b2"))
+	var ab := UIKit.label("* %s" % AbilityDB.ability_desc(id), 12, Color("9fc0b2"))
 	ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(ab)
 	return row
@@ -145,11 +145,11 @@ func _build_reveal(root: VBoxContainer) -> void:
 	root.add_child(UIKit.label("Something climbs out of the tank...", 14, UIKit.MUTED))
 	root.add_child(UIKit.rule())
 
-	var card_panel := PanelContainer.new()
-	card_panel.add_theme_stylebox_override("panel", UIKit.stylebox(UIKit.PANEL_HI, 8, 3, OddityPlayerDB.COLOR))
-	card_panel.custom_minimum_size = Vector2(420, 0)
-	card_panel.add_child(UIKit.player_card(_revealed))
-	root.add_child(card_panel)
+	var card := TradingCard.new(_revealed, "Oddity", OddityPlayerDB.COLOR)
+	card.custom_minimum_size = Vector2(260, 0)
+	var holder := CenterContainer.new()
+	holder.add_child(card)
+	root.add_child(holder)
 
 	var sp := Control.new()
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL

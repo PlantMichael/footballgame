@@ -32,14 +32,7 @@ static func _ensure_loaded() -> void:
 	if _loaded:
 		return
 	_loaded = true
-	if not FileAccess.file_exists(DATA_PATH):
-		push_error("ItemDB: missing %s" % DATA_PATH)
-		return
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(DATA_PATH))
-	if not (parsed is Array):
-		push_error("ItemDB: %s did not parse to a JSON array" % DATA_PATH)
-		return
-	for e in parsed:
+	for e in DataUtil.load_json_array(DATA_PATH, "ItemDB"):
 		if not (e is Dictionary):
 			continue
 		var id := String(e.get("id", ""))

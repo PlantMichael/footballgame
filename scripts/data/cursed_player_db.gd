@@ -41,30 +41,19 @@ const HEAD := "cursed"
 
 
 static func all_names() -> Array:
-	var out: Array = []
-	for e in CURSED:
-		out.append(String(e["name"]))
-	return out
+	return DataUtil.names_of(CURSED)
 
 
 static func make_named(rng: RandomNumberGenerator, name: String) -> PlayerData:
-	for e in CURSED:
-		if e["name"] == name:
-			return _make(rng, e)
-	return null
+	var e := DataUtil.entry_named(CURSED, name)
+	return null if e.is_empty() else _make(rng, e)
 
 
 ## One random Cursed player, preferring a name not already in `exclude_names`
 ## (roster names -> true) - falls back to allowing a repeat once all 4 are
 ## already owned.
 static func random_cursed(rng: RandomNumberGenerator, exclude_names: Dictionary = {}) -> PlayerData:
-	var pool: Array = []
-	for e in CURSED:
-		if not exclude_names.has(String(e["name"])):
-			pool.append(e)
-	if pool.is_empty():
-		pool = CURSED
-	return _make(rng, pool[rng.randi_range(0, pool.size() - 1)])
+	return _make(rng, DataUtil.pick_excluding(rng, CURSED, exclude_names))
 
 
 static func _make(rng: RandomNumberGenerator, e: Dictionary) -> PlayerData:

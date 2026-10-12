@@ -10,7 +10,7 @@ doesn't end it costs you the win bonus and you move on along the map.
 
 ## Running
 
-Open the folder in Godot 4.3 and press play, or:
+Open the folder in Godot 4.7 and press play, or:
 
 ```
 godot --path . 
@@ -139,7 +139,7 @@ ability; 15 is the ceiling. Bracket opponents start at quality 2.8 and climb
 fixed stat lines, fixed abilities, no procedural generation. The roster
 itself lives in `data/shop_players.json` (not code), loaded and cached by
 `scripts/data/shop_player_db.gd` — adding a player is a data edit, not a
-script change. The shop always offers exactly 4 players, drawn without
+script change. The shop always offers exactly 6 players (`GameState.SHOP_PLAYER_COUNT`), drawn without
 repeats and weighted by rarity tier so higher tiers show up less often
 (Rookie/Sophomore weight 1.0, Veteran 0.8, All Star 0.5). Stat bands rise
 with rarity: Rookie 2-4, Sophomore 4-6, Veteran 5-9, All Star 7-11.

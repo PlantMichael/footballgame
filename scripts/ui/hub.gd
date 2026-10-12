@@ -44,7 +44,8 @@ func _build() -> void:
 	root.add_child(UIKit.header(GameState.team_name, "Next: %s   -   %d loss%s left before the season is over" % [
 		GameState.round_label(), lives_left, "" if lives_left == 1 else "es"]))
 
-	var map_panel := UIKit.panel()
+	# The season's schedule, inked on a coach's sheet (see map_view.gd).
+	var map_panel := PlayCard.new()
 	map_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(map_panel)
 	_map = MapView.new()

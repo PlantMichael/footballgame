@@ -95,6 +95,30 @@
 		493.0,
 		493.0
 	],
+	"idropballsback": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"idropballsfront": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"idropballsleft": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"idropballsright": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
 	"moneybagsback": [
 		255.9,
 		134.5,
@@ -214,5 +238,29 @@
 		135.6,
 		492.5,
 		492.5
+	],
+	"timmytoughknucklesback": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"timmytoughknucklesfront": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"timmytoughknucklesleft": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
+	],
+	"timmytoughknucklesright": [
+		255.9,
+		134.5,
+		493.0,
+		493.0
 	]
 }

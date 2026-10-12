@@ -97,6 +97,11 @@ func _play_full_match() -> void:
 				drives_played += 1
 				if sim.drive_num >= sim.total_drives:
 					break
+				# A scoring drive holds the next one until a per-game boost is
+				# picked, exactly as the coach would have to.
+				var pending: Array = scene.get("pending_upgrades")
+				if not pending.is_empty():
+					scene.call("_apply_upgrade", pending[0]["player"], pending[0])
 				# Exercise the substitution path once per match.
 				if drives_played == 1:
 					_try_substitution(scene, sim)

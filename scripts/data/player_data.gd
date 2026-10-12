@@ -12,6 +12,9 @@ enum Pos { QB, C, T, RB, WR, TE, K }
 
 const POS_NAMES := ["QB", "C", "T", "RB", "WR", "TE", "K"]
 
+## Every stat, in display order - the one list everything else uses.
+const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
+
 ## The stats a kicker actually has, in display order.
 const KICKER_STATS := ["strength", "dexterity"]
 

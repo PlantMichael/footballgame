@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b1krh6r6e5vn"
-path="res://.godot/imported/index.png-aef8614cbeb475057c849451554bb85e.ctex"
+uid="uid://dkk6x04orngyo"
+path="res://.godot/imported/timmytoughknucklesright.png-0293be4691789034414019e9c6c1636c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://web_build/index.png"
-dest_files=["res://.godot/imported/index.png-aef8614cbeb475057c849451554bb85e.ctex"]
+source_file="res://assets/heads_outlined/timmytoughknucklesright.png"
+dest_files=["res://.godot/imported/timmytoughknucklesright.png-0293be4691789034414019e9c6c1636c.ctex"]
 
 [params]
 

@@ -3,7 +3,7 @@ extends RefCounted
 
 ## Hardcoded, roguelike-style buyable players (like Binding of Isaac items):
 ## fixed names, fixed stat lines, fixed abilities. The shop always offers
-## exactly 4 of these, drawn without repeats and weighted by rarity so the
+## exactly GameState.SHOP_PLAYER_COUNT (6) of these, drawn without repeats and weighted by rarity so the
 ## higher tiers show up less often.
 ##
 ## The roster itself lives in res://data/shop_players.json, not in code, so
@@ -67,16 +67,7 @@ static func _entries() -> Array:
 
 static func _load() -> void:
 	_loaded = true
-	_cache = []
-	if not FileAccess.file_exists(DATA_PATH):
-		push_error("ShopPlayerDB: missing %s" % DATA_PATH)
-		return
-	var text := FileAccess.get_file_as_string(DATA_PATH)
-	var parsed: Variant = JSON.parse_string(text)
-	if not (parsed is Array):
-		push_error("ShopPlayerDB: %s did not parse to a JSON array" % DATA_PATH)
-		return
-	_cache = parsed
+	_cache = DataUtil.load_json_array(DATA_PATH, "ShopPlayerDB")
 
 
 static func _make(entry: Dictionary, rng: RandomNumberGenerator) -> PlayerData:
@@ -115,17 +106,10 @@ static func roll_stock(rng: RandomNumberGenerator, count: int = 4,
 			pool.append(e)
 	var out: Array[PlayerData] = []
 	while pool.size() > 0 and out.size() < count:
-		var total := 0.0
+		var weights: Array = []
 		for e in pool:
-			total += float(QUALITY_WEIGHTS.get(int(e.get("quality", 1)), 1.0))
-		var roll := rng.randf() * total
-		var acc := 0.0
-		var pick_i := pool.size() - 1
-		for i in pool.size():
-			acc += float(QUALITY_WEIGHTS.get(int(pool[i].get("quality", 1)), 1.0))
-			if roll <= acc:
-				pick_i = i
-				break
+			weights.append(QUALITY_WEIGHTS.get(int(e.get("quality", 1)), 1.0))
+		var pick_i := DataUtil.weighted_index(rng, weights)
 		out.append(_make(pool[pick_i], rng))
 		pool.remove_at(pick_i)
 	return out

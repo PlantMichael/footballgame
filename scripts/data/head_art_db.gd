@@ -61,6 +61,18 @@ const SOURCE := {
 		"left": "res://assets/heads_outlined/moneybagsleft.png",
 		"right": "res://assets/heads_outlined/moneybagsright.png",
 	},
+	"idropballs": {
+		"front": "res://assets/heads_outlined/idropballsfront.png",
+		"back": "res://assets/heads_outlined/idropballsback.png",
+		"left": "res://assets/heads_outlined/idropballsleft.png",
+		"right": "res://assets/heads_outlined/idropballsright.png",
+	},
+	"timmytoughknuckles": {
+		"front": "res://assets/heads_outlined/timmytoughknucklesfront.png",
+		"back": "res://assets/heads_outlined/timmytoughknucklesback.png",
+		"left": "res://assets/heads_outlined/timmytoughknucklesleft.png",
+		"right": "res://assets/heads_outlined/timmytoughknucklesright.png",
+	},
 	"cursed": {
 		"front": "res://assets/heads_outlined/cursedplayerfront.png",
 		"back": "res://assets/heads_outlined/cursedplayerback.png",

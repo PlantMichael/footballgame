@@ -44,15 +44,18 @@ func _build() -> void:
 	top.add_theme_constant_override("separation", 12)
 	root.add_child(top)
 
-	var title_box := UIKit.panel(UIKit.PANEL_HI)
+	var title_box := VBoxContainer.new()
 	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var title_label := UIKit.label("PLAYER BOOK", 24, UIKit.ACCENT)
-	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_box.add_child(title_label)
+	title_box.add_theme_constant_override("separation", 0)
+	title_box.add_child(UIKit.outlined(UIKit.label("PLAYER BOOK", 34, UIKit.ACCENT)))
+	title_box.add_child(UIKit.outlined(UIKit.label(
+		"Every hardcoded shop draft pick, Ritual Site Cursed player, and Laboratory Oddity in the game.",
+		15, UIKit.TEXT), 5))
 	top.add_child(title_box)
 
-	top.add_child(UIKit.label("Sort:", 15, UIKit.MUTED))
+	var sort_label := UIKit.outlined(UIKit.label("Sort:", 15, UIKit.TEXT), 5)
+	sort_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	top.add_child(sort_label)
 
 	var by_rarity := UIKit.primary_button("  Rarity  ", 14) if _sort_mode == "rarity" else UIKit.button("  Rarity  ", 14)
 	by_rarity.pressed.connect(func():
@@ -66,25 +69,27 @@ func _build() -> void:
 		_rebuild())
 	top.add_child(by_pos)
 
-	root.add_child(UIKit.label(
-		"Every hardcoded shop draft pick and Ritual Site Cursed player in the game.",
-		13, UIKit.MUTED))
-
 	var grid := GridContainer.new()
-	grid.columns = 5
-	grid.add_theme_constant_override("h_separation", 14)
-	grid.add_theme_constant_override("v_separation", 14)
-	var scroll := UIKit.scroll(grid)
+	grid.columns = 6
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 20)
+	# Centered in the scroll, with room around it for the cards' shadows.
+	var holder := CenterContainer.new()
+	var pad := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		pad.add_theme_constant_override("margin_" + side, 8)
+	pad.add_child(grid)
+	holder.add_child(pad)
+	var scroll := UIKit.scroll(holder)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(scroll)
 
 	for entry in _entries():
 		grid.add_child(_card(entry))
 
-	root.add_child(UIKit.rule())
-
 	var back := UIKit.button("  <- Back  ", 17)
 	back.custom_minimum_size = Vector2(0, 42)
+	back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 	root.add_child(back)
 
@@ -99,7 +104,7 @@ func _entries() -> Array:
 			"player": p,
 			"tier_rank": p.quality,
 			"tier_label": ShopPlayerDB.quality_name(p.quality),
-			"tier_color": _quality_color(p.quality),
+			"tier_color": UIKit.quality_color(p.quality),
 			"price": Generator.player_price(p),
 		})
 	for cursed_name in CursedPlayerDB.all_names():
@@ -142,60 +147,15 @@ func _entries() -> Array:
 	return out
 
 
-func _quality_color(q: int) -> Color:
-	match q:
-		ShopPlayerDB.QUALITY_ROOKIE: return Color("8a8f96")
-		ShopPlayerDB.QUALITY_SOPHOMORE: return Color("5aa9e6")
-		ShopPlayerDB.QUALITY_VETERAN: return Color("a06cd5")
-		ShopPlayerDB.QUALITY_ALL_STAR: return UIKit.ACCENT
-	return UIKit.MUTED
-
-
 func _card(entry: Dictionary) -> Control:
 	var p: PlayerData = entry["player"]
-	var tier_color: Color = entry["tier_color"]
-
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel", UIKit.stylebox(UIKit.PANEL_HI, 8, 3, tier_color))
-	card.custom_minimum_size = Vector2(190, 0)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	card.add_child(v)
-
-	var tier := UIKit.label(String(entry["tier_label"]).to_upper(), 12, tier_color)
-	tier.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(tier)
-
-	var portrait := UIKit.player_portrait(p, 110)
-	if portrait:
-		var center := CenterContainer.new()
-		center.add_child(portrait)
-		v.add_child(center)
-
-	var name_label := UIKit.label(p.pname, 16, UIKit.TEXT)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(name_label)
-	var pos_label := UIKit.label("#%d  %s  OVR %d" % [p.number, p.pos_name(), p.overall()], 12, UIKit.MUTED)
-	pos_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(pos_label)
-
-	v.add_child(UIKit.rule())
-	var ability := UIKit.label("Ability: %s" % AbilityDB.ability_name(p.ability_id), 13, UIKit.TEXT)
-	ability.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(ability)
-	var desc := UIKit.label(AbilityDB.ability_desc(p.ability_id), 11, UIKit.MUTED)
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(desc)
-
 	var price: int = entry["price"]
 	var price_text := "Ritual Site only" if price < 0 else "$%d" % price
-	var price_color := CURSED_COLOR if price < 0 else UIKit.ACCENT
 	if int(entry["tier_rank"]) == ODDITY_TIER_RANK:
 		price_text = "Laboratory - $%d, random stats" % price
-		price_color = OddityPlayerDB.COLOR
-	var price_label := UIKit.label(price_text, 13, price_color)
-	price_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var price_label := UIKit.marker_label(price_text, 17, UIKit.INK_RED)
 	price_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(price_label)
-
+	price_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var card := TradingCard.new(p, String(entry["tier_label"]), entry["tier_color"], price_label)
+	card.custom_minimum_size = Vector2(200, 0)
 	return card

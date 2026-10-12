@@ -250,26 +250,8 @@ func current_match_quality() -> float:
 ## the plain tier's quality (no Elite/bowl bump), which the roster overshoot
 ## is measured against.
 func quality_against(opp: Dictionary) -> float:
-	var base := float(opp.get("quality", 3.0)) + float(matches_played) * MATCH_QUALITY_STEP
-	var tier_q := float(opp.get("tier_quality", opp.get("quality", ROUND_ONE_QUALITY)))
-	var overshoot := maxf(0.0, roster_power() - tier_q)
-	return base + overshoot * ROSTER_OVERSHOOT_WEIGHT + star_excess() * STAR_WEIGHT
-
-
-## Average PlayerData.overall() of the 11 starters, on the same rough 1-15
-## scale as the "quality" knob Generator builds a defense from. 0.0 if the
-## lineup isn't even filled out yet.
-func roster_overall() -> float:
-	var total := 0
-	var counted := 0
-	for slot in SLOT_ORDER:
-		var p := player_at(slot)
-		if p != null:
-			total += p.overall()
-			counted += 1
-	if counted == 0:
-		return 0.0
-	return float(total) / float(counted)
+	var base := float(opp.get("quality", ROUND_ONE_QUALITY)) + float(matches_played) * MATCH_QUALITY_STEP
+	return base + _overshoot_against(opp) * ROSTER_OVERSHOOT_WEIGHT + star_excess() * STAR_WEIGHT
 
 
 ## A starter's rating for difficulty purposes: overall plus a bump for rarity
@@ -319,9 +301,13 @@ func star_excess() -> float:
 ## just keeping pace round to round), positive once a signing outpaces it.
 ## Drives both current_match_quality and aura_count.
 func _difficulty_overshoot() -> float:
-	var opp := current_opponent()
-	var base := float(opp.get("tier_quality", opp.get("quality", ROUND_ONE_QUALITY)))
-	return maxf(0.0, roster_power() - base)
+	return _overshoot_against(current_opponent())
+
+
+## The overshoot measured against `opp`'s plain tier quality.
+func _overshoot_against(opp: Dictionary) -> float:
+	var tier_q := float(opp.get("tier_quality", opp.get("quality", ROUND_ONE_QUALITY)))
+	return maxf(0.0, roster_power() - tier_q)
 
 
 ## True once the bowl at the end of the map has been played, won or lost.
@@ -419,7 +405,9 @@ func fits_slot(idx: int, slot: String) -> bool:
 	return p.natural_slot_kind() == slot_kind(slot)
 
 
-func set_slot(slot: String, idx: int) -> bool:
+## `allow_cut` false (an in-match substitution) never releases the benched
+## player - see the default-rookie cut below.
+func set_slot(slot: String, idx: int, allow_cut: bool = true) -> bool:
 	if not fits_slot(idx, slot):
 		return false
 
@@ -446,7 +434,7 @@ func set_slot(slot: String, idx: int) -> bool:
 	# placeholder until you could afford somebody real. Only applies when he
 	# is genuinely displaced: a straight swap moves him to another slot, and
 	# one default replacing another is just a lineup change.
-	if not swapped and displaced >= 0 and _is_default(displaced) and not _is_default(idx):
+	if allow_cut and not swapped and displaced >= 0 and _is_default(displaced) and not _is_default(idx):
 		cut_player(displaced)
 		return true
 
@@ -485,6 +473,43 @@ func auto_fill_lineup() -> void:
 			lineup[slot] = best
 			used[best] = true
 	roster_changed.emit()
+
+
+## Fills only the empty starting slots, each with the best bench player who
+## fits it - for when a cut (the Ritual Site, Sacrificial Gloves) leaves a
+## hole, without reshuffling anyone the coach already placed.
+func fill_empty_slots() -> void:
+	for slot in SLOT_ORDER:
+		if player_at(slot) != null:
+			continue
+		var best := -1
+		for i in roster.size():
+			if is_starting(i) or not fits_slot(i, slot):
+				continue
+			if best < 0 or roster[i].overall() > roster[best].overall():
+				best = i
+		if best >= 0:
+			lineup[slot] = best
+	roster_changed.emit()
+
+
+## How many starters of each natural slot kind a valid lineup needs.
+const REQUIRED_KINDS := {"QB": 1, "C": 1, "T": 4, "FLEX": 5}
+
+## True if the roster, minus the roster indices in `removed`, still has
+## enough players of every kind to field a full lineup. `incoming` (kind ->
+## count) is anyone joining in their place, e.g. the Ritual's Cursed flex.
+func can_field_lineup_without(removed: Array, incoming: Dictionary = {}) -> bool:
+	var counts := incoming.duplicate()
+	for i in roster.size():
+		if removed.has(i):
+			continue
+		var kind := roster[i].natural_slot_kind()
+		counts[kind] = int(counts.get(kind, 0)) + 1
+	for kind in REQUIRED_KINDS:
+		if int(counts.get(kind, 0)) < int(REQUIRED_KINDS[kind]):
+			return false
+	return true
 
 
 func lineup_is_valid() -> bool:
@@ -892,7 +917,7 @@ func add_match_mod(effects: Dictionary, note: String) -> void:
 					continue
 				var pick: PlayerData = pool[rng.randi_range(0, pool.size() - 1)]
 				var mods: Array = next_match_mods.get("player_mods", [])
-				for stat in ["strength", "agility", "dexterity", "stamina", "intelligence"]:
+				for stat in PlayerData.STAT_KEYS:
 					mods.append({"player": pick, "stat": stat, "amount": int(v)})
 				next_match_mods["player_mods"] = mods
 				note = "%s (%s)" % [note, pick.pname]
@@ -1015,15 +1040,8 @@ func _row_types(r: int) -> Array:
 
 
 func _weighted_stop() -> String:
-	var total := 0.0
-	for t in STOP_WEIGHTS:
-		total += float(STOP_WEIGHTS[t])
-	var roll := rng.randf() * total
-	for t in STOP_WEIGHTS:
-		roll -= float(STOP_WEIGHTS[t])
-		if roll <= 0.0:
-			return String(t)
-	return STOP_MYSTERY
+	var i := DataUtil.weighted_index(rng, STOP_WEIGHTS.values())
+	return String(STOP_WEIGHTS.keys()[i]) if i >= 0 else STOP_MYSTERY
 
 
 ## The opponent for a match/elite/bowl stop: a fresh team name at that row's
@@ -1132,6 +1150,8 @@ func _link_rows(r: int) -> void:
 
 # --- Shop stock -------------------------------------------------------------
 
+## Players on offer at each Shop stop - enough to steer toward a build.
+const SHOP_PLAYER_COUNT := 6
 const REROLL_COST := 30
 
 var shop_stock: Dictionary = {}
@@ -1169,12 +1189,16 @@ func _roll_shop() -> void:
 	for id in ItemDB.all_ids():
 		if not bought_items.has(id):
 			item_pool.append(id)
-	item_pool.shuffle()
+	# Drawn with `rng`, not Array.shuffle (Godot's global RNG), so a seeded
+	# run stays reproducible.
+	var items: Array = []
+	while items.size() < 4 and not item_pool.is_empty():
+		items.append(item_pool.pop_at(rng.randi_range(0, item_pool.size() - 1)))
 
 	shop_stock = {
 		"stop": _shop_key(),
-		"players": ShopPlayerDB.roll_stock(rng, 4, bought_shop_players),
-		"items": item_pool.slice(0, 4),
+		"players": ShopPlayerDB.roll_stock(rng, SHOP_PLAYER_COUNT, bought_shop_players),
+		"items": items,
 		"sold": {},
 	}
 

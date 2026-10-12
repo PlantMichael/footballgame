@@ -1,9 +1,10 @@
 extends Control
 
-## The run map (GameState.run_map), drawn left to right: one column per row of
-## stops, starting matches on the left and the 6 bowls on the right. Stops you
-## can go to next pulse; the path you've taken is traced in gold; everything
-## out of reach is dimmed. Clicking a stop emits stop_clicked - the hub
+## The run map (GameState.run_map), drawn left to right like a season
+## schedule inked on the coach's paper (hub.gd puts it on a PlayCard): one
+## column per row of stops, starting matches on the left and the 6 bowls on
+## the right. Stops you can go to next pulse in blue ink; the path you've
+## taken is traced in red marker; everything out of reach is faded. Clicking a stop emits stop_clicked - the hub
 ## decides what that means.
 
 signal stop_clicked(row: int, col: int)
@@ -13,7 +14,14 @@ const BOWL_R := 27.0
 const PAD_X := 44.0
 const PAD_Y := 32.0
 
-## Per stop type: ring color and the short label inside the circle.
+## Per stop type: ring color (for the dark detail panel - see hub.gd), the
+## darker ink it's drawn in on the paper map, and the short label inside the
+## circle.
+const INK := {
+	"match": Color("23262b"), "elite": Color("c8372d"), "shop": Color("9a6b00"),
+	"ritual": Color("7b2fb0"), "lab": Color("1f8a3a"), "practice": Color("2e7d32"),
+	"mystery": Color("1f5fa8"), "bowl": Color("9a6b00"),
+}
 const STYLE := {
 	"match": {"color": Color("dce8e2"), "text": "VS"},
 	"elite": {"color": Color("e8613c"), "text": "ELITE"},
@@ -92,26 +100,26 @@ func _draw_links() -> void:
 			var node := GameState.map_node(r, c)
 			for n in node.get("next", []):
 				var to := GameState.map_node(r + 1, int(n))
-				var col := Color(UIKit.LINE, 0.9)
+				var col := Color(UIKit.INK, 0.3)
 				var width := 2.0
 				if bool(node["done"]) and bool(to["done"]):
-					col = Color(UIKit.ACCENT, 0.85)
-					width = 3.5
+					col = Color(UIKit.INK_RED, 0.85)
+					width = 4.0
 				elif GameState.can_go_to(r + 1, int(n)) and (r == GameState.map_row and c == GameState.map_col):
-					col = Color(UIKit.TEXT, 0.7)
+					col = Color(UIKit.INK_BLUE, 0.75)
 					width = 3.0
 				draw_line(stop_pos(r, c), stop_pos(r + 1, int(n)), col, width, true)
 	# From the start line into row 0, before the first stop is picked.
 	if GameState.map_row < 0:
 		for c in (GameState.run_map[0] as Array).size():
 			var p := stop_pos(0, c)
-			draw_line(Vector2(6.0, p.y), p, Color(UIKit.TEXT, 0.5), 2.0, true)
+			draw_line(Vector2(6.0, p.y), p, Color(UIKit.INK_BLUE, 0.6), 2.0, true)
 
 
 ## A little padlock centered on `at`, `s` pixels tall-ish: shackle arc over
 ## a solid body with a keyhole.
 func _draw_padlock(at: Vector2, s: float) -> void:
-	var lock_col := Color("cfd8d3")
+	var lock_col := UIKit.INK_MUTED
 	draw_arc(at + Vector2(0.0, -s * 0.15), s * 0.42, PI, TAU, 12, lock_col, maxf(2.0, s * 0.18), true)
 	var body := Rect2(at + Vector2(-s * 0.6, -s * 0.15), Vector2(s * 1.2, s * 0.95))
 	draw_rect(body.grow(1.5), Color(0, 0, 0, 0.8))
@@ -123,7 +131,7 @@ func _draw_stop(r: int, c: int) -> void:
 	var node := GameState.map_node(r, c)
 	var t := String(node["type"])
 	var style: Dictionary = STYLE.get(t, STYLE["match"])
-	var col: Color = style["color"]
+	var col: Color = INK.get(t, UIKit.INK)
 	var p := stop_pos(r, c)
 	var rad := _radius(r)
 	var reach := GameState.can_go_to(r, c)
@@ -135,13 +143,14 @@ func _draw_stop(r: int, c: int) -> void:
 
 	if reach:
 		var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.005)
-		draw_arc(p, rad + 6.0 + pulse * 3.0, 0.0, TAU, 32, Color(col, 0.35 + 0.35 * pulse), 2.5, true)
-	draw_circle(p, rad, UIKit.PANEL_HI if lit else UIKit.PANEL)
-	draw_arc(p, rad, 0.0, TAU, 32, Color(col, 1.0 if lit else 0.3), 3.0 if lit else 2.0, true)
+		draw_arc(p, rad + 6.0 + pulse * 3.0, 0.0, TAU, 32, Color(UIKit.INK_BLUE, 0.3 + 0.4 * pulse), 2.5, true)
+	draw_circle(p, rad, UIKit.PAPER if lit else UIKit.PAPER.darkened(0.04))
+	draw_arc(p, rad, 0.0, TAU, 32, Color(col, 1.0 if lit else 0.6), 3.0 if lit else 2.0, true)
 	if Vector2i(r, c) == selected:
-		draw_arc(p, rad + 4.0, 0.0, TAU, 32, Color.WHITE, 3.0, true)
+		draw_arc(p, rad + 4.0, 0.0, TAU, 32, UIKit.INK_BLUE, 3.0, true)
 	if here:
-		draw_arc(p, rad - 5.0, 0.0, TAU, 28, Color(UIKit.ACCENT, 0.9), 2.0, true)
+		# Circled in red marker: you are here.
+		draw_arc(p, rad + 5.0, 0.0, TAU, 32, Color(UIKit.INK_RED, 0.9), 3.0, true)
 
 	if t == GameState.STOP_BOWL:
 		var logo := BowlDB.logo(String(node["bowl_id"]))
@@ -151,11 +160,11 @@ func _draw_stop(r: int, c: int) -> void:
 				Color(1, 1, 1, 1.0 if lit else 0.4))
 	else:
 		var text := String(style["text"])
-		var fs := 11 if text.length() > 3 else (14 if text.length() > 1 else 20)
-		var font := ThemeDB.fallback_font
+		var fs := 12 if text.length() > 3 else (15 if text.length() > 1 else 22)
+		var font := UIKit.FONT_MARKER
 		var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(font, p + Vector2(-w * 0.5, fs * 0.36), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
-			Color(col, 1.0 if lit else 0.4))
+			Color(col, 1.0 if lit else 0.6))
 
 	# A Ritual Site / Laboratory still waiting on its challenge: a padlock.
 	if bool(node.get("locked", false)):
@@ -164,7 +173,7 @@ func _draw_stop(r: int, c: int) -> void:
 	# A finished match shows how it went.
 	var result := String(node.get("result", ""))
 	if result != "":
-		var rc: Color = UIKit.GOOD if result == "W" else (UIKit.BAD if result == "L" else UIKit.MUTED)
-		var font2 := ThemeDB.fallback_font
-		var w2 := font2.get_string_size(result, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-		draw_string(font2, p + Vector2(-w2 * 0.5, rad + 16.0), result, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, rc)
+		var rc: Color = Color("2e7d32") if result == "W" else (UIKit.INK_RED if result == "L" else UIKit.INK_MUTED)
+		var font2 := UIKit.FONT_MARKER
+		var w2 := font2.get_string_size(result, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		draw_string(font2, p + Vector2(-w2 * 0.5, rad + 19.0), result, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, rc)

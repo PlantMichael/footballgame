@@ -71,30 +71,19 @@ const STAMINA_MAX := 10
 
 
 static func all_names() -> Array:
-	var out: Array = []
-	for e in ODDITIES:
-		out.append(String(e["name"]))
-	return out
+	return DataUtil.names_of(ODDITIES)
 
 
 static func make_named(rng: RandomNumberGenerator, name: String) -> PlayerData:
-	for e in ODDITIES:
-		if e["name"] == name:
-			return _make(rng, e)
-	return null
+	var e := DataUtil.entry_named(ODDITIES, name)
+	return null if e.is_empty() else _make(rng, e)
 
 
 ## One random Oddity, preferring a name not already in `exclude_names`
 ## (roster names -> true) - falls back to allowing a repeat once every one
 ## of them is already on the roster.
 static func random_oddity(rng: RandomNumberGenerator, exclude_names: Dictionary = {}) -> PlayerData:
-	var pool: Array = []
-	for e in ODDITIES:
-		if not exclude_names.has(String(e["name"])):
-			pool.append(e)
-	if pool.is_empty():
-		pool = ODDITIES
-	return _make(rng, pool[rng.randi_range(0, pool.size() - 1)])
+	return _make(rng, DataUtil.pick_excluding(rng, ODDITIES, exclude_names))
 
 
 static func _make(rng: RandomNumberGenerator, e: Dictionary) -> PlayerData:

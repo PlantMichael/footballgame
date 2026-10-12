@@ -56,7 +56,13 @@ func _to_px(v: Vector2) -> Vector2:
 
 func _draw() -> void:
 	var pl := PlayDB.get_play(play_id)
-	draw_rect(Rect2(Vector2.ZERO, size), Color("101d18"))
+	# Chalked up on a wood-framed board, like the rest of the coach's X's and O's.
+	var board := StyleBoxFlat.new()
+	board.bg_color = UIKit.CHALKBOARD
+	board.set_corner_radius_all(4)
+	board.set_border_width_all(0 if compact else 5)
+	board.border_color = UIKit.CHALK_WOOD
+	draw_style_box(board, Rect2(Vector2.ZERO, size))
 	if pl.is_empty():
 		return
 	_fit_depth()
@@ -68,19 +74,20 @@ func _draw() -> void:
 		draw_line(Vector2(4, y), Vector2(size.x - 4, y), col, 2.0 if d == 0 else 1.0)
 
 	var r := 6.0 if not compact else 4.0
-	var font := ThemeDB.fallback_font
+	var font := UIKit.FONT_MARKER
+	var chalk := Color(UIKit.CHALK, 0.9)
 	var fs := 11 if not compact else 8
 
 	# Interior line: center plus four tackles.
 	for off in [-5.2, -2.6, 0.0, 2.6, 5.2]:
 		var p := _to_px(Vector2(0, off))
-		draw_circle(p, r, Color("8fa39a"))
+		draw_arc(p, r, 0, TAU, 16, Color(UIKit.CHALK, 0.55), 2.0, true)
 
 	# Quarterback.
 	var qbp := _to_px(Vector2(-5, 0))
-	draw_circle(qbp, r, UIKit.OFFENSE.lightened(0.3))
+	draw_arc(qbp, r, 0, TAU, 16, chalk, 2.0, true)
 	if not compact:
-		draw_string(font, qbp + Vector2(-4, fs * 0.35), "Q", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("2b1f05"))
+		draw_string(font, qbp + Vector2(-4, -r - 3.0), "Q", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, chalk)
 
 	var aligns: Array = pl["align"]
 	var routes: Array = pl["routes"]
@@ -92,30 +99,30 @@ func _draw() -> void:
 		var assign = routes[i]
 
 		if assign is String:
-			var col := Color("ff9f6e") if assign == PlayDB.CARRY else Color("8fa39a")
-			draw_circle(start, r, col)
+			var col := Color("ffb38a") if assign == PlayDB.CARRY else Color(UIKit.CHALK, 0.55)
+			draw_arc(start, r, 0, TAU, 16, col, 2.0, true)
 			if assign == PlayDB.CARRY:
 				var tip := _to_px(a + Vector2(6, 0))
 				_arrow(start, tip, col, 2.0)
 			else:
-				draw_arc(start, r + 3.0, 0, TAU, 16, Color("8fa39a"), 1.5)
+				draw_arc(start, r + 3.0, 0, TAU, 16, col, 1.5, true)
 		else:
 			var pts := PackedVector2Array([start])
 			var acc := a
 			for wp in assign:
 				acc = Vector2(a.x + wp.x, a.y + wp.y)
 				pts.append(_to_px(acc))
-			var col2 := Color("ffe28a")
 			if pts.size() >= 2:
-				draw_polyline(pts, col2, 2.0, true)
-				_arrow(pts[pts.size() - 2], pts[pts.size() - 1], col2, 2.0)
-			draw_circle(start, r, UIKit.OFFENSE)
+				draw_polyline(pts, Color(UIKit.CHALK, 0.12), 6.0, true)
+				draw_polyline(pts, chalk, 2.0, true)
+				_arrow(pts[pts.size() - 2], pts[pts.size() - 1], chalk, 2.0)
+			draw_arc(start, r, 0, TAU, 16, chalk, 2.0, true)
 
 		if not compact:
 			var tag := str(slot_pos[i])
 			var tw := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			draw_string(font, start + Vector2(-tw * 0.5, r + fs + 2.0), tag,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, UIKit.MUTED)
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(UIKit.CHALK, 0.6))
 
 
 func _arrow(a: Vector2, b: Vector2, col: Color, w: float) -> void:

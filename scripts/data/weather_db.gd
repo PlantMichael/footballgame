@@ -50,15 +50,8 @@ static func weather_desc(id: String) -> String:
 
 
 static func roll(rng: RandomNumberGenerator) -> String:
-	var total := 0.0
-	for id in ROLL_WEIGHTS:
-		total += float(ROLL_WEIGHTS[id])
-	var r := rng.randf() * total
-	for id in ROLL_WEIGHTS:
-		r -= float(ROLL_WEIGHTS[id])
-		if r <= 0.0:
-			return id
-	return CLEAR
+	var i := DataUtil.weighted_index(rng, ROLL_WEIGHTS.values())
+	return ROLL_WEIGHTS.keys()[i] if i >= 0 else CLEAR
 
 
 ## Next id in ALL after `id`, wrapping - the dev-mode Weather button.

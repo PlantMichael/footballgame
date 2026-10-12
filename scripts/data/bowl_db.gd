@@ -190,21 +190,9 @@ static func bowl_desc(id: String) -> String:
 	return String(BOWLS.get(id, {}).get("desc", ""))
 
 
-static func branch_of(id: String) -> String:
-	return String(BOWLS.get(id, {}).get("branch", ""))
-
-
 static func bowls_in_branch(branch_id: String) -> Array:
 	return BRANCHES.get(branch_id, {}).get("bowls", [])
 
 
 static func all_branches() -> Array:
 	return BRANCHES.keys()
-
-
-static func branch_name(id: String) -> String:
-	return String(BRANCHES.get(id, {}).get("name", id))
-
-
-static func branch_desc(id: String) -> String:
-	return String(BRANCHES.get(id, {}).get("desc", ""))

@@ -20,6 +20,27 @@ const OFFENSE := Color("f2c14e")
 const DEFENSE := Color("5aa9e6")
 const BALL := Color("c86b32")
 
+## The look of things written on paper by the coach (UIKit.play_card,
+## PlayCard): a cream index card with faint blue rules, inked in blue,
+## black and red pen, with a chalkboard for X's and O's.
+const PAPER := Color("f3ead2")
+const PAPER_RULE := Color("cfdcec")
+const INK := Color("23262b")
+const INK_MUTED := Color("5b5f66")
+const INK_BLUE := Color("1a3d8f")
+const INK_RED := Color("c8372d")
+const CHALKBOARD := Color("203127")
+const CHALK_WOOD := Color("6b4a2b")
+
+## Fonts. BLOCK (Oswald) is the game-wide default - set as the project's
+## custom font, so every Label and Button already uses it - and the tall
+## athletic face for numbers and headers. MARKER (Permanent Marker) is for
+## anything the coach wrote by hand.
+const FONT_BLOCK := preload("res://assets/fonts/Oswald.ttf")
+const FONT_MARKER := preload("res://assets/fonts/PermanentMarker.ttf")
+
+const TURF_SHADER := preload("res://assets/shaders/turf.gdshader")
+
 const STAT_KEYS := ["strength", "agility", "dexterity", "intelligence"]
 const STAT_LABELS := {
 	"strength": "STR",
@@ -50,10 +71,89 @@ static func stylebox(color: Color, radius: int = 6, border: int = 0, border_colo
 	return sb
 
 
+## A stadium panel: dark, a touch see-through so the turf reads at its edges,
+## with a hairline rim and a soft shadow lifting it off the grass. `color`
+## overrides the fill (still made a little see-through).
 static func panel(color: Color = PANEL) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", stylebox(color, 8, 1))
+	var sb := stylebox(Color(color.darkened(0.25), 0.9), 10, 1, Color(1, 1, 1, 0.09))
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 10
+	sb.shadow_offset = Vector2(0, 4)
+	p.add_theme_stylebox_override("panel", sb)
 	return p
+
+
+## A wood-framed chalkboard to draw X's and O's on (or lay out a formation).
+static func chalkboard() -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := stylebox(CHALKBOARD, 8, 6, CHALK_WOOD)
+	sb.content_margin_left = 18
+	sb.content_margin_right = 18
+	sb.content_margin_top = 14
+	sb.content_margin_bottom = 14
+	sb.shadow_color = Color(0, 0, 0, 0.4)
+	sb.shadow_size = 12
+	sb.shadow_offset = Vector2(0, 5)
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+
+## Text chalked onto a chalkboard: the marker hand, in chalk white.
+static func chalk_label(text: String, size: int = 15, alpha: float = 0.9) -> Label:
+	return marker_label(text, size, Color(CHALK, alpha))
+
+
+## A stadium scoreboard readout: a small caption over a big amber number in a
+## black box - for football bucks, scores, anything worth counting.
+static func scoreboard(caption: String, value: String, value_size: int = 28) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := stylebox(Color("0b0f0d"), 6, 2, Color("3a3f3b"))
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	p.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", -4)
+	p.add_child(v)
+	var cap := label(caption.to_upper(), 11, Color("8f9a93"))
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(cap)
+	var num := label(value, value_size, Color("ffb52e"))
+	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(num)
+	return p
+
+
+## Text set straight on the turf gets a dark outline so it reads over grass.
+static func outlined(l: Label, size: int = 6) -> Label:
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	l.add_theme_constant_override("outline_size", size)
+	return l
+
+
+## A thrown penalty flag with the message beside it - for "not enough bucks"
+## and the like.
+static func flag_notice(text: String, size: int = 15) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	var flag := Control.new()
+	flag.custom_minimum_size = Vector2(22, 22)
+	flag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	flag.draw.connect(func():
+		# A yellow cloth knotted at one corner, the weight's knot dark.
+		var pts := PackedVector2Array([Vector2(3, 3), Vector2(20, 6), Vector2(17, 20), Vector2(2, 17)])
+		flag.draw_colored_polygon(pts, Color("f5d000"))
+		flag.draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.6), 1.5, true)
+		flag.draw_circle(Vector2(4, 4), 3.0, Color("2b2b2b")))
+	h.add_child(flag)
+	h.add_child(outlined(label(text, size, Color("ffe36b")), 5))
+	return h
 
 
 static func label(text: String, size: int = 15, color: Color = TEXT) -> Label:
@@ -107,12 +207,6 @@ static func pill_button(text: String, size: int = 16) -> Button:
 	return b
 
 
-static func hsep(amount: int = 8) -> Control:
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(amount, 0)
-	return c
-
-
 static func vsep(amount: int = 8) -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(0, amount)
@@ -138,6 +232,17 @@ static func stat_color(v: int) -> Color:
 	if v >= 4:
 		return Color("d8a15a")
 	return BAD
+
+
+## Rarity color for a hardcoded player's tier (ShopPlayerDB.QUALITY_*), low
+## to high - used as card outlines so the tier reads at a glance.
+static func quality_color(q: int) -> Color:
+	match q:
+		ShopPlayerDB.QUALITY_ROOKIE: return Color("8a8f96")
+		ShopPlayerDB.QUALITY_SOPHOMORE: return Color("5aa9e6")
+		ShopPlayerDB.QUALITY_VETERAN: return Color("a06cd5")
+		ShopPlayerDB.QUALITY_ALL_STAR: return ACCENT
+	return MUTED
 
 
 ## A compact one-line stat readout: STR 12  AGI 9 ... Stamina is deliberately
@@ -317,7 +422,7 @@ static func player_card(p: PlayerData, show_item: bool = true) -> HBoxContainer:
 
 	v.add_child(stat_row(p))
 
-	var ab := label("* %s: %s" % [AbilityDB.ability_name(p.ability_id), AbilityDB.ability_desc(p.ability_id)], 12, Color("9fc0b2"))
+	var ab := label("* %s" % AbilityDB.ability_desc(p.ability_id), 12, Color("9fc0b2"))
 	ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(ab)
 
@@ -369,9 +474,26 @@ static func backdrop(root: Control, path: String, shade: float = 0.3) -> void:
 	root.add_child(dim)
 
 
-static func background(root: Control) -> void:
+## A label in the coach's handwriting (FONT_MARKER).
+static func marker_label(text: String, size: int = 15, color: Color = INK) -> Label:
+	var l := label(text, size, color)
+	l.add_theme_font_override("font", FONT_MARKER)
+	return l
+
+
+## Every screen's backdrop: a mowed field (assets/shaders/turf.gdshader).
+## Still a ColorRect - screens that rebuild skip their ColorRect children -
+## with BG as the color underneath in case the shader can't run. `night`
+## turns on the stadium floodlights and a vignette (the title screen).
+static func background(root: Control, night: bool = false) -> void:
 	var cr := ColorRect.new()
 	cr.color = BG
+	var mat := ShaderMaterial.new()
+	mat.shader = TURF_SHADER
+	if night:
+		mat.set_shader_parameter("floodlight", 1.0)
+		mat.set_shader_parameter("vignette", 0.55)
+	cr.material = mat
 	cr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(cr)
@@ -379,24 +501,21 @@ static func background(root: Control) -> void:
 
 
 ## Standard header strip: title on the left, bucks and round on the right.
+## Standard header strip: the screen's title on the turf on the left, the
+## bucks on a scoreboard on the right.
 static func header(title_text: String, subtitle: String = "") -> HBoxContainer:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 14)
 	var left := VBoxContainer.new()
-	left.add_child(title(title_text))
+	left.add_theme_constant_override("separation", 0)
+	left.add_child(outlined(label(title_text.to_upper(), 34, ACCENT)))
 	if subtitle != "":
-		left.add_child(label(subtitle, 14, MUTED))
+		left.add_child(outlined(label(subtitle, 15, TEXT), 5))
 	h.add_child(left)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
-	var right := VBoxContainer.new()
-	right.alignment = BoxContainer.ALIGNMENT_END
-	var bucks := label("$%d" % GameState.bucks, 26, ACCENT)
-	bucks.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(bucks)
-	var fb := label("football bucks", 12, MUTED)
-	fb.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(fb)
-	h.add_child(right)
+	var bucks := scoreboard("Football bucks", "$%d" % GameState.bucks)
+	bucks.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(bucks)
 	return h

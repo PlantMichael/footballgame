@@ -26,16 +26,7 @@ static func _entries() -> Array:
 
 static func _load() -> void:
 	_loaded = true
-	_cache = []
-	if not FileAccess.file_exists(DATA_PATH):
-		push_error("UpgradeDB: missing %s" % DATA_PATH)
-		return
-	var text := FileAccess.get_file_as_string(DATA_PATH)
-	var parsed: Variant = JSON.parse_string(text)
-	if not (parsed is Array):
-		push_error("UpgradeDB: %s did not parse to a JSON array" % DATA_PATH)
-		return
-	_cache = parsed
+	_cache = DataUtil.load_json_array(DATA_PATH, "UpgradeDB")
 
 
 static func label(entry: Dictionary) -> String:
@@ -50,17 +41,10 @@ static func roll(rng: RandomNumberGenerator, count: int = 3) -> Array:
 	var pool := _entries().duplicate()
 	var out: Array = []
 	while pool.size() > 0 and out.size() < count:
-		var total := 0.0
+		var weights: Array = []
 		for e in pool:
-			total += float(e.get("weight", 1.0))
-		var roll_val := rng.randf() * total
-		var acc := 0.0
-		var pick_i := pool.size() - 1
-		for i in pool.size():
-			acc += float(pool[i].get("weight", 1.0))
-			if roll_val <= acc:
-				pick_i = i
-				break
+			weights.append(e.get("weight", 1.0))
+		var pick_i := DataUtil.weighted_index(rng, weights)
 		out.append(pool[pick_i])
 		pool.remove_at(pick_i)
 	return out

@@ -1,7 +1,9 @@
 extends Control
 
-## Lineup and equipment, laid out like the formation: the five linemen across
-## the top, the quarterback in the middle with the flexes either side of him.
+## Lineup and equipment, chalked up on a chalkboard like a real formation:
+## the five linemen across the top on the line of scrimmage, the quarterback
+## in the middle with the flexes either side of him, and the optional kicker
+## off to the side.
 ## Clicking a player selects him - he grows, his three item slots appear
 ## beside him, and the strip along the bottom fills with everyone on the
 ## roster who could take his spot. Click one of those to swap him in; click an
@@ -14,8 +16,8 @@ const LINE_ROW := ["T0", "T1", "C", "T2", "T3"]
 const BACK_ROW_LEFT := ["F0", "F1"]
 const BACK_ROW_RIGHT := ["F2", "F3", "F4"]
 
-const CIRCLE := 92
-const CIRCLE_SELECTED := 124
+const CIRCLE := 84
+const CIRCLE_SELECTED := 112
 const ITEM_CIRCLE := 34
 const BENCH_PORTRAIT := 72
 
@@ -46,18 +48,25 @@ func _build() -> void:
 	margin.add_child(root)
 
 	root.add_child(UIKit.header("Lineup", "Click a player to see his items and who can replace him"))
-	root.add_child(UIKit.rule())
+
+	var board := UIKit.chalkboard()
+	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(board)
+	var board_row := HBoxContainer.new()
+	board_row.add_theme_constant_override("separation", 18)
+	board.add_child(board_row)
 
 	var field := VBoxContainer.new()
-	field.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	field.alignment = BoxContainer.ALIGNMENT_CENTER
-	field.add_theme_constant_override("separation", 28)
-	root.add_child(field)
+	field.add_theme_constant_override("separation", 10)
+	board_row.add_child(field)
 
 	var line := _row()
 	for slot in LINE_ROW:
 		line.add_child(_slot_widget(slot))
 	field.add_child(line)
+	field.add_child(_scrimmage_line())
 
 	var backs := _row()
 	for slot in BACK_ROW_LEFT:
@@ -68,13 +77,18 @@ func _build() -> void:
 	for slot in BACK_ROW_RIGHT:
 		backs.add_child(_slot_widget(slot))
 	field.add_child(backs)
+	field.add_child(_selected_info())
 
-	# The kicker sits back on his own - optional, he only comes on to kick.
-	var kick_row := _row()
-	kick_row.add_child(_slot_widget(GameState.KICKER_SLOT))
-	field.add_child(kick_row)
+	# The kicker stands off to the side - optional, he only comes on to kick.
+	board_row.add_child(_chalk_divider())
+	var kick_col := VBoxContainer.new()
+	kick_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	kick_col.add_theme_constant_override("separation", 6)
+	kick_col.custom_minimum_size = Vector2(150, 0)
+	kick_col.add_child(UIKit.chalk_label("Special teams", 16, 0.7))
+	kick_col.add_child(_slot_widget(GameState.KICKER_SLOT))
+	board_row.add_child(kick_col)
 
-	root.add_child(_selected_info())
 	root.add_child(_bench_strip())
 
 	var bottom := HBoxContainer.new()
@@ -87,8 +101,8 @@ func _build() -> void:
 		_rebuild())
 	bottom.add_child(auto)
 
-	var bag := UIKit.label("%d item%s in the bag" % [GameState.inventory.size(),
-		"" if GameState.inventory.size() == 1 else "s"], 14, UIKit.MUTED)
+	var bag := UIKit.outlined(UIKit.label("%d item%s in the bag" % [GameState.inventory.size(),
+		"" if GameState.inventory.size() == 1 else "s"], 15, UIKit.TEXT), 5)
 	bag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bottom.add_child(bag)
 
@@ -96,10 +110,33 @@ func _build() -> void:
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bottom.add_child(sp)
 
-	var back := UIKit.primary_button("Back to hub", 17)
+	# Dev mode has no run map to go back to - it came here from the scrimmage.
+	var back := UIKit.primary_button("Back to scrimmage" if GameState.dev_mode else "Back to hub", 17)
 	back.custom_minimum_size = Vector2(200, 42)
-	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
+	var dest := "res://scenes/match.tscn" if GameState.dev_mode else "res://scenes/hub.tscn"
+	back.pressed.connect(func(): get_tree().change_scene_to_file(dest))
 	bottom.add_child(back)
+
+
+## The line of scrimmage chalked across the board, dashed.
+func _scrimmage_line() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(0, 8)
+	c.draw.connect(func():
+		var x := 10.0
+		while x < c.size.x - 10.0:
+			c.draw_line(Vector2(x, 4), Vector2(minf(x + 14.0, c.size.x - 10.0), 4), Color(UIKit.CHALK, 0.5), 2.0)
+			x += 24.0)
+	return c
+
+
+## A chalk stroke down the board between the formation and the kicker.
+func _chalk_divider() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(4, 0)
+	c.draw.connect(func():
+		c.draw_line(Vector2(2, 12), Vector2(2, c.size.y - 12), Color(UIKit.CHALK, 0.25), 2.0))
+	return c
 
 
 func _row() -> HBoxContainer:
@@ -149,15 +186,17 @@ func _slot_widget(slot: String) -> Control:
 	col.add_theme_constant_override("separation", 4)
 	col.add_child(_player_circle(slot, p, CIRCLE_SELECTED if selected else CIRCLE, selected))
 
-	var tag := UIKit.label(_slot_label(slot), 12, UIKit.ACCENT if selected else UIKit.MUTED)
+	var tag := UIKit.chalk_label(_slot_label(slot), 14, 0.95 if selected else 0.6)
+	if selected:
+		tag.add_theme_color_override("font_color", UIKit.ACCENT)
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(tag)
 	var optional := slot == GameState.KICKER_SLOT
 	var name_text := "- empty -" if p == null else "#%d %s" % [p.number, p.pname]
 	if p == null and optional:
 		name_text = "- none (optional) -"
-	var name_label := UIKit.label(name_text, 13,
-		(UIKit.MUTED if optional else UIKit.BAD) if p == null else UIKit.TEXT)
+	var name_label := UIKit.label(name_text, 14,
+		(Color(UIKit.CHALK, 0.55) if optional else Color("ff8a7a")) if p == null else UIKit.CHALK)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(name_label)
 	h.add_child(col)
@@ -171,10 +210,11 @@ func _player_circle(slot: String, p: PlayerData, size: int, selected: bool) -> C
 	# Otherwise it stretches to the width of the name under it - an oval.
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	b.focus_mode = Control.FOCUS_NONE
-	var ring := UIKit.ACCENT if selected else UIKit.LINE
+	# A chalked-in circle on the board - gold when he's the one selected.
+	var ring := UIKit.ACCENT if selected else Color(UIKit.CHALK, 0.75)
 	var width := 4 if selected else 2
 	for state in ["normal", "hover", "pressed"]:
-		var col := UIKit.PANEL_HI if state == "hover" else UIKit.PANEL
+		var col := UIKit.CHALKBOARD.lightened(0.12 if state == "hover" else 0.05)
 		b.add_theme_stylebox_override(state, UIKit.stylebox(col, size / 2, width, ring))
 	b.pressed.connect(func():
 		selected_slot = slot
@@ -205,14 +245,14 @@ func _item_circle(p: PlayerData, slot_index: int) -> Control:
 	b.custom_minimum_size = Vector2(ITEM_CIRCLE, ITEM_CIRCLE)
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", 12)
-	var ring := UIKit.ACCENT if item_id != "" else UIKit.LINE
+	var ring := UIKit.ACCENT if item_id != "" else Color(UIKit.CHALK, 0.5)
 	for state in ["normal", "hover", "pressed"]:
-		var col := UIKit.PANEL_HI if state == "hover" else UIKit.PANEL
+		var col := UIKit.CHALKBOARD.lightened(0.12 if state == "hover" else 0.05)
 		b.add_theme_stylebox_override(state, UIKit.stylebox(col, ITEM_CIRCLE / 2, 2, ring))
 	if item_id == "":
 		# Empty: the category's initial, dimmed.
 		b.text = category_name.substr(0, 1)
-		b.add_theme_color_override("font_color", UIKit.MUTED)
+		b.add_theme_color_override("font_color", Color(UIKit.CHALK, 0.6))
 		b.tooltip_text = "%s: empty" % category_name
 	else:
 		b.text = _item_initials(item_id)
@@ -283,11 +323,10 @@ func _selected_info() -> Control:
 		else:
 			h.add_child(UIKit.label("Nobody at %s - pick someone below." % _slot_label(selected_slot), 14, UIKit.BAD))
 		return h
-	h.add_child(UIKit.label("%s  %s" % [p.pname, p.pos_name()], 15, UIKit.ACCENT))
+	h.add_child(UIKit.marker_label("%s  %s" % [p.pname, p.pos_name()], 17, UIKit.ACCENT))
 	h.add_child(UIKit.stat_row(p, 13))
 	h.add_child(UIKit.label("OVR %d" % p.overall(), 14, UIKit.stat_color(p.overall())))
-	var ab := UIKit.label("%s: %s" % [AbilityDB.ability_name(p.ability_id), AbilityDB.ability_desc(p.ability_id)],
-		12, Color("9fc0b2"))
+	var ab := UIKit.label(AbilityDB.ability_desc(p.ability_id), 13, Color(UIKit.CHALK, 0.8))
 	ab.custom_minimum_size = Vector2(360, 0)
 	ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	h.add_child(ab)

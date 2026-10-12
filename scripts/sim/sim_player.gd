@@ -60,9 +60,9 @@ var dodge_used: bool = false    # ability_id "phantom_step": once-per-play tackl
 ## ability.
 var stat_decay: int = 0
 
-## Seconds this player has been the ball carrier. Reset to 0 in
-## MatchSim._set_carrier whenever he's newly handed/thrown the ball,
-## incremented in MatchSim._step_offense while he still has it. Only
+## Seconds this player has been the ball carrier this play. Reset to 0 for
+## every play in MatchSim._align_offense, incremented in
+## MatchSim._step_offense while he has the ball. Only
 ## consulted by "combustion" (AbilityDB.explodes_after_seconds).
 var carry_seconds: float = 0.0
 

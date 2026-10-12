@@ -8,6 +8,7 @@ extends Node
 const OUT_DIR := "user://shots"
 const SCREENS := [
 	["main_menu", "res://scenes/main_menu.tscn"],
+	["qb_select", "res://scenes/qb_select.tscn"],
 	["player_book", "res://scenes/player_book.tscn"],
 	["hub", "res://scenes/hub.tscn"],
 	["lineup", "res://scenes/lineup.tscn"],
@@ -29,6 +30,7 @@ func _ready() -> void:
 	for entry in SCREENS:
 		await _shoot(String(entry[0]), String(entry[1]))
 
+	await _shoot_shop_items()
 	await _shoot_match()
 	print("done")
 	get_tree().quit()
@@ -42,6 +44,19 @@ func _shoot(tag: String, path: String) -> void:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_save(tag)
+	inst.queue_free()
+	await get_tree().process_frame
+
+
+## The shop's gear view, behind its toggle.
+func _shoot_shop_items() -> void:
+	var inst: Node = load("res://scenes/shop.tscn").instantiate()
+	inst.set("_view", "items")
+	add_child(inst)
+	for i in 6:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_save("shop_items")
 	inst.queue_free()
 	await get_tree().process_frame
 
@@ -106,7 +121,8 @@ func _shoot_match() -> void:
 		sim.step(1.0 / 60.0)
 		if sim.phase != MatchSim.Phase.LIVE:
 			break
-	for i in 4:
+	# Long enough for the camera to finish easing in to its live zoom.
+	for i in 30:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_save("match_live")

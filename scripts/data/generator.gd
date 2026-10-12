@@ -44,7 +44,7 @@ const POS_WEIGHTS := {
 	PlayerData.Pos.K: {"strength": 1.3, "agility": 0.0, "dexterity": 1.3, "stamina": 0.0, "intelligence": 0.0},
 }
 
-const STAT_KEYS := ["strength", "agility", "dexterity", "stamina", "intelligence"]
+const STAT_KEYS := PlayerData.STAT_KEYS
 
 ## Body sprite id (matches assets/players/{front,back,left}/body_0N.png) for
 ## procedurally generated players. Every position uses one fixed body type;
@@ -215,8 +215,8 @@ static func starting_roster(rng: RandomNumberGenerator, quality: float = ROOKIE_
 	return roster
 
 
-## Same shape as starting_roster (1 QB, 1 C, 5 T, 4 WR, 2 RB, 2 TE) but
-## without the rookie clamp, abilities included - `quality` actually lands
+## Like starting_roster but deeper (2 QB, 1 C, 5 T, 4 WR, 2 RB, 2 TE, no
+## kicker) and without the rookie clamp, abilities included - `quality` actually lands
 ## instead of always getting overwritten down to 2-4. Used by dev mode to
 ## build a maxed-out roster for testing.
 static func full_roster(rng: RandomNumberGenerator, quality: float, spread: float = 1.0) -> Array[PlayerData]:

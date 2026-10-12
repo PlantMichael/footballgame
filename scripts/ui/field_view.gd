@@ -19,10 +19,23 @@ signal route_drawn(slot: String, route: Array)
 const YD := MatchSim.FIELD_LEN
 const YW := MatchSim.FIELD_W
 
-## Never show less than this much of the field vertically, so deep routes
-## stay on screen instead of the camera slamming into the ball.
-const MIN_VERT_YARDS := 38.0
+## Camera zoom follows the phase of play. Before the snap it shows at least
+## PRESNAP_VERT_YARDS top to bottom, so a deep route can be chalked whole.
+## Once the ball is live (and through the after-play beat) it pushes in until
+## the field plus LIVE_SIDE_MARGIN yards of sideline either side fills the
+## width - big, readable players - but never closer than LIVE_MIN_VERT_YARDS
+## top to bottom on a short window. It eases between the two at ZOOM_EASE.
+const PRESNAP_VERT_YARDS := 34.0
+const LIVE_SIDE_MARGIN := 5.0
+const LIVE_MIN_VERT_YARDS := 22.0
+const ZOOM_EASE := 3.0
 const CAM_LEAD := 6.0        # bias the camera downfield of the ball
+## Presnap the view is tighter than it used to be, so lean it further
+## downfield: a full-depth go route still has to fit on screen to chalk it.
+const PRESNAP_LEAD := 8.0
+## While the QB still has the ball in the pocket, lean this far downfield of
+## him so his receivers' routes stay in view until he throws.
+const POCKET_LEAD := 9.0
 ## Lower than it used to be (3.5) - the follow-cam read as too snappy/jerky
 ## panning between plays. See _zoom_pulse for the distinct quick-zoom punch
 ## at the start/end of a play, which is a separate effect from this.
@@ -52,13 +65,18 @@ const ZOOM_MIN := 0.6
 const ZOOM_MAX := 2.5
 const ZOOM_STEP := 0.1
 
-## Out of bounds. Lighter than UIKit.TURF so the sidelines read as grass
-## rather than as a void, while the darker playing surface still stands out.
-const SIDELINE_GRASS := Color("356f47")
+## Out of bounds: the same mowed grass as the field, a shade darker, with
+## its stripes carried on across it, so the sidelines read as more of the
+## stadium rather than as an empty void. A solid white border band (real
+## fields have a six-foot one) frames the playing surface.
+const SIDELINE_GRASS := Color("17391f")
+const SIDELINE_ALT := Color("1b4024")
+const BORDER_YARDS := 1.0
+const BORDER_WHITE := Color(0.9, 0.93, 0.9, 0.78)
 
 ## Player rendering. `r` is the base player radius in pixels, derived from the
 ## zoom; everything else about a body is expressed as a multiple of it.
-const PLAYER_R := 0.72          # yards of radius per player, times _scale
+const PLAYER_R := 0.86          # yards of radius per player, times _scale
 const PLAYER_R_MIN := 12.0
 ## Defensive linemen (slots DL0-DL3) are drawn this much bigger - see _draw_person.
 const DL_SCALE := 1.15
@@ -153,7 +171,10 @@ var _zoom: float = 1.0
 ## Extra zoom-out while a kick is on (see _recompute_transform), eased.
 var _kick_fit: float = 1.0
 var _kick_fit_target: float = 1.0
-var _visible_yards: float = MIN_VERT_YARDS
+var _visible_yards: float = PRESNAP_VERT_YARDS
+## Pixels per yard before the scroll-wheel zoom, pulses and kick fit, eased
+## toward _fit_target(). 0 until the first frame sets it outright.
+var _fit: float = 0.0
 var _dragging: bool = false
 
 ## Active screen shake: current amplitude in pixels, seconds left, and a
@@ -282,6 +303,13 @@ const POINT_TIME := 0.7    # the first-down point is a quick jab, not a pose
 const BIG_GAIN_YARDS := 15.0   # a gain this long (short of a score) earns a fist pump
 const STIFF_ARM_YARDS := 1.8   # a carrier sticks a hand out at a defender this close
 const THROW_FOLLOW_TIME := 0.28  # seconds the passer's arm stays out after the release
+## The tackle dive: at the whistle the man who made the tackle springs this
+## far at the ball carrier over LUNGE_TIME, hopping LUNGE_HOP (times his
+## radius) off the turf at the top of it, and goes down facing him. Purely
+## visual - the sim has already ruled the play dead where it ended.
+const LUNGE_YARDS := 1.1
+const LUNGE_TIME := 0.24
+const LUNGE_HOP := 0.45
 
 ## Dust kicked up where somebody hits the turf - {"pos": Vector2 yards,
 ## "age": s, "seed": float}. See _advance_dust/_draw_dust.
@@ -308,6 +336,9 @@ const GLANCE_TILT := 0.22   # radians the head tips over at the height of a glan
 ## s the gesture starts, "act_len": s it lasts}.
 var _after: Dictionary = {}
 var _after_rng := RandomNumberGenerator.new()
+## The tackle dive in progress (see LUNGE_YARDS): {"sp", "from", "dir" (field
+## yards), "t"}, or {} when nobody's diving.
+var _lunge: Dictionary = {}
 
 func _body_tex(sp: SimPlayer, view: String) -> Texture2D:
 	var look := _look_of(sp)
@@ -443,6 +474,8 @@ func _process(delta: float) -> void:
 		_clamp_camera()
 		_zoom_pulse_t = maxf(0.0, _zoom_pulse_t - delta)
 		_kick_fit = lerpf(_kick_fit, _kick_fit_target, clampf(delta * 4.0, 0.0, 1.0))
+		var fit_to := _fit_target()
+		_fit = fit_to if _fit <= 0.0 else lerpf(_fit, fit_to, clampf(delta * ZOOM_EASE, 0.0, 1.0))
 		if not end_pose.is_empty():
 			_end_t += delta
 		for sp in sim.offense:
@@ -452,6 +485,7 @@ func _process(delta: float) -> void:
 			_advance_anim(sp, delta)
 			_advance_pops(sp, delta)
 		_advance_hands(delta)
+		_advance_lunge(delta)
 		_advance_dust(delta)
 		# A Control only sees _gui_input while the pointer is over it, so a
 		# stroke released off the edge of the window would otherwise never
@@ -528,9 +562,11 @@ func _advance_hands(delta: float) -> void:
 			if sim.phase == MatchSim.Phase.DEAD:
 				_pick_celebrators()
 				_plan_after_play()
+				_start_lunge()
 			elif sim.phase == MatchSim.Phase.PRESNAP:
 				_catch_t.clear()
 				_hands.clear()
+				_prune_player_caches()
 	_dead_t += delta
 	_advance_after_play(delta)
 
@@ -541,6 +577,21 @@ func _advance_hands(delta: float) -> void:
 				_block_foe[b] = b.mark
 				if not _block_foe.has(b.mark):
 					_block_foe[b.mark] = b
+
+
+## Drops per-player entries for anyone no longer on the field - a "Mitosis"
+## half from the last play, a subbed-out starter, a dev-mode defense that got
+## regenerated - so they don't pile up (and stay alive) for the whole match.
+func _prune_player_caches() -> void:
+	var live := {}
+	for sp in sim.offense + sim.defense:
+		live[sp] = true
+	if sim.kicker_sp != null:
+		live[sim.kicker_sp] = true   # off the field between kicks, but coming back
+	for cache: Dictionary in [_look, _pops, _pop_timers, _was_down, _stomp_beat]:
+		for sp in cache.keys():
+			if not live.has(sp):
+				cache.erase(sp)
 
 
 func _pick_celebrators() -> void:
@@ -658,6 +709,41 @@ func _plan_after_play() -> void:
 	var stop := kind == "sack" or kind == "safety" or yards < 0.0
 	if sim.tackler != null and _after.has(sim.tackler) and stop:
 		_gesture(sim.tackler, "cheer")
+
+
+## The whistle on a tackle (or sack): the tackler starts his dive at the
+## man he brought down.
+func _start_lunge() -> void:
+	_lunge = {}
+	var d: SimPlayer = sim.tackler
+	var c: SimPlayer = sim.carrier
+	if d == null or c == null or bool(sim.result.get("td", false)):
+		return
+	var to := c.pos - d.pos
+	var dir := to.normalized() if to.length() > 0.05 else Vector2(-1.0 if not d.is_offense else 1.0, 0.0)
+	_lunge = {"sp": d, "from": d.pos, "dir": dir, "t": 0.0}
+
+
+func _advance_lunge(delta: float) -> void:
+	if _lunge.is_empty():
+		return
+	var sp: SimPlayer = _lunge["sp"]
+	_lunge["t"] = float(_lunge["t"]) + delta
+	var f := clampf(float(_lunge["t"]) / LUNGE_TIME, 0.0, 1.0)
+	var dir: Vector2 = _lunge["dir"]
+	# Ease out: a burst off the mark that settles as he lands.
+	sp.pos = (_lunge["from"] as Vector2) + dir * LUNGE_YARDS * (1.0 - (1.0 - f) * (1.0 - f))
+	# His velocity is what _fall_dir topples him along - into the tackle.
+	sp.vel = dir * 3.0
+	if f >= 1.0:
+		_lunge = {}
+
+
+## How high (times his radius) `sp` is off the turf mid-dive, else 0.
+func _lunge_hop(sp: SimPlayer) -> float:
+	if _lunge.is_empty() or _lunge["sp"] != sp:
+		return 0.0
+	return sin(clampf(float(_lunge["t"]) / LUNGE_TIME, 0.0, 1.0) * PI) * LUNGE_HOP
 
 
 ## A receiver who just dropped one: facepalm, stomp, flop onto his back, or
@@ -916,10 +1002,15 @@ func _camera_target_x() -> float:
 		var spot := sim.kick_spot().x
 		return minf((spot + MatchSim.POSTS_X) * 0.5, spot - 4.0 + _visible_yards * 0.5)
 	var ball := sim.los
-	var focus := sim.los + CAM_LEAD
+	var focus := sim.los + PRESNAP_LEAD
 	if sim.phase == MatchSim.Phase.LIVE or sim.phase == MatchSim.Phase.DEAD:
 		ball = sim.ball_pos.x
 		focus = sim.ball_pos.x + CAM_LEAD * 0.5
+		# The QB still holding it in the pocket: lean well downfield so the
+		# routes can be seen developing, not just the line in front of him.
+		var qb_holding := sim.carrier != null and sim.carrier.slot == "QB" 			and not sim.qb_scrambling and not sim.kick_play
+		if sim.phase == MatchSim.Phase.LIVE and qb_holding:
+			focus = sim.ball_pos.x + POCKET_LEAD
 	# In the red zone, pull up far enough to show the whole end zone (and a
 	# little grass past it) as long as that still keeps some field in view
 	# behind the ball.
@@ -974,7 +1065,7 @@ func _recompute_transform() -> void:
 	# Same for the scoreboard strip across the top: the far end zone used to
 	# sit underneath it whenever the camera was clamped at the back line.
 	var usable_h := maxf(size.y - bottom_inset - top_inset, 1.0)
-	_scale = minf(size.x / YW, usable_h / MIN_VERT_YARDS) * (_zoom + _zoom_pulse())
+	_scale = (_fit if _fit > 0.0 else _fit_target()) * (_zoom + _zoom_pulse())
 	# A kick zooms out (never in) far enough to show the kicker and the
 	# uprights together, then eases back once the next play is called.
 	_kick_fit_target = 1.0
@@ -984,6 +1075,14 @@ func _recompute_transform() -> void:
 	_scale *= _kick_fit
 	_visible_yards = usable_h / _scale
 	_center = Vector2(size.x * 0.5, top_inset + usable_h * 0.5)
+
+
+## The base zoom this phase of play wants - see PRESNAP_VERT_YARDS.
+func _fit_target() -> float:
+	var usable_h := maxf(size.y - bottom_inset - top_inset, 1.0)
+	if sim != null and sim.phase != MatchSim.Phase.PRESNAP:
+		return minf(size.x / (YW + LIVE_SIDE_MARGIN * 2.0), usable_h / LIVE_MIN_VERT_YARDS)
+	return minf(size.x / YW, usable_h / PRESNAP_VERT_YARDS)
 
 
 ## Field yards (downfield, lateral) -> screen pixels.
@@ -1197,8 +1296,6 @@ func _visible_range() -> Vector2i:
 
 
 func _draw_field() -> void:
-	# Everything outside the sidelines: grass too, just a lighter, flatter
-	# green than the playing surface so the field still reads as the field.
 	draw_rect(Rect2(Vector2.ZERO, size), SIDELINE_GRASS)
 
 	var lo := _visible_range()
@@ -1206,10 +1303,23 @@ func _draw_field() -> void:
 	var right := to_px(Vector2(0.0, YW)).x
 	var top := to_px(Vector2(float(lo.y), 0.0)).y
 	var bottom := to_px(Vector2(float(lo.x), 0.0)).y
+
+	# The mow stripes run sideline to sideline and on out past them.
+	var band_start := int(floor(float(lo.x) / 5.0)) * 5
+	for x in range(band_start, lo.y + 5, 5):
+		if int(x / 5) % 2 == 1:
+			var sy0 := to_px(Vector2(float(x + 5), 0.0)).y
+			var sy1 := to_px(Vector2(float(x), 0.0)).y
+			draw_rect(Rect2(Vector2(0.0, sy0), Vector2(size.x, sy1 - sy0)), SIDELINE_ALT)
+
 	draw_rect(Rect2(Vector2(left, top), Vector2(right - left, bottom - top)), UIKit.TURF)
 
+	# The white border band just outside each sideline.
+	var bw := BORDER_YARDS * _scale
+	draw_rect(Rect2(Vector2(left - bw, top), Vector2(bw, bottom - top)), BORDER_WHITE)
+	draw_rect(Rect2(Vector2(right, top), Vector2(bw, bottom - top)), BORDER_WHITE)
+
 	# Alternating five yard bands give the eye something to judge motion by.
-	var band_start := int(floor(float(lo.x) / 5.0)) * 5
 	for x in range(band_start, lo.y + 5, 5):
 		if x < 10 or x >= 110:
 			continue
@@ -1736,7 +1846,7 @@ func _is_flat(sp: SimPlayer) -> bool:
 ## running. The only thing that rotates the body is being tackled, and then it
 ## topples the way the player was going over FALL_TIME seconds.
 func _draw_person(sp: SimPlayer, r: float, font: Font, fs: int) -> void:
-	var p := to_px(sp.pos)
+	var p := to_px(sp.pos) + Vector2(0.0, -_lunge_hop(sp) * r)
 	# The defensive front four are drawn a size up, so the trenches read as
 	# big bodies. Purely visual - reach, tackles and clicks are all in yards.
 	if not sp.is_offense and sp.slot.begins_with("DL"):
