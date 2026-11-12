@@ -16,6 +16,14 @@ Open the folder in Godot 4.7 and press play, or:
 godot --path . 
 ```
 
+## Pausing
+
+Press **Esc** on any gameplay screen, or click **Pause (Esc)** in the match
+toolbar. The pause menu freezes gameplay and countdowns. Choose **Resume** or
+press Esc again to continue. **Main Menu** and the desktop-only **Quit Game**
+ask for confirmation because runs are not saved; only bowl completion marks
+survive a restart. Esc from that confirmation returns to the pause menu.
+
 ## Dev mode
 
 The main menu's "Dev mode" button (`GameState.start_dev_mode`) drops you

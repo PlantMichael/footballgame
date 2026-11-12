@@ -100,6 +100,7 @@ func _ready() -> void:
 	UIKit.background(self)
 	_start_match()
 	_build_layout()
+	PauseMenu.opening.connect(field.cancel_stroke)
 	_refresh_bar()
 
 
@@ -231,6 +232,10 @@ func _build_top_bar() -> void:
 		else:
 			_open_team_stats())
 	row.add_child(stats_btn)
+
+	var pause_btn := UIKit.button("Pause (Esc)", 13)
+	pause_btn.pressed.connect(PauseMenu.open)
+	row.add_child(pause_btn)
 
 	if GameState.dev_mode:
 		# Equipping an item is only possible from the lineup screen (the
