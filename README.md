@@ -26,6 +26,11 @@ survive a restart. Esc from that confirmation returns to the pause menu.
 
 ## Field and sidelines
 
+A stadium scoreboard floats at the top left with amber score digits, team names,
+drive, down and field position. Match controls sit separately at the top right.
+The play-call and result panels remain floating coach's chalkboards, with the
+same route, priority-target, snap and kick controls.
+
 The match surface uses muted grass texture and wear, restrained five-yard mowing
 bands, painted yard numbers, a quiet midfield emblem and desaturated team-color
 end zones. Detail stays anchored to field yards during camera movement and zoom;

@@ -120,6 +120,10 @@ func _play_full_match() -> void:
 	var earned: int = scene.get("bucks_earned")
 	if earned <= 0:
 		_fail("no football bucks earned across a whole match")
+	await get_tree().process_frame
+	var scoreboard: Dictionary = scene.get("_sb")
+	if scoreboard["us"].text != str(sim.score_us) or scoreboard["them"].text != str(sim.score_them):
+		_fail("visible scoreboard does not match the completed match scores")
 
 	# The match screen banks the result itself the moment the last drive
 	# ends (match.gd _begin_match_end) and puts up its countdown panel - the

@@ -2,7 +2,7 @@ extends Control
 
 ## The match screen. The field fills the whole window; everything else is an
 ## overlay on top of it:
-##   - a thin scoreboard strip along the top
+##   - a floating stadium scoreboard at top left, controls at top right
 ##   - the chalkboard, a card floating over the bottom of the field where
 ##     routes are drawn (and a slimmer one while the play is live)
 ##   - a floating result card between plays and drives, in its place
@@ -20,7 +20,7 @@ const BAR_SHORT := 74
 ## Seconds the floating result card waits after a play before moving on to
 ## the next one by itself. See _tick_auto_continue.
 const AUTO_CONTINUE := 4.0
-const TOP_BAR_H := 54
+const TOP_BAR_H := 112
 ## Space left between the floating bottom cards and the window's bottom edge.
 const FLOAT_GAP := 16
 
@@ -193,36 +193,67 @@ func _overlay_style(alpha: float = 0.92) -> StyleBoxFlat:
 
 func _build_top_bar() -> void:
 	top_bar = PanelContainer.new()
-	top_bar.add_theme_stylebox_override("panel", _overlay_style(0.90))
-	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.offset_bottom = TOP_BAR_H
+	var casing := UIKit.stylebox(Color("101a17"), 6, 2, Color("647067"))
+	casing.content_margin_left = 10
+	casing.content_margin_right = 10
+	casing.content_margin_top = 5
+	casing.content_margin_bottom = 5
+	casing.shadow_color = Color(0, 0, 0, 0.5)
+	casing.shadow_size = 10
+	casing.shadow_offset = Vector2(0, 5)
+	top_bar.add_theme_stylebox_override("panel", casing)
+	top_bar.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	top_bar.position = Vector2(16, 12)
 	top_bar.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(top_bar)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 22)
+	row.add_theme_constant_override("separation", 14)
 	top_bar.add_child(row)
 
-	_add_sb(row, "us", GameState.team_name, UIKit.ACCENT)
-	_add_sb(row, "them", sim.opponent_name, UIKit.DEFENSE)
-	_add_sb(row, "drive", "Drive", UIKit.TEXT)
-	_add_sb(row, "down", "Down", UIKit.TEXT)
-	_add_sb(row, "spot", "Ball on", UIKit.TEXT)
-	_add_sb(row, "weather", "Weather", UIKit.TEXT)
-	_update_weather_label()
+	_add_team_score(row, "us", GameState.team_name, "HOME", Color("6689a5"))
+	var opposing_color := Color("ad7166") if sim.defense_jersey == "red" else Color("7d9a71") if sim.defense_jersey == "green" else Color("6689a5")
+	_add_team_score(row, "them", sim.opponent_name, "VISITOR", opposing_color)
+	row.add_child(VSeparator.new())
+	_add_sb(row, "drive", "DRIVE", UIKit.TEXT)
+	_add_sb(row, "down", "DOWN & DISTANCE", UIKit.TEXT)
+	_add_sb(row, "spot", "BALL ON", UIKit.TEXT)
 
+	var controls := PanelContainer.new()
+	var control_style := _overlay_style(0.94)
+	control_style.set_corner_radius_all(7)
+	control_style.border_color = Color("516155")
+	control_style.set_border_width_all(1)
+	controls.add_theme_stylebox_override("panel", control_style)
+	controls.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	controls.offset_left = -16
+	controls.offset_right = -16
+	controls.offset_top = 12
+	controls.offset_bottom = 12
+	controls.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	controls.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(controls)
+	var tools := VBoxContainer.new()
+	tools.add_theme_constant_override("separation", 4)
+	controls.add_child(tools)
+	var info := HBoxContainer.new()
+	info.add_theme_constant_override("separation", 12)
+	tools.add_child(info)
+	_add_sb(info, "weather", "CONDITIONS", UIKit.TEXT)
+	_update_weather_label()
+	_add_sb(info, "earned", "EARNED", UIKit.ACCENT)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
-
-	_add_sb(row, "earned", "Earned", UIKit.ACCENT)
-
-	_build_speed_buttons(row)
+	info.add_child(spacer)
+	_build_speed_buttons(info)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	tools.add_child(actions)
 
 	cam_btn = UIKit.button("", 13)
 	cam_btn.custom_minimum_size = Vector2(190, 0)
 	cam_btn.pressed.connect(func(): field.toggle_camera_lock())
-	row.add_child(cam_btn)
+	actions.add_child(cam_btn)
 	_update_cam_btn()
 
 	var stats_btn := UIKit.button("Team Stats", 13)
@@ -231,11 +262,11 @@ func _build_top_bar() -> void:
 			_dismiss_overlays()
 		else:
 			_open_team_stats())
-	row.add_child(stats_btn)
+	actions.add_child(stats_btn)
 
 	var pause_btn := UIKit.button("Pause (Esc)", 13)
 	pause_btn.pressed.connect(PauseMenu.open)
-	row.add_child(pause_btn)
+	actions.add_child(pause_btn)
 
 	if GameState.dev_mode:
 		# Equipping an item is only possible from the lineup screen (the
@@ -244,11 +275,40 @@ func _build_top_bar() -> void:
 		# reachable rather than just sitting unused in the inventory.
 		var lineup_btn := UIKit.button("  Lineup  ", 13)
 		lineup_btn.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lineup.tscn"))
-		row.add_child(lineup_btn)
+		actions.add_child(lineup_btn)
 
 		var exit_dev := UIKit.button("  Exit dev mode  ", 13)
 		exit_dev.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
-		row.add_child(exit_dev)
+		actions.add_child(exit_dev)
+
+
+func _add_team_score(row: HBoxContainer, key: String, team: String, role: String, color: Color) -> void:
+	var plate := PanelContainer.new()
+	var style := UIKit.stylebox(Color("0a100e"), 3, 1, Color("303b34"))
+	style.border_width_top = 3
+	style.border_color = color
+	style.content_margin_left = 7
+	style.content_margin_right = 7
+	style.content_margin_top = 2
+	style.content_margin_bottom = 2
+	plate.add_theme_stylebox_override("panel", style)
+	row.add_child(plate)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	plate.add_child(column)
+	var title := UIKit.label(team.to_upper(), 11, UIKit.TEXT)
+	title.custom_minimum_size.x = 138
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.tooltip_text = team
+	title.mouse_filter = Control.MOUSE_FILTER_STOP
+	column.add_child(title)
+	var number := ScoreDigits.new()
+	column.add_child(number)
+	_sb[key] = number
+	var caption := UIKit.label(role, 9, Color("a6b4a9"))
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(caption)
 
 
 func _update_weather_label() -> void:
@@ -262,7 +322,7 @@ func _add_sb(row: HBoxContainer, key: String, title: String, col: Color) -> void
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 0)
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_child(UIKit.label(title, 11, UIKit.MUTED))
+	v.add_child(UIKit.label(title, 10, Color("a3b3a8")))
 	var value := UIKit.label("", 19, col)
 	v.add_child(value)
 	row.add_child(v)
@@ -275,8 +335,8 @@ func _build_log() -> void:
 	log_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	log_label.offset_left = -430
 	log_label.offset_right = -16
-	log_label.offset_top = 62
-	log_label.offset_bottom = 130
+	log_label.offset_top = TOP_BAR_H + 8
+	log_label.offset_bottom = TOP_BAR_H + 76
 	log_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -284,16 +344,16 @@ func _build_log() -> void:
 
 
 ## The look shared by every card floating over the bottom of the field:
-## rounded, a thin gold edge, and a drop shadow lifting it off the turf.
+## a coach's framed chalkboard with a shadow lifting it off the turf.
 func _float_style(margin_x: int, margin_y: int) -> StyleBoxFlat:
-	var sb := UIKit.stylebox(Color(UIKit.PANEL_HI, 0.96), 16, 1, Color(UIKit.ACCENT, 0.45))
+	var sb := UIKit.stylebox(Color(UIKit.CHALKBOARD.darkened(0.2), 0.98), 8, 3, Color("76664c"))
 	sb.content_margin_left = margin_x
 	sb.content_margin_right = margin_x
 	sb.content_margin_top = margin_y
 	sb.content_margin_bottom = margin_y
 	sb.shadow_color = Color(0, 0, 0, 0.45)
-	sb.shadow_size = 14
-	sb.shadow_offset = Vector2(0, 4)
+	sb.shadow_size = 16
+	sb.shadow_offset = Vector2(0, 7)
 	return sb
 
 
@@ -307,6 +367,14 @@ func _bottom_card(style: StyleBoxFlat) -> PanelContainer:
 	p.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(p)
+	p.draw.connect(func():
+		# A metal clipboard clip and subtle corner screws, all non-interactive.
+		var clip_at := Vector2(p.size.x * 0.5 - 32, 1)
+		p.draw_rect(Rect2(clip_at + Vector2(0, 2), Vector2(64, 7)), Color("0d1713"))
+		p.draw_rect(Rect2(clip_at, Vector2(64, 5)), Color("8d9989"))
+		for x in [7.0, p.size.x - 7.0]:
+			for y in [7.0, p.size.y - 7.0]:
+				p.draw_circle(Vector2(x, y), 1.5, Color("ada78e")))
 	return p
 
 
@@ -343,7 +411,7 @@ func _build_side_panel() -> void:
 	side_panel.add_theme_stylebox_override("panel", _overlay_style(0.96))
 	side_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
 	side_panel.offset_left = -380
-	side_panel.offset_top = 54
+	side_panel.offset_top = TOP_BAR_H + 8
 	side_panel.offset_bottom = -BAR_TALL
 	side_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	side_panel.visible = false
@@ -639,7 +707,7 @@ func _playcall_bar() -> Control:
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 12)
-	head.add_child(UIKit.label("DRAW UP THE PLAY", 15, UIKit.ACCENT))
+	head.add_child(UIKit.chalk_label("CALL THE PLAY", 15))
 	head.add_child(UIKit.label("%s on the %s   -   drag from a receiver to chalk his route, tap him to inspect"
 		% [sim.down_text(), sim.yard_line_text(sim.los)], 12, UIKit.MUTED))
 	v.add_child(head)
@@ -816,7 +884,8 @@ func _chalk_card(f: SimPlayer) -> Control:
 
 	var b := UIKit.button("", 12)
 	b.custom_minimum_size = Vector2(132, 124)
-	b.tooltip_text = "Drag from #%d on the field to chalk his route." % pd.number
+	b.tooltip_text = "#%d %s\nDrag from him on the field to chalk his route." % [pd.number, pd.pname]
+	b.add_theme_stylebox_override("disabled", UIKit.stylebox(Color("16231d"), 4, 1, Color("526052")))
 	if drawn:
 		b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
 		b.tooltip_text += "\nClick this card to wipe it back to auto."
@@ -838,6 +907,7 @@ func _chalk_card(f: SimPlayer) -> Control:
 	var name_line := UIKit.label("#%d %s" % [pd.number, pd.pname], 12,
 		UIKit.ACCENT if drawn else UIKit.TEXT)
 	name_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	v.add_child(name_line)
 
 	var thumb := RouteThumb.new()
