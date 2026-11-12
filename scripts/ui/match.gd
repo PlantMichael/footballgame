@@ -96,12 +96,40 @@ var _leaving: bool = false
 const SCOUT_COLOR := Color("ff6a4d")
 
 
+class SnapButton extends Button:
+	func _has_point(point: Vector2) -> bool:
+		var radius := minf(size.x, size.y) * 0.5
+		return point.distance_squared_to(size * 0.5) <= radius * radius
+
+
 func _ready() -> void:
 	UIKit.background(self)
 	_start_match()
 	_build_layout()
 	PauseMenu.opening.connect(field.cancel_pointer_gestures)
 	_refresh_bar()
+
+
+func _input(event: InputEvent) -> void:
+	if not event is InputEventKey or event.keycode not in [KEY_ENTER, KEY_KP_ENTER]:
+		return
+	if not event.pressed or event.alt_pressed or event.ctrl_pressed or event.meta_pressed:
+		return
+	if not _can_snap() or play_bar == null or not play_bar.visible:
+		return
+	# Let open panels and the pause menu keep their normal keyboard actions.
+	if card.visible or side_panel.visible or examples_panel.visible or upgrade_panel.visible or end_panel.visible:
+		return
+	# Handle before GUI focus: Enter snaps even when a target or toolbar button
+	# is focused. Space remains available to activate those native controls.
+	get_viewport().set_input_as_handled()
+	if not event.echo:
+		_on_snap()
+
+
+func _can_snap() -> bool:
+	return sim != null and sim.phase == MatchSim.Phase.PRESNAP and not get_tree().paused \
+		and pending_upgrades.is_empty() and not _match_ended and not _leaving
 
 
 func _start_match() -> void:
@@ -737,9 +765,7 @@ func _playcall_bar() -> Control:
 		row.add_child(_chalk_card(f))
 	row.add_child(_chalk_tools())
 
-	var snap := UIKit.primary_button("SNAP THE BALL", 18)
-	snap.custom_minimum_size = Vector2(0, 38)
-	snap.pressed.connect(_on_snap)
+	var snap := _snap_button("SNAP")
 	var snap_box := _wrap_snap(snap)
 	snap_box.add_theme_constant_override("separation", 8)
 	if sim.down == 4 and sim.kicker_sp != null:
@@ -849,9 +875,7 @@ func _kick_bar() -> Control:
 	buttons.add_theme_constant_override("separation", 8)
 	buttons.custom_minimum_size = Vector2(180, 0)
 	body.add_child(buttons)
-	var go := UIKit.primary_button("KICK IT", 18)
-	go.custom_minimum_size = Vector2(0, 38)
-	go.pressed.connect(_on_snap)
+	var go := _snap_button("KICK")
 	buttons.add_child(go)
 	var back := UIKit.button("Back to offense", 13)
 	back.custom_minimum_size = Vector2(0, 30)
@@ -1106,7 +1130,7 @@ func _load_example(id: String) -> void:
 ## again disarms it.
 func _play_action_row() -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 14)
 	row.add_child(UIKit.label("PLAN", 12, UIKit.ACCENT))
 
 	var rbs: Array[SimPlayer] = sim.flex_players().filter(func(f): return sim.plays_rb(f))
@@ -1115,20 +1139,15 @@ func _play_action_row() -> Control:
 		for f: SimPlayer in rbs:
 			var slot: String = f.slot
 			var pd: PlayerData = f.data
-			var b := UIKit.button("#%d %s" % [pd.number, pd.pname], 11)
-			b.custom_minimum_size = Vector2(0, 26)
-			if sim.planned_action == "handoff" and sim.planned_handoff_slot == slot:
-				b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+			var b := _name_choice("#%d %s" % [pd.number, pd.pname],
+				sim.planned_action == "handoff" and sim.planned_handoff_slot == slot)
 			b.pressed.connect(func():
 				sim.set_planned_handoff(slot)
 				_refresh_bar())
 			row.add_child(b)
 
-	var scramble_btn := UIKit.button("Scramble", 11)
-	scramble_btn.custom_minimum_size = Vector2(0, 26)
+	var scramble_btn := _name_choice("Scramble", sim.planned_action == "scramble")
 	scramble_btn.tooltip_text = "The QB takes off running the moment the ball is snapped."
-	if sim.planned_action == "scramble":
-		scramble_btn.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
 	scramble_btn.pressed.connect(func():
 		sim.set_planned_action("scramble")
 		_refresh_bar())
@@ -1139,25 +1158,21 @@ func _play_action_row() -> Control:
 
 func _target_priority_row() -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 14)
 	row.add_child(UIKit.label("PRIORITY TARGETS", 12, UIKit.ACCENT))
 
 	for f in sim.flex_players():
 		var slot: String = f.slot
 		var pd := f.data
 		var on := sim.is_priority_target(slot)
-		var b := UIKit.button("#%d %s" % [pd.number, pd.pname], 11)
-		b.custom_minimum_size = Vector2(0, 26)
-		if on:
-			b.add_theme_stylebox_override("normal", UIKit.stylebox(UIKit.LINE, 6, 2, UIKit.ACCENT))
+		var b := _name_choice("#%d %s" % [pd.number, pd.pname], on)
 		b.pressed.connect(func():
 			sim.toggle_priority_target(slot)
 			_refresh_bar())
 		row.add_child(b)
 
 	var all_on := sim.all_priority_targets_selected()
-	var all_btn := UIKit.button("Clear all" if all_on else "Select all", 11)
-	all_btn.custom_minimum_size = Vector2(0, 26)
+	var all_btn := _name_choice("Clear all" if all_on else "Select all", all_on)
 	all_btn.pressed.connect(func():
 		if all_on:
 			sim.clear_priority_targets()
@@ -1167,6 +1182,28 @@ func _target_priority_row() -> Control:
 	row.add_child(all_btn)
 
 	return row
+
+
+func _name_choice(caption: String, selected: bool) -> LinkButton:
+	var link := LinkButton.new()
+	link.text = ("✓ " if selected else "") + caption
+	link.toggle_mode = true
+	link.button_pressed = selected
+	link.focus_mode = Control.FOCUS_ALL
+	link.custom_minimum_size.y = 26
+	link.underline = LinkButton.UNDERLINE_MODE_ALWAYS if selected else LinkButton.UNDERLINE_MODE_ON_HOVER
+	link.add_theme_font_size_override("font_size", 11)
+	link.add_theme_color_override("font_color", UIKit.ACCENT if selected else UIKit.TEXT)
+	link.add_theme_color_override("font_hover_color", UIKit.ACCENT)
+	link.add_theme_color_override("font_focus_color", UIKit.CHALK)
+	link.add_theme_color_override("font_pressed_color", UIKit.ACCENT)
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color.TRANSPARENT
+	focus.border_width_bottom = 2
+	focus.border_color = UIKit.CHALK
+	link.add_theme_stylebox_override("focus", focus)
+	link.tooltip_text = "Click or press Space to select. Enter starts the play."
+	return link
 
 
 ## Dev-mode-only: lets the defense's overall quality be dialed up or down
@@ -1211,6 +1248,38 @@ func _dev_defense_slider() -> Control:
 	return row
 
 
+func _snap_button(caption: String) -> Button:
+	var snap := SnapButton.new()
+	snap.text = caption
+	snap.custom_minimum_size = Vector2(112, 112)
+	snap.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	snap.add_theme_font_size_override("font_size", 22)
+	snap.add_theme_color_override("font_color", Color("242617"))
+	snap.add_theme_color_override("font_hover_color", Color("242617"))
+	snap.add_theme_color_override("font_pressed_color", Color("242617"))
+	snap.add_theme_color_override("font_focus_color", Color("242617"))
+	for state in ["normal", "hover", "pressed"]:
+		var color := UIKit.ACCENT.lightened(0.12) if state == "hover" else UIKit.ACCENT.darkened(0.15) if state == "pressed" else UIKit.ACCENT
+		var style := UIKit.stylebox(color, 56, 2, Color("ae8137"))
+		style.shadow_color = Color(0, 0, 0, 0.3)
+		style.shadow_size = 6
+		style.shadow_offset = Vector2(0, 3)
+		snap.add_theme_stylebox_override(state, style)
+	snap.add_theme_stylebox_override("focus", UIKit.stylebox(Color.TRANSPARENT, 56, 3, UIKit.CHALK))
+	var hint := UIKit.label("ENTER", 10, Color("504521"))
+	hint.set_anchors_preset(Control.PRESET_CENTER)
+	hint.offset_left = -34
+	hint.offset_right = 34
+	hint.offset_top = 18
+	hint.offset_bottom = 36
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	snap.add_child(hint)
+	snap.tooltip_text = "Click or press Enter to start the play."
+	snap.pressed.connect(_on_snap)
+	return snap
+
+
 func _wrap_snap(snap: Button) -> Control:
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(180, 0)
@@ -1220,6 +1289,8 @@ func _wrap_snap(snap: Button) -> Control:
 
 
 func _on_snap() -> void:
+	if not _can_snap():
+		return
 	_dismiss_overlays()
 	field.cancel_stroke()
 	sim.snap()

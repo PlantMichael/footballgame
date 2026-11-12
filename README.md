@@ -30,6 +30,15 @@ A stadium scoreboard floats at the top left with amber score digits, team names,
 drive, down and field position. Match controls sit separately at the top right.
 The play-call and result panels remain floating coach's chalkboards, with the
 same route, priority-target, snap and kick controls.
+Player-name choices are plain links with check marks for selected options; route
+diagrams keep their cards. Click the large circular **SNAP** button on the right,
+or press **Enter** (including keypad Enter), to start a ready play. Enter also
+starts a ready field goal. Open panels and the pause menu keep their own keyboard
+actions; **Space** activates a focused name choice. Holding Enter does not start
+the next play automatically.
+
+Run `godot --headless --path . res://tools/playcall_check.tscn` for play-call
+selection, circular-button hit testing and keyboard/pause checks.
 
 The match surface uses muted grass texture and wear, restrained five-yard mowing
 bands, painted yard numbers, a quiet midfield emblem and desaturated team-color
