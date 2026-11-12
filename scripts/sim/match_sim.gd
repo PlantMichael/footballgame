@@ -2935,7 +2935,8 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	thrown_to = target
 	_last_passer = qb
 	_patient_throw = _synergy(qb, "patient_pass") and time >= 3.0 and not qb_scrambling
-	target.synergy["targeted"] = true
+	if not target.synergy.has("targeted_at"):
+		target.synergy["targeted_at"] = time
 	_scout_play = {"kind": "pass", "target": target.data, "depth": aim.x - los, "y": aim.y, "hold": time}
 	# The passer_dex_bonus itself is applied in _resolve_catch, not here -
 	# it should land the moment the ball actually reaches the receiver, not
@@ -4225,13 +4226,13 @@ func _mark_team_boost(sp: SimPlayer) -> void:
 	sp.synergy["boost_until"] = time + 2.0
 
 
-func _nearest_teammate(sp: SimPlayer, receivers_only: bool = false) -> SimPlayer:
+func _nearest_teammate(sp: SimPlayer, crossing_only: bool = false) -> SimPlayer:
 	var best: SimPlayer = null
 	var distance := INF
 	for other in offense:
 		if other.data == sp.data or other.clone_of != null or other.melted or time < other.start_delay:
 			continue
-		if receivers_only and (not other.slot.begins_with("F") or other.role != SimPlayer.Role.ROUTE):
+		if crossing_only and (not other.slot.begins_with("F") or other.role != SimPlayer.Role.ROUTE or other.odometer < 0.75):
 			continue
 		var d := sp.pos.distance_to(other.pos)
 		if d < distance:
@@ -4312,13 +4313,14 @@ func _step_synergies(delta: float) -> void:
 			if sp.data != (patch["owner"] as SimPlayer).data and sp.pos.distance_to(patch["pos"]) <= 2.5:
 				sp.pavement_left = delta * 2.0
 				_mark_team_boost(sp)
-		if _synergy(sp, "late_burst") and time >= 3.0 and not sp.synergy.has("late_used") and not sp.synergy.has("targeted"):
+		if _synergy(sp, "late_burst") and time >= 3.0 and not sp.synergy.has("late_used") \
+				and float(sp.synergy.get("targeted_at", INF)) >= 3.0:
 			sp.synergy["late_used"] = true
 			_burst(sp, sp)
 		if (_synergy(sp, "cross_speed") or _synergy(sp, "cross_hesitate")) \
 				and not sp.synergy.has("cross_used") and sp.role == SimPlayer.Role.ROUTE and sp.odometer >= 0.75:
 			var other := _nearest_teammate(sp, true)
-			if other != null and other.odometer >= 0.75 and sp.pos.distance_to(other.pos) <= 2.0:
+			if other != null and sp.pos.distance_to(other.pos) <= 2.0:
 				sp.synergy["cross_used"] = true
 				if _synergy(sp, "cross_speed"):
 					_burst(other, sp)

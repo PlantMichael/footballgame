@@ -116,9 +116,11 @@ func _crossings() -> void:
 	var lane := s.offense_slot("F0")
 	var cris := s.offense_slot("F1")
 	var moe := s.offense_slot("F2")
+	var stationary := s.offense_slot("F3")
 	lane.pos = Vector2(s.los + 3, 15)
 	cris.pos = lane.pos + Vector2(0, 1)
 	moe.pos = cris.pos + Vector2(0, 8)
+	stationary.pos = lane.pos + Vector2(0, 0.4)
 	var man := s.defense[7]
 	man.mark = cris
 	man.role = SimPlayer.Role.MAN
@@ -127,7 +129,7 @@ func _crossings() -> void:
 	lane.odometer = 1
 	cris.odometer = 1
 	s._step_synergies(0.01)
-	_check(cris.burst_left > 0 and man.stunned > 0, "Lane accelerates Cris while Cris loses his man")
+	_check(cris.burst_left > 0 and man.stunned > 0, "a nearer stationary receiver cannot suppress Lane and Cris's eligible crossing")
 	var burst := cris.burst_left
 	s._step_synergies(0.1)
 	_check(cris.burst_left < burst, "crossing does not refresh its burst every frame")
@@ -180,6 +182,26 @@ func _patience() -> void:
 	early.time = 3.1
 	early._step_synergies(0.01)
 	_check(early.offense_slot("F0").burst_left == 0, "Miles does not burst after being targeted early")
+	_late_target_boundary(2.97, false)
+	_late_target_boundary(2.99, true)
+
+
+func _late_target_boundary(before_step: float, should_burst: bool) -> void:
+	var s := _make({"F0": "Miles Eventually"})
+	_far_defense(s)
+	var miles := s.offense_slot("F0")
+	for sp in s.flex_players():
+		if sp != miles:
+			sp.melted = true
+	miles.pos = Vector2(s.los + 3, 15)
+	s.play["dropback"] = 0.0
+	s.time = before_step
+	s.step(0.02)
+	_check(s.thrown_to == miles, "boundary fixture makes a real first throw at %.2fs" % s.time)
+	if not should_burst:
+		s.step(0.02)
+	_check((miles.burst_left > 0) == should_burst,
+		"Miles first targeted %s 3 seconds %s his late burst" % ["after" if should_burst else "before", "receives" if should_burst else "does not receive"])
 
 
 func _screens() -> void:
