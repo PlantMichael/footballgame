@@ -24,6 +24,26 @@ press Esc again to continue. **Main Menu** and the desktop-only **Quit Game**
 ask for confirmation because runs are not saved; only bowl completion marks
 survive a restart. Esc from that confirmation returns to the pause menu.
 
+## Sidelines
+
+Two rows of civilian teammates line each sideline, wearing the same blue,
+red or green palette as that side's players. They watch catches and big gains,
+clap, celebrate scores and first downs, and react to turnovers, sacks and missed
+plays. Two striped officials jog along the sidelines with the ball and signal
+results. All sideline actors are cosmetic, stay outside the playing field,
+and freeze with the pause menu.
+
+The body sprites in `assets/sidelines/` were extracted from the supplied civilian
+and referee sheets and combined with the game's existing heads and hands.
+To regenerate from those original `blue/`, `red/`, `green/` and `ref/` folders:
+
+```
+godot --headless --path . --script assets/sidelines/_cut_assets.gd -- SOURCE_FOLDER
+```
+
+Run `godot --headless --path . res://tools/sideline_check.tscn` for reaction,
+team palette, official tracking, repeat-play and pause checks.
+
 ## Team synergies
 
 The shop now includes 24 cooperative players, also available in the Player Book

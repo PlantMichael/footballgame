@@ -1,0 +1,110 @@
+extends Node
+
+## Presentation state plus the real FieldView clock/pause boundary.
+## godot --headless --path . res://tools/sideline_check.tscn
+var failures := 0
+
+func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	GameState.new_run(99001)
+	var screen: Node = load("res://scenes/match.tscn").instantiate()
+	screen.process_mode = Node.PROCESS_MODE_PAUSABLE
+	add_child(screen)
+	await get_tree().process_frame
+	screen.set_process(false)
+	var sim: MatchSim = screen.sim
+	var field = screen.field
+	var crowd: SidelineCrowd = field.sidelines
+	field.set_process(false)
+	crowd.advance(sim, 0.016)
+	_check(crowd.people.size() == 80 and crowd.officials.size() == 2, "two populated sidelines and two officials")
+	for actor in crowd.people + crowd.officials:
+		var pos: Vector2 = actor.pos
+		_check(pos.y < 0.0 or pos.y > MatchSim.FIELD_W, "ambient actors stay outside the playing field")
+	sim.defense_jersey = "red"
+	_check(crowd.team_palette(true, sim) == "blue" and crowd.team_palette(false, sim) == "red", "red opponent jersey palette")
+	sim.defense_jersey = "green"
+	_check(crowd.team_palette(false, sim) == "green", "palette follows a changed opponent")
+	var rng_before := sim.rng.state
+	var ball_before := sim.ball_pos
+	var player_before := sim.offense[0].pos
+	var time_before := sim.time
+	for i in 10:
+		crowd.advance(sim, 0.016)
+	_check(sim.rng.state == rng_before and sim.ball_pos == ball_before and sim.time == time_before
+		and sim.offense[0].pos == player_before and sim.offense.size() == 11 and sim.defense.size() == 11,
+		"sideline updates preserve gameplay state and seeded RNG")
+	sim.snap()
+	crowd.advance(sim, 0.016)
+	var ref_before: Vector2 = crowd.officials[0].pos
+	sim.ball_pos.x = ref_before.x + 30.0
+	crowd.advance(sim, 0.1)
+	var ref_after: Vector2 = crowd.officials[0].pos
+	_check(ref_after.x > ref_before.x and ref_after.x - ref_before.x <= 1.101 and ref_after.y == ref_before.y,
+		"ref follows the play at bounded speed along its sideline")
+	# Possession can change entirely between renderer frames at 4x speed.
+	sim.carrier = sim.offense[6]
+	sim.carrier.pos.x = sim.los + 2.0
+	sim.handoff_done = false
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == "clap" and crowd.defense_mode == "tense", "catch reacts without observing the pass in flight")
+	sim.carrier.pos.x = sim.los + sim.to_go + 1.0
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == "cheer", "big gain gets a live celebration")
+	_result(crowd, sim, {"kind":"touchdown", "td":true, "yards":25.0}, "cheer", "groan", "touchdown")
+	_result(crowd, sim, {"kind":"touchdown", "td":true, "yards":25.0}, "cheer", "groan", "touchdown")
+	_result(crowd, sim, {"kind":"interception", "turnover":true, "yards":0.0}, "groan", "cheer", "turnover")
+	_result(crowd, sim, {"kind":"sack", "yards":-3.0}, "groan", "cheer", "stop")
+	_result(crowd, sim, {"kind":"incomplete", "yards":0.0}, "groan", "clap", "incomplete")
+	sim.down = 4
+	_result(crowd, sim, {"kind":"incomplete", "yards":0.0}, "groan", "cheer", "incomplete")
+	_result(crowd, sim, {"kind":"run", "yards":2.0}, "groan", "cheer", "turnover")
+	sim.down = 1
+	_result(crowd, sim, {"kind":"complete", "yards":sim.to_go}, "cheer", "groan", "first_down")
+	_result(crowd, sim, {"kind":"field_goal", "kick":true, "fg_good":true, "yards":0.0}, "cheer", "groan", "touchdown")
+	_result(crowd, sim, {"kind":"missed_fg", "kick":true, "fg_good":false, "yards":0.0}, "groan", "cheer", "no_good")
+	crowd.advance(sim, 3.0)
+	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "reactions settle after the result")
+	sim.phase = MatchSim.Phase.DRIVE_OVER
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == "idle", "drive transition does not replay the same result")
+	crowd.advance(sim, 0.016, {true:"jump", false:"lie"})
+	crowd.advance(sim, 4.0, {true:"jump", false:"lie"})
+	_check(crowd.offense_mode == "cheer" and crowd.defense_mode == "groan", "final team reactions persist")
+	var other := MatchSim.new()
+	other.los = 80.0
+	crowd.advance(other, 0.016)
+	_check(crowd.offense_mode == "idle" and crowd.officials[0].pos.x > 70.0, "a replacement match resets presentation")
+	# Restore the real owner and prove its visual clock freezes in a paused tree.
+	field.set_process(true)
+	await get_tree().process_frame
+	var clock_before := crowd.clock
+	get_tree().paused = true
+	await get_tree().create_timer(0.1).timeout
+	_check(crowd.clock == clock_before, "pause freezes NPC animation and official motion")
+	get_tree().paused = false
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(crowd.clock > clock_before, "NPC animation resumes with the game")
+	screen.queue_free()
+	print("SIDELINE CHECK: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILURES" % failures))
+	get_tree().quit(1 if failures else 0)
+
+func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
+	sim.phase = MatchSim.Phase.PRESNAP
+	sim.result = {}
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "next play clears old gestures")
+	sim.phase = MatchSim.Phase.DEAD
+	sim.result = result
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == ours and crowd.defense_mode == theirs and crowd.ref_signal == signal_name,
+		"team reactions and official signal: %s (down %d)" % [result.kind, sim.down])
+	var left := crowd.reaction_left
+	crowd.advance(sim, 0.1)
+	_check(crowd.reaction_left < left, "result is consumed once")
+
+func _check(ok: bool, message: String) -> void:
+	if not ok:
+		failures += 1
+		push_error(message)

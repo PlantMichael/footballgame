@@ -26,7 +26,7 @@ const YW := MatchSim.FIELD_W
 ## width - big, readable players - but never closer than LIVE_MIN_VERT_YARDS
 ## top to bottom on a short window. It eases between the two at ZOOM_EASE.
 const PRESNAP_VERT_YARDS := 34.0
-const LIVE_SIDE_MARGIN := 5.0
+const LIVE_SIDE_MARGIN := SidelineCrowd.MARGIN
 const LIVE_MIN_VERT_YARDS := 22.0
 const ZOOM_EASE := 3.0
 const CAM_LEAD := 6.0        # bias the camera downfield of the ball
@@ -218,6 +218,7 @@ const RED_ZONE_BEHIND := 6.0
 ## is_offense (bool) -> "jump" (won - bouncing up and down), "lie" (lost -
 ## flat on the turf), or "" (a tie - they just stand there). Empty until then.
 var end_pose: Dictionary = {}
+var sidelines := SidelineCrowd.new()
 var _end_t: float = 0.0
 const JUMP_HEIGHT := 0.9      # times the player radius
 const JUMP_RATE := 6.5        # radians/second of the hop cycle
@@ -459,6 +460,7 @@ const FALL_TIME := 0.34
 
 func _process(delta: float) -> void:
 	if sim != null:
+		sidelines.advance(sim, delta, end_pose)
 		if camera_locked and _glide_t > 0.0:
 			_glide_t = maxf(0.0, _glide_t - delta)
 			var f := 1.0 - _glide_t / GLIDE_TIME
@@ -1082,7 +1084,7 @@ func _fit_target() -> float:
 	var usable_h := maxf(size.y - bottom_inset - top_inset, 1.0)
 	if sim != null and sim.phase != MatchSim.Phase.PRESNAP:
 		return minf(size.x / (YW + LIVE_SIDE_MARGIN * 2.0), usable_h / LIVE_MIN_VERT_YARDS)
-	return minf(size.x / YW, usable_h / PRESNAP_VERT_YARDS)
+	return minf(size.x / (YW + SidelineCrowd.MARGIN * 2.0), usable_h / PRESNAP_VERT_YARDS)
 
 
 ## Field yards (downfield, lateral) -> screen pixels.
@@ -1263,6 +1265,7 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), UIKit.TURF)
 		return
 	_draw_field()
+	sidelines.draw_on(self, sim)
 	_draw_weather_ground()
 	_draw_lines_of_scrimmage()
 	if show_preview and sim.phase == MatchSim.Phase.PRESNAP:
