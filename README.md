@@ -24,7 +24,13 @@ press Esc again to continue. **Main Menu** and the desktop-only **Quit Game**
 ask for confirmation because runs are not saved; only bowl completion marks
 survive a restart. Esc from that confirmation returns to the pause menu.
 
-## Sidelines
+## Field and sidelines
+
+The match surface uses muted grass texture and wear, restrained five-yard mowing
+bands, painted yard numbers, a quiet midfield emblem and desaturated team-color
+end zones. Detail stays anchored to field yards during camera movement and zoom;
+players, the ball and active routes retain the stronger contrast. The original
+surface art lives in `assets/field/` as SVGs imported directly by Godot.
 
 About 200 civilian teammates gather in scattered groups along the sidelines,
 wearing the same blue, red or green palette as that side's players. Bench seats,

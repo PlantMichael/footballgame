@@ -69,10 +69,16 @@ const ZOOM_STEP := 0.1
 ## its stripes carried on across it, so the sidelines read as more of the
 ## stadium rather than as an empty void. A solid white border band (real
 ## fields have a six-foot one) frames the playing surface.
-const SIDELINE_GRASS := Color("17391f")
-const SIDELINE_ALT := Color("1b4024")
+const SIDELINE_GRASS := Color("293e2d")
+const SIDELINE_ALT := Color("2b402e")
 const BORDER_YARDS := 1.0
-const BORDER_WHITE := Color(0.9, 0.93, 0.9, 0.78)
+const BORDER_WHITE := Color("b7bca3")
+const FIELD_GRASS := Color("304c35")
+const FIELD_ALT := Color("344f38")
+const FIELD_PAINT := Color("c0c4a8")
+const GRASS_DETAIL := preload("res://assets/field/grass_detail.svg")
+const WORN_TURF := preload("res://assets/field/worn_turf.svg")
+const MIDFIELD_MARK := preload("res://assets/field/midfield_mark.svg")
 
 ## Player rendering. `r` is the base player radius in pixels, derived from the
 ## zoom; everything else about a body is expressed as a multiple of it.
@@ -1319,12 +1325,7 @@ func _draw_field() -> void:
 			var sy1 := to_px(Vector2(float(x), 0.0)).y
 			draw_rect(Rect2(Vector2(0.0, sy0), Vector2(size.x, sy1 - sy0)), SIDELINE_ALT)
 
-	draw_rect(Rect2(Vector2(left, top), Vector2(right - left, bottom - top)), UIKit.TURF)
-
-	# The white border band just outside each sideline.
-	var bw := BORDER_YARDS * _scale
-	draw_rect(Rect2(Vector2(left - bw, top), Vector2(bw, bottom - top)), BORDER_WHITE)
-	draw_rect(Rect2(Vector2(right, top), Vector2(bw, bottom - top)), BORDER_WHITE)
+	draw_rect(Rect2(Vector2(left, top), Vector2(right - left, bottom - top)), FIELD_GRASS)
 
 	# Alternating five yard bands give the eye something to judge motion by.
 	for x in range(band_start, lo.y + 5, 5):
@@ -1333,35 +1334,65 @@ func _draw_field() -> void:
 		if int(x / 5) % 2 == 1:
 			var y0 := to_px(Vector2(float(x + 5), 0.0)).y
 			var y1 := to_px(Vector2(float(x), 0.0)).y
-			draw_rect(Rect2(Vector2(left, y0), Vector2(right - left, y1 - y0)), UIKit.TURF_ALT)
+			draw_rect(Rect2(Vector2(left, y0), Vector2(right - left, y1 - y0)), FIELD_ALT)
 
 	# End zones.
 	for ez in [[0.0, 10.0], [110.0, 120.0]]:
 		var y0 := to_px(Vector2(ez[1], 0.0)).y
 		var y1 := to_px(Vector2(ez[0], 0.0)).y
 		if y0 < size.y and y1 > 0.0:
-			draw_rect(Rect2(Vector2(left, y0), Vector2(right - left, y1 - y0)),
-				UIKit.TURF.darkened(0.4))
+			var paint := Color("303e46")
+			if ez[0] != 0.0:
+				if sim.defense_jersey == "red":
+					paint = Color("483a36")
+				elif sim.defense_jersey == "green":
+					paint = Color("374537")
+			draw_rect(Rect2(Vector2(left, y0), Vector2(right - left, y1 - y0)), paint)
 
-	var chalk := Color(UIKit.CHALK, 0.32)
+	_draw_grass_detail()
+	# Stable scuffs are paint/grass detail, never gameplay props or collisions.
+	for i in 52:
+		var at := Vector2(14.0 + float((i * 37) % 93), 5.0 + float((i * 19) % 43))
+		if at.x < lo.x - 2 or at.x > lo.y + 2:
+			continue
+		var dimensions := Vector2(1.6 + float(i % 4) * 0.4, 0.7) * _scale
+		draw_texture_rect(WORN_TURF, Rect2(to_px(at) - dimensions * 0.5, dimensions), false, Color(1, 1, 1, 0.34))
+	if lo.x < 68 and lo.y > 52:
+		var dimensions := Vector2(14.0, 11.4) * _scale
+		draw_texture_rect(MIDFIELD_MARK, Rect2(to_px(Vector2(60, YW * 0.5)) - dimensions * 0.5, dimensions), false, Color(1, 1, 1, 0.14))
+
+	# Warm, worn paint rather than a bright white frame competing with players.
+	var bw := BORDER_YARDS * _scale
+	draw_rect(Rect2(Vector2(left - bw, top), Vector2(bw, bottom - top)), BORDER_WHITE)
+	draw_rect(Rect2(Vector2(right, top), Vector2(bw, bottom - top)), BORDER_WHITE)
+	for edge in [left - bw, right + bw]:
+		draw_line(Vector2(edge, top), Vector2(edge, bottom), Color("1b2c21"), maxf(1.0, _scale * 0.09))
+	for end_x in [0.0, 120.0]:
+		var y := to_px(Vector2(end_x, 0.0)).y
+		draw_line(Vector2(left - bw, y), Vector2(right + bw, y), BORDER_WHITE, bw)
+	_draw_endzone_name(5.0, GameState.team_name, lo)
+	_draw_endzone_name(115.0, sim.opponent_name, lo)
+
+	var chalk := Color(FIELD_PAINT, 0.46)
 	for x in range(maxi(10, band_start), mini(111, lo.y + 5)):
 		if x % 5 != 0:
 			continue
 		var y := to_px(Vector2(float(x), 0.0)).y
-		draw_line(Vector2(left, y), Vector2(right, y), chalk, 2.0 if x % 10 == 0 else 1.0)
+		draw_line(Vector2(left, y + 1.0), Vector2(right, y + 1.0), Color(0.08, 0.13, 0.09, 0.18), 3.0)
+		draw_line(Vector2(left, y), Vector2(right, y), chalk, maxf(1.0, _scale * (0.1 if x % 10 == 0 else 0.065)))
 
 	# Hash marks.
 	for x in range(maxi(11, lo.x), mini(110, lo.y + 1)):
 		var y := to_px(Vector2(float(x), 0.0)).y
-		for hx in [YW * 0.36, YW * 0.64]:
+		for hx in [1.0, YW * 0.36, YW * 0.64, YW - 1.0]:
 			var px := to_px(Vector2(0.0, hx)).x
 			var half_tick := _scale * 0.33
 			draw_line(Vector2(px - half_tick, y), Vector2(px + half_tick, y),
-				Color(UIKit.CHALK, 0.30), 2.0)
+				Color(FIELD_PAINT, 0.45), maxf(1.0, _scale * 0.075))
 
 	# Yard numbers down both sidelines.
-	var font := ThemeDB.fallback_font
-	var fs := int(maxf(12.0, _scale * 0.85))
+	var font := UIKit.FONT_BLOCK
+	var fs := int(maxf(14.0, _scale * 1.9))
 	for x in range(20, 105, 10):
 		if x < lo.x - 2 or x > lo.y + 2:
 			continue
@@ -1371,16 +1402,63 @@ func _draw_field() -> void:
 		var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		for lat in [6.0, YW - 6.0]:
 			var px := to_px(Vector2(0.0, lat)).x
-			draw_string(font, Vector2(px - w * 0.5, y + fs * 0.35), text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(UIKit.CHALK, 0.45))
+			draw_set_transform(Vector2(px, y), -PI * 0.5 if lat < YW * 0.5 else PI * 0.5)
+			draw_string_outline(font, Vector2(-w * 0.5, fs * 0.35), text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 1, Color(0.08, 0.12, 0.08, 0.4))
+			draw_string(font, Vector2(-w * 0.5, fs * 0.35), text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(FIELD_PAINT, 0.62))
+			draw_set_transform(Vector2.ZERO)
+			if x != 60:
+				var tip := Vector2(px, y + (-1.0 if x > 60 else 1.0) * _scale * 1.7)
+				var direction := -1.0 if x > 60 else 1.0
+				draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(-0.28, -direction * 0.5) * _scale,
+					tip + Vector2(0.28, -direction * 0.5) * _scale]), Color(FIELD_PAINT, 0.55))
 
 	# Sidelines and goal lines.
-	draw_line(Vector2(left, 0.0), Vector2(left, size.y), Color(UIKit.CHALK, 0.55), 2.0)
-	draw_line(Vector2(right, 0.0), Vector2(right, size.y), Color(UIKit.CHALK, 0.55), 2.0)
+	draw_line(Vector2(left, top), Vector2(left, bottom), Color(FIELD_PAINT, 0.7), 1.5)
+	draw_line(Vector2(right, top), Vector2(right, bottom), Color(FIELD_PAINT, 0.7), 1.5)
 	for gl in [10.0, 110.0]:
 		var y := to_px(Vector2(gl, 0.0)).y
 		if y > -10.0 and y < size.y + 10.0:
-			draw_line(Vector2(left, y), Vector2(right, y), Color(UIKit.CHALK, 0.85), 3.0)
+			draw_line(Vector2(left, y), Vector2(right, y), Color(FIELD_PAINT, 0.82), maxf(2.0, _scale * 0.13))
+			for lat in [-0.5, YW + 0.5]:
+				var pylon := to_px(Vector2(gl, lat))
+				var box := Rect2(pylon - Vector2(0.15, 0.3) * _scale, Vector2(0.3, 0.6) * _scale)
+				draw_rect(box, Color("be8250"))
+				draw_rect(box, Color("3a3524"), false, 1.0)
+
+
+func _draw_grass_detail() -> void:
+	# The tile follows world yards across pan, camera shake and zoom. One quad
+	# supplies the fine blades instead of thousands of per-frame draw calls.
+	var factor := maxf(_scale / 16.0, 0.001)
+	var period := 512.0 * factor
+	var origin := to_px(Vector2.ZERO)
+	var offset := Vector2(fposmod(origin.x, period), fposmod(origin.y, period)) - Vector2.ONE * period
+	draw_set_transform(offset, 0.0, Vector2.ONE * factor)
+	draw_texture_rect(GRASS_DETAIL, Rect2(Vector2.ZERO, (size - offset) / factor), true)
+	draw_set_transform(Vector2.ZERO)
+
+
+func _draw_endzone_name(x: float, name_text: String, visible: Vector2i) -> void:
+	if x < visible.x - 6 or x > visible.y + 6:
+		return
+	var at := to_px(Vector2(x, YW * 0.5))
+	var font := UIKit.FONT_BLOCK
+	var label := name_text.to_upper()
+	var fs := maxi(12, int(_scale * 3.0))
+	var available := (YW - 12.0) * _scale
+	var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	if width > available:
+		fs = maxi(1, int(fs * available / maxf(width, 1.0)))
+		width = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var baseline := at + Vector2(-width * 0.5, fs * 0.35)
+	draw_string_outline(font, baseline, label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 2, Color(0.08, 0.12, 0.09, 0.3))
+	draw_string(font, baseline, label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(FIELD_PAINT, 0.45))
+	for lat in [3.0, YW - 3.0]:
+		for dx in [-3.0, 0.0, 3.0]:
+			var center := to_px(Vector2(x + dx, lat))
+			draw_line(center + Vector2(-0.5, 0.6) * _scale, center + Vector2(0.5, -0.6) * _scale, Color(FIELD_PAINT, 0.2), _scale * 0.4, true)
 
 
 func _draw_lines_of_scrimmage() -> void:
