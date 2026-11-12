@@ -37,6 +37,7 @@ func _ready() -> void:
 		_check(moving.pos != start and moving.pos.distance_to(moving.home) < 0.5, "ambient pacing moves within a bounded personal space")
 	_walking_lanes(crowd, sim)
 	_staggered_reactions(crowd, sim)
+	_replacement_reaction(crowd, sim)
 	for actor in crowd.people + crowd.officials:
 		var pos: Vector2 = actor.pos
 		_check(pos.y < 0.0 or pos.y > MatchSim.FIELD_W, "ambient actors stay outside the playing field")
@@ -230,6 +231,26 @@ func _staggered_reactions(crowd: SidelineCrowd, sim: MatchSim) -> void:
 			_check(times != first_finishes, "each new event varies who settles first")
 	_check(sim.rng.state == sim_rng_before and GameState.rng.state == run_rng_before,
 		"random reaction timing preserves simulation and run RNG")
+
+func _replacement_reaction(crowd: SidelineCrowd, sim: MatchSim) -> void:
+	_result(crowd, sim, {"kind":"touchdown", "td":true, "yards":25.0}, "cheer", "groan", "touchdown")
+	crowd.advance(sim, 0.7)
+	_check(crowd.people.all(func(actor): return crowd.call("_reaction_weight", actor) > 0.0), "replacement starts with an active crowd")
+	sim.phase = MatchSim.Phase.PRESNAP
+	sim.result = {}
+	crowd.advance(sim, 0.016)
+	sim.snap()
+	sim.carrier = sim.offense[6]
+	sim.handoff_done = false
+	var sim_rng_before := sim.rng.state
+	var weights: Array = crowd.people.map(func(actor): return crowd.call("_reaction_weight", actor))
+	crowd.advance(sim, 0.016)
+	_check(crowd.offense_mode == "clap", "a real new-play catch refreshes the crowd reaction")
+	_check(crowd.people.all(func(actor): return crowd.call("_reaction_weight", actor) > 0.0),
+		"a replacement event never drops the active crowd collectively to ambient")
+	_check(range(crowd.people.size()).all(func(i): return crowd.call("_reaction_weight", crowd.people[i]) >= weights[i] - 0.001),
+		"refreshing an active event preserves each NPC's gesture strength")
+	_check(sim.rng.state == sim_rng_before, "refreshing an active reaction preserves simulation RNG")
 
 func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
 	sim.phase = MatchSim.Phase.PRESNAP

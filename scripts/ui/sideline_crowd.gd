@@ -93,6 +93,7 @@ func reset(sim: MatchSim) -> void:
 			walker["walk_pause"] = layout.randf_range(1.5, 3.0)
 			walker["walk_clock"] = layout.randf_range(0.0, 25.0)
 			walker["velocity"] = 0.0
+			walker["walk_velocity"] = 0.0
 			walker["stride"] = 0.0
 		# Small groups, uneven gaps and individual spacing replace parade rows.
 		var anchors: Array[Vector2] = []
@@ -143,7 +144,7 @@ func _add_person(at: Vector2, side: int, activity: String, layout: RandomNumberG
 		"body": BODIES[index % BODIES.size()], "head": str(1 + index % 2),
 		"beat": layout.randf_range(0.0, TAU), "delay": layout.randf_range(0.0, 0.45),
 		"activity": activity, "ref": false, "reaction_mode": "",
-		"react_from": 0.0, "react_until": 0.0, "settle": 0.5})
+		"react_from": 0.0, "react_until": 0.0, "settle": 0.5, "attack_weight": 0.0})
 
 
 func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
@@ -222,7 +223,9 @@ func _advance_walker(actor: Dictionary, delta: float) -> void:
 	var leg_time := phase - half_cycle if returning else phase
 	var fraction := minf(leg_time / travel, 1.0)
 	actor.pos = actor.walk_from.lerp(actor.walk_to, 1.0 - fraction if returning else fraction)
-	actor.velocity = (-actor.walk_speed if returning else actor.walk_speed) if delta > 0.0 and leg_time < travel else 0.0
+	# Retain the projected gait while a reaction holds physical movement.
+	actor.walk_velocity = (-actor.walk_speed if returning else actor.walk_speed) if leg_time < travel else 0.0
+	actor.velocity = actor.walk_velocity if delta > 0.0 else 0.0
 	var distance := (floorf(float(actor.walk_clock) / (half_cycle * 2.0)) * 2.0 + (1.0 if returning else 0.0) + fraction) * length
 	actor.stride = distance * 3.0
 
@@ -249,7 +252,7 @@ func _reaction_weight(actor: Dictionary) -> float:
 		return 1.0 if (offense_mode if actor.offense else defense_mode) in ["cheer", "groan"] else 0.0
 	if actor.reaction_mode == "" or clock < float(actor.react_from):
 		return 0.0
-	return smoothstep(float(actor.react_from), float(actor.react_from) + 0.2, clock) \
+	return lerpf(float(actor.attack_weight), 1.0, smoothstep(float(actor.react_from), float(actor.react_from) + 0.2, clock)) \
 		* (1.0 - smoothstep(float(actor.react_until), float(actor.react_until) + float(actor.settle), clock))
 
 
@@ -259,8 +262,12 @@ func _react(ours: String, theirs: String, signal_name: String, seconds: float = 
 	ref_signal = signal_name
 	reaction_left = seconds
 	for actor in people:
+		var strength := _reaction_weight(actor)
 		actor.reaction_mode = ours if actor.offense else theirs
-		actor.react_from = clock + float(actor.delay) * 0.4 + _animation_rng.randf_range(0.0, 0.3)
+		var onset := clock + float(actor.delay) * 0.4 + _animation_rng.randf_range(0.0, 0.3)
+		# Refresh an ongoing gesture without collectively dropping to idle.
+		actor.react_from = clock if strength > 0.0 else onset
+		actor.attack_weight = strength
 		actor.react_until = maxf(float(actor.react_from) + 0.3,
 			clock + seconds * _animation_rng.randf_range(0.8, 1.25) + _animation_rng.randf_range(0.0, 0.65))
 		actor.settle = _animation_rng.randf_range(0.35, 0.75)
@@ -368,12 +375,18 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	if pacing:
 		stride = clock * 3.0 + float(actor.beat)
 		running = true
+	var ambient_stride := clock * 3.0 + float(actor.beat) if ambient == "pace" else stride
+	var ambient_running := ambient == "pace" or (ambient == "walk" and absf(float(actor.walk_velocity)) > 0.01)
 	var hop := absf(sin(t)) * h * 0.2 * weight if mode == "cheer" else 0.0
 	var bob := absf(sin(stride)) * h * 0.07 if running else sin(clock * 2.0 + float(actor["beat"])) * h * 0.018
+	if settling and ambient_running:
+		bob = lerpf(absf(sin(ambient_stride)) * h * 0.07, bob, weight)
 	var sway := sin(clock * 0.8 + float(actor.beat)) * h * 0.045 if mode == "idle" else 0.0
 	if settling and ambient == "idle":
 		sway = sin(clock * 0.8 + float(actor.beat)) * h * 0.045 * (1.0 - weight)
 	var center := ground + Vector2(sin(stride) * h * 0.03 if running else sway, -hop - bob)
+	if settling and ambient_running:
+		center.x += sin(ambient_stride) * h * 0.03 * (1.0 - weight)
 	var view := "left"
 	var flip := ours
 	if mode in ["cheer", "clap", "groan", "touchdown", "incomplete", "no_good", "first_down", "turnover", "stop"]:
@@ -400,11 +413,12 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var hand_alpha := 1.0
 	var ambient_view := "front" if ambient in ["idle", "chat", "clipboard"] else "left"
 	var ambient_flip := ours if ambient_view == "left" else false
-	if ambient == "pace":
-		ambient_view = "back" if cos(clock * 0.65 + float(actor.beat)) > 0.0 else "front"
+	if ambient_running:
+		var ambient_velocity := float(actor.walk_velocity) if ambient == "walk" else cos(clock * 0.65 + float(actor.beat))
+		ambient_view = "back" if ambient_velocity > 0.0 else "front"
 		ambient_flip = false
 	if settling:
-		var resting := _hand_positions(ambient, center, head_at, h, t, ambient == "pace")
+		var resting := _hand_positions(ambient, center, head_at, h, ambient_stride if ambient_running else t, ambient_running)
 		if resting.is_empty():
 			resting = [center + Vector2(-h * 0.46, h * 0.28), center + Vector2(h * 0.46, h * 0.28)]
 			hand_alpha = weight
@@ -413,14 +427,14 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 				var back_tex := _body(palette, ambient_view, int(actor.body))
 				resting[i].x = center.x + (-1.0 if i == 0 else 1.0) * h * back_tex.get_width() / back_tex.get_height() * 0.48
 			hands[i] = resting[i].lerp(hands[i], weight)
-	var hands_behind := view == "back" or (settling and ambient_view == "back" and weight < 0.5)
-	if hands_behind:
+	var hands_back_mix := 1.0 - weight if settling and ambient_view == "back" else 1.0 if view == "back" else 0.0
+	if hands_back_mix > 0.0:
 		# A walker facing away swings at the sides, with the torso occluding
 		# the inner part of each hand rather than hands pasted onto the back.
 		if not settling:
 			for i in hands.size():
 				hands[i].x = center.x + (-1.0 if i == 0 else 1.0) * width * 0.48
-		_draw_hands(field, actor["head"], hands, face_h, hand_alpha)
+		_draw_hands(field, actor["head"], hands, face_h, hand_alpha * hands_back_mix)
 	if settling:
 		# Keep the underlying body opaque while the gesture/facing settles.
 		_draw_body_head(field, actor, palette, ambient_view, ambient_flip, center, head_at, h, face_h, 1.0)
@@ -432,8 +446,8 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 		field.draw_set_transform(center + Vector2(0, h * 0.04), sin(t * 0.14) * 0.035, Vector2.ONE)
 		field.draw_texture_rect(CLIPBOARD, Rect2(-h * 0.27, -h * 0.33, h * 0.54, h * 0.70), false, prop_color)
 		field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	if not hands_behind:
-		_draw_hands(field, actor["head"], hands, face_h, hand_alpha)
+	if hands_back_mix < 1.0:
+		_draw_hands(field, actor["head"], hands, face_h, hand_alpha * (1.0 - hands_back_mix))
 	if prop_mode == "clipboard":
 		field.draw_line(hands[1] + Vector2(-h * 0.03, h * 0.04), hands[1] + Vector2(h * 0.1, -h * 0.19), Color(0.78, 0.66, 0.44, prop_alpha), maxf(1.0, h * 0.035), true)
 	if prop_mode == "drink":
