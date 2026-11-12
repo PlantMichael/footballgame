@@ -13,18 +13,34 @@ func _ready() -> void:
 func _run() -> void:
 	get_tree().root.size = Vector2i(1440, 900)
 	await _match()
-	var player: SimPlayer = screen.sim.offense_slot("F0")
-	var caption := "#%d %s" % [player.data.number, player.data.pname]
-	var choice := _link(caption)
+	var choice := _link("Priority_F0")
 	await _click(choice)
-	_check(screen.sim.is_priority_target("F0"), "plain player-name choice still selects a priority target")
-	choice = _link(caption)
+	_check(screen.sim.is_priority_target("F0"), "player-column target choice selects the matching player")
+	choice = _link("Priority_F0")
 	_check(choice != null and choice.button_pressed, "selection has native checked state after rebuilding")
 	if choice != null:
 		choice.grab_focus()
 	await _key(KEY_SPACE)
 	_check(not screen.sim.is_priority_target("F0"), "Space can change a focused name choice")
-	choice = _link(caption)
+	await _click(_link("AllTargets"))
+	_check(screen.sim.all_priority_targets_selected(), "shared target-all selects every player")
+	await _click(_link("AllTargets"))
+	_check(screen.sim.priority_targets.is_empty(), "shared clear-targets clears every player")
+	var rb: SimPlayer
+	for f: SimPlayer in screen.sim.flex_players():
+		if screen.sim.plays_rb(f):
+			rb = f
+			break
+	_check(rb != null, "lineup has an eligible handoff player")
+	if rb != null:
+		await _click(_link("Handoff_" + rb.slot))
+		_check(screen.sim.planned_action == "handoff" and screen.sim.planned_handoff_slot == rb.slot,
+			"handoff under the player's route arms that player")
+	await _click(_link("Scramble"))
+	_check(screen.sim.planned_action == "scramble", "shared QB scramble replaces the handoff")
+	await _click(_link("Scramble"))
+	_check(screen.sim.planned_action == "", "selecting QB scramble again cancels it")
+	choice = _link("Priority_F0")
 	if choice != null:
 		choice.grab_focus()
 	await _key(KEY_ENTER)
@@ -84,11 +100,11 @@ func _match() -> void:
 	# Freeze only the simulation driver; real input/control/field owners stay active.
 	screen.set_process(false)
 
-func _link(caption: String) -> LinkButton:
+func _link(control_name: String) -> LinkButton:
 	for link in screen.bar_host.find_children("*", "LinkButton", true, false):
-		if link.text.trim_prefix("✓ ") == caption:
+		if link.name == control_name:
 			return link
-	_check(false, "name choice available: " + caption)
+	_check(false, "player call choice available: " + control_name)
 	return null
 
 func _button(caption: String, parent: Node) -> Button:

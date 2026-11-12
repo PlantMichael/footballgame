@@ -743,9 +743,6 @@ func _playcall_bar() -> Control:
 	if GameState.dev_mode:
 		v.add_child(_dev_defense_slider())
 
-	v.add_child(_target_priority_row())
-	v.add_child(_play_action_row())
-
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override("separation", 8)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -898,8 +895,8 @@ func _wind_words(w: Vector2) -> String:
 	return "calm" if parts.is_empty() else ", ".join(parts)
 
 
-## One card per flex: who he is, how much chalk his route uses, and a
-## thumbnail of the shape. Clicking a drawn one wipes it back to auto.
+## One column per flex: route, player identity, then that player's call options.
+## Clicking a drawn route wipes it back to auto.
 func _chalk_card(f: SimPlayer) -> Control:
 	var slot: String = f.slot
 	var pd := f.data
@@ -907,7 +904,7 @@ func _chalk_card(f: SimPlayer) -> Control:
 	var auto_id := String(sim.auto_route_ids.get(slot, "go"))
 
 	var b := UIKit.button("", 12)
-	b.custom_minimum_size = Vector2(132, 124)
+	b.custom_minimum_size = Vector2(132, 108)
 	b.tooltip_text = "#%d %s\nDrag from him on the field to chalk his route." % [pd.number, pd.pname]
 	b.add_theme_stylebox_override("disabled", UIKit.stylebox(Color("16231d"), 4, 1, Color("526052")))
 	if drawn:
@@ -927,12 +924,6 @@ func _chalk_card(f: SimPlayer) -> Control:
 	v.offset_top = 4
 	v.offset_bottom = -4
 	v.add_theme_constant_override("separation", 1)
-
-	var name_line := UIKit.label("#%d %s" % [pd.number, pd.pname], 12,
-		UIKit.ACCENT if drawn else UIKit.TEXT)
-	name_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	v.add_child(name_line)
 
 	var thumb := RouteThumb.new()
 	var effective_route := RouteBook.truncate(GameState.route_for(slot) if drawn \
@@ -955,7 +946,40 @@ func _chalk_card(f: SimPlayer) -> Control:
 	v.add_child(f_label)
 
 	b.add_child(v)
-	return b
+	var column := VBoxContainer.new()
+	column.custom_minimum_size.x = 132
+	column.add_theme_constant_override("separation", 3)
+	column.add_child(b)
+	var name_line := UIKit.label("#%d %s" % [pd.number, pd.pname], 14, UIKit.TEXT)
+	name_line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_line.custom_minimum_size.x = 132
+	name_line.tooltip_text = "#%d %s" % [pd.number, pd.pname]
+	column.add_child(name_line)
+	var target := _name_choice("Priority target", sim.is_priority_target(slot))
+	target.name = "Priority_" + slot
+	target.accessibility_name = "Priority target: #%d %s" % [pd.number, pd.pname]
+	target.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	target.tooltip_text = "Prioritize #%d %s for passes. Space selects; Enter snaps." % [pd.number, pd.pname]
+	target.pressed.connect(func():
+		sim.toggle_priority_target(slot)
+		_refresh_bar())
+	column.add_child(target)
+	if sim.plays_rb(f):
+		var handoff := _name_choice("Handoff", sim.planned_action == "handoff" and sim.planned_handoff_slot == slot)
+		handoff.name = "Handoff_" + slot
+		handoff.accessibility_name = "Handoff to #%d %s" % [pd.number, pd.pname]
+		handoff.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		handoff.tooltip_text = "Hand the ball to #%d %s at the snap. Select again to cancel." % [pd.number, pd.pname]
+		handoff.pressed.connect(func():
+			sim.set_planned_handoff(slot)
+			_refresh_bar())
+		column.add_child(handoff)
+	else:
+		var spacer := Control.new()
+		spacer.custom_minimum_size.y = 26
+		column.add_child(spacer)
+	return column
 
 
 ## Where a flex is lined up, as a formation-relative spot (what RouteBook
@@ -965,12 +989,30 @@ func _flex_spot(slot: String) -> Vector2:
 	return Vector2(a.x - sim.los, a.y - MatchSim.FIELD_W * 0.5)
 
 
-## Wipe-the-board and teaching-aid buttons, stacked beside the five cards.
+## Shared call choices and chalkboard tools, stacked beside the player columns.
 func _chalk_tools() -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.custom_minimum_size = Vector2(124, 0)
+	col.add_child(UIKit.label("TEAM CALL", 11, UIKit.ACCENT))
+	var all_on := sim.all_priority_targets_selected()
+	var targets := _name_choice("Clear targets" if all_on else "Target all", all_on)
+	targets.name = "AllTargets"
+	targets.pressed.connect(func():
+		if all_on:
+			sim.clear_priority_targets()
+		else:
+			sim.select_all_priority_targets()
+		_refresh_bar())
+	col.add_child(targets)
+	var scramble := _name_choice("QB scramble", sim.planned_action == "scramble")
+	scramble.name = "Scramble"
+	scramble.tooltip_text = "The QB runs at the snap. Select again to cancel."
+	scramble.pressed.connect(func():
+		sim.set_planned_action("scramble")
+		_refresh_bar())
+	col.add_child(scramble)
 
 	var ex := UIKit.button("Examples", 12)
 	ex.custom_minimum_size = Vector2(0, 32)
@@ -1119,69 +1161,6 @@ func _load_example(id: String) -> void:
 		GameState.set_route(flexes[i].slot, routes[i])
 	_apply_call(false)
 	_refresh_bar()
-
-
-## Arms a Hand Off to one specific RB or a Scramble for the play about to be
-## snapped - like picking a priority target, the coach chooses who ahead of
-## time rather than "whoever's closest" during the play. Replaces the old
-## mid-play HAND OFF/SCRAMBLE buttons, which were too fiddly to click during
-## a live play. Only one can be armed at a time (see
-## MatchSim.set_planned_handoff/set_planned_action); clicking the armed one
-## again disarms it.
-func _play_action_row() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	row.add_child(UIKit.label("PLAN", 12, UIKit.ACCENT))
-
-	var rbs: Array[SimPlayer] = sim.flex_players().filter(func(f): return sim.plays_rb(f))
-	if not rbs.is_empty():
-		row.add_child(UIKit.label("Hand off to:", 11, UIKit.MUTED))
-		for f: SimPlayer in rbs:
-			var slot: String = f.slot
-			var pd: PlayerData = f.data
-			var b := _name_choice("#%d %s" % [pd.number, pd.pname],
-				sim.planned_action == "handoff" and sim.planned_handoff_slot == slot)
-			b.pressed.connect(func():
-				sim.set_planned_handoff(slot)
-				_refresh_bar())
-			row.add_child(b)
-
-	var scramble_btn := _name_choice("Scramble", sim.planned_action == "scramble")
-	scramble_btn.tooltip_text = "The QB takes off running the moment the ball is snapped."
-	scramble_btn.pressed.connect(func():
-		sim.set_planned_action("scramble")
-		_refresh_bar())
-	row.add_child(scramble_btn)
-
-	return row
-
-
-func _target_priority_row() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	row.add_child(UIKit.label("PRIORITY TARGETS", 12, UIKit.ACCENT))
-
-	for f in sim.flex_players():
-		var slot: String = f.slot
-		var pd := f.data
-		var on := sim.is_priority_target(slot)
-		var b := _name_choice("#%d %s" % [pd.number, pd.pname], on)
-		b.pressed.connect(func():
-			sim.toggle_priority_target(slot)
-			_refresh_bar())
-		row.add_child(b)
-
-	var all_on := sim.all_priority_targets_selected()
-	var all_btn := _name_choice("Clear all" if all_on else "Select all", all_on)
-	all_btn.pressed.connect(func():
-		if all_on:
-			sim.clear_priority_targets()
-		else:
-			sim.select_all_priority_targets()
-		_refresh_bar())
-	row.add_child(all_btn)
-
-	return row
 
 
 func _name_choice(caption: String, selected: bool) -> LinkButton:
