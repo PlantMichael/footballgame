@@ -17,10 +17,31 @@ func _ready() -> void:
 	var crowd: SidelineCrowd = field.sidelines
 	field.set_process(false)
 	crowd.advance(sim, 0.016)
-	_check(crowd.people.size() == 80 and crowd.officials.size() == 2, "two populated sidelines and two officials")
+	_check(crowd.people.size() >= 180 and crowd.officials.size() == 2, "denser sidelines and two officials")
+	_check(crowd.props.size() >= 50, "bench and equipment stations populate both sidelines")
+	var lateral_positions := {}
+	var moving: Dictionary = {}
+	for actor in crowd.people:
+		lateral_positions[snappedf(actor.home.y, 0.1)] = true
+		if actor.activity == "pace":
+			moving = actor
+		if actor.activity != "rest":
+			for prop in crowd.props:
+				var footprint: Vector2 = SidelineCrowd.PROP_SIZES[prop.kind]
+				_check(not Rect2(prop.pos - footprint * 0.5, footprint).has_point(actor.home), "standing groups leave furniture space")
+	_check(lateral_positions.size() > 40, "crowd is scattered across sideline depth rather than straight rows")
+	_check(not moving.is_empty(), "sideline includes pacing NPCs")
+	if not moving.is_empty():
+		var start: Vector2 = moving.pos
+		crowd.advance(sim, 1.0)
+		_check(moving.pos != start and moving.pos.distance_to(moving.home) < 0.5, "ambient pacing moves within a bounded personal space")
 	for actor in crowd.people + crowd.officials:
 		var pos: Vector2 = actor.pos
 		_check(pos.y < 0.0 or pos.y > MatchSim.FIELD_W, "ambient actors stay outside the playing field")
+	for prop in crowd.props:
+		var footprint: Vector2 = SidelineCrowd.PROP_SIZES[prop.kind]
+		_check(prop.pos.y + footprint.y * 0.5 < -2.0 or prop.pos.y - footprint.y * 0.5 > MatchSim.FIELD_W + 2.0,
+			"decorations keep the field and officials' lane clear")
 	sim.defense_jersey = "red"
 	_check(crowd.team_palette(true, sim) == "blue" and crowd.team_palette(false, sim) == "red", "red opponent jersey palette")
 	sim.defense_jersey = "green"
@@ -29,9 +50,11 @@ func _ready() -> void:
 	var ball_before := sim.ball_pos
 	var player_before := sim.offense[0].pos
 	var time_before := sim.time
+	var run_rng_before := GameState.rng.state
+	crowd.reset(sim)
 	for i in 10:
 		crowd.advance(sim, 0.016)
-	_check(sim.rng.state == rng_before and sim.ball_pos == ball_before and sim.time == time_before
+	_check(sim.rng.state == rng_before and GameState.rng.state == run_rng_before and sim.ball_pos == ball_before and sim.time == time_before
 		and sim.offense[0].pos == player_before and sim.offense.size() == 11 and sim.defense.size() == 11,
 		"sideline updates preserve gameplay state and seeded RNG")
 	sim.snap()
@@ -81,9 +104,13 @@ func _ready() -> void:
 	field.set_process(true)
 	await get_tree().process_frame
 	var clock_before := crowd.clock
+	var people_before: Array = crowd.people.map(func(actor): return actor.pos)
+	var refs_before: Array = crowd.officials.map(func(actor): return actor.pos)
 	get_tree().paused = true
 	await get_tree().create_timer(0.1).timeout
 	_check(crowd.clock == clock_before, "pause freezes NPC animation and official motion")
+	_check(crowd.people.map(func(actor): return actor.pos) == people_before
+		and crowd.officials.map(func(actor): return actor.pos) == refs_before, "pause freezes ambient pacing and referees")
 	get_tree().paused = false
 	await get_tree().process_frame
 	await get_tree().process_frame

@@ -26,11 +26,16 @@ survive a restart. Esc from that confirmation returns to the pause menu.
 
 ## Sidelines
 
-Two rows of civilian teammates line each sideline, wearing the same blue,
-red or green palette as that side's players. They watch catches and big gains,
+About 200 civilian teammates gather in scattered groups along the sidelines,
+wearing the same blue, red or green palette as that side's players. Bench seats,
+orange water coolers, bottle crates, towel bins, equipment bags and cones fill
+the team areas, with a clear lane next to the boundary for officials. Between
+plays, teammates chat, drink, rest on benches and pace in small personal spaces.
+They watch catches and big gains,
 clap, celebrate scores and first downs, and react to turnovers, sacks and missed
 plays. Two striped officials jog along the sidelines with the ball and signal
-results. All sideline actors are cosmetic, stay outside the playing field,
+results. Individual reaction timing varies across the crowd. All sideline actors
+and equipment are cosmetic, stay outside the playing field,
 and freeze with the pause menu.
 
 The body sprites in `assets/sidelines/` were extracted from the supplied civilian
@@ -40,6 +45,9 @@ To regenerate from those original `blue/`, `red/`, `green/` and `ref/` folders:
 ```
 godot --headless --path . --script assets/sidelines/_cut_assets.gd -- SOURCE_FOLDER
 ```
+
+The equipment in `assets/sidelines/props/` is original outlined SVG art, imported
+directly by Godot.
 
 Run `godot --headless --path . res://tools/sideline_check.tscn` for reaction,
 team palette, official tracking, repeat-play and pause checks.
