@@ -100,7 +100,7 @@ func _ready() -> void:
 	UIKit.background(self)
 	_start_match()
 	_build_layout()
-	PauseMenu.opening.connect(field.cancel_stroke)
+	PauseMenu.opening.connect(field.cancel_pointer_gestures)
 	_refresh_bar()
 
 

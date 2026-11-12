@@ -13,6 +13,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	get_tree().root.size = Vector2i(1440, 900)
 	await _screen("main_menu")
 	await _escape()
 	_check(not get_tree().paused and not PauseMenu.visible, "title screen ignores pause")
@@ -31,6 +32,21 @@ func _run() -> void:
 	await _screen("match")
 	var match_screen := get_tree().current_scene
 	var sim: MatchSim = match_screen.sim
+	var field: Control = match_screen.field
+	await _right_mouse(field, true)
+	_check(field.get("_dragging"), "right mouse starts camera drag")
+	await _escape()
+	await _right_mouse(field, false)
+	await _escape()
+	var camera_before := Vector2(field.get("_cam_x"), field.get("_cam_y"))
+	var motion := InputEventMouseMotion.new()
+	motion.position = field.get_global_rect().get_center()
+	motion.global_position = motion.position
+	motion.relative = Vector2(10, 10)
+	Input.parse_input_event(motion)
+	await get_tree().process_frame
+	_check(Vector2(field.get("_cam_x"), field.get("_cam_y")) == camera_before,
+		"releasing camera drag during pause does not pan after resume")
 	match_screen.call("_on_snap")
 	await get_tree().create_timer(0.1).timeout
 	_check(sim.phase == MatchSim.Phase.LIVE, "real match has a live play")
@@ -87,6 +103,16 @@ func _escape() -> void:
 	await get_tree().process_frame
 	event = InputEventKey.new()
 	event.keycode = KEY_ESCAPE
+	Input.parse_input_event(event)
+	await get_tree().process_frame
+
+
+func _right_mouse(field: Control, pressed: bool) -> void:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_RIGHT
+	event.pressed = pressed
+	event.position = field.get_global_rect().get_center()
+	event.global_position = event.position
 	Input.parse_input_event(event)
 	await get_tree().process_frame
 

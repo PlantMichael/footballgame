@@ -1240,6 +1240,13 @@ func _finish_stroke() -> void:
 	route_drawn.emit(sp.slot, route)
 
 
+## A modal can consume mouse releases while this field is paused. Drop both
+## pointer gestures so neither resumes after that release was missed.
+func cancel_pointer_gestures() -> void:
+	_dragging = false
+	cancel_stroke()
+
+
 ## Wipes an in-progress stroke without committing it (e.g. the ball was
 ## snapped out from under the coach).
 func cancel_stroke() -> void:
