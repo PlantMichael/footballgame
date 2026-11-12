@@ -173,9 +173,17 @@ func _walking_lanes(crowd: SidelineCrowd, sim: MatchSim) -> void:
 	_check(walkers.map(func(actor): return actor.pos) == stopped, "walkers stop in place for a game reaction")
 	sim.phase = MatchSim.Phase.PRESNAP
 	sim.result = {}
-	crowd.advance(sim, 0.25)
-	for j in walkers.size():
-		_check(walkers[j].pos.distance_to(stopped[j]) <= 0.326, "walking resumes from the stopped position")
+	var traveled := PackedFloat32Array()
+	traveled.resize(walkers.size())
+	for i in 40:
+		var before: Array = walkers.map(func(actor): return actor.pos)
+		crowd.advance(sim, 0.25)
+		for j in walkers.size():
+			var step: float = walkers[j].pos.distance_to(before[j])
+			_check(step <= 0.326, "walking resumes from the stopped position without jumping")
+			traveled[j] += step
+	for distance in traveled:
+		_check(distance > 3.0, "each walker continues traveling after the reaction and any endpoint pause")
 
 func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
 	sim.phase = MatchSim.Phase.PRESNAP
