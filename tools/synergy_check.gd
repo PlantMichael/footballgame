@@ -35,6 +35,7 @@ func _ready() -> void:
 	var disposed := _dispose_match()
 	_check(disposed[0].get_ref() == null and disposed[1].get_ref() == null,
 		"disposing a match releases mutual block/coverage and support references")
+	await _substitution_ui()
 	print("SYNERGY CHECK: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILURES" % failures))
 	get_tree().quit(1 if failures else 0)
 
@@ -477,3 +478,50 @@ func _lifecycle_edges() -> void:
 	artie.mark = negated.defense[0]
 	negated._step_synergies(1.0)
 	_check(negated.speed_patches.is_empty(), "negated support abilities cannot fire")
+
+
+func _substitution_ui() -> void:
+	GameState.new_run(99001)
+	var original := GameState.player_at("F0")
+	GameState.roster.append(_fresh("Chalk Norris"))
+	GameState.set_route("F0", [Vector2(30, 0)])
+	GameState.set_route("F1", [Vector2(35, 0)])
+	var scene: Control = load("res://scenes/match.tscn").instantiate()
+	add_child(scene)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(_bar_has(scene, "30 / 30 yd"), "ordinary lineup shows the clipped 30-yard route")
+	_check(_click_sub(scene, "Chalk Norris"), "Chalk is selectable through the real substitute button")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var sim: MatchSim = scene.get("sim")
+	_check(_bar_has(scene, "20 / 20 yd") and _bar_has(scene, "35 / 35 yd"),
+		"substituting Chalk immediately refreshes his and his teammates' chalk captions")
+	_check(RouteBook.route_length(sim.play["routes"][1]) == 35,
+		"substitution changes the effective simulated route with its caption")
+	_check(_click_sub(scene, original.pname), "original starter can replace Chalk through the real button")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(_bar_has(scene, "30 / 30 yd") and not _bar_has(scene, "35 / 35 yd") and not _bar_has(scene, "20 / 20 yd"),
+		"removing Chalk refreshes all captions back to ordinary budgets")
+	_check(RouteBook.route_length(sim.play["routes"][1]) == 30 and RouteBook.route_length(GameState.route_for("F1")) == 35,
+		"removing Chalk clips the effective call while preserving stored chalk")
+	scene.queue_free()
+	await get_tree().process_frame
+
+
+func _bar_has(scene: Control, text: String) -> bool:
+	for label in scene.get("bar_host").find_children("*", "Label", true, false):
+		if label.text == text:
+			return true
+	return false
+
+
+func _click_sub(scene: Control, player_name: String) -> bool:
+	scene.call("_open_subs", "F0")
+	for button in scene.get("side_panel").find_children("*", "Button", true, false):
+		for label in button.find_children("*", "Label", true, false):
+			if label.text.contains(player_name):
+				button.pressed.emit()
+				return true
+	return false

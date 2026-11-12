@@ -2025,6 +2025,7 @@ func _sub_row(idx: int, kind: String, slot: String) -> Control:
 		# that just ended.
 		if sim.phase == MatchSim.Phase.PRESNAP:
 			_apply_call(false)
+			_refresh_bar()
 		_dismiss_overlays())
 
 	var h := HBoxContainer.new()
