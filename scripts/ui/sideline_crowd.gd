@@ -256,7 +256,15 @@ func _prop_shadow() -> StyleBoxFlat:
 func _body(palette: String, view: String, body: int) -> Texture2D:
 	var key := "%s/%s/body_%02d.png" % [palette, view, body]
 	if not _textures.has(key):
-		_textures[key] = load("res://assets/sidelines/" + key)
+		var texture: Texture2D = load("res://assets/sidelines/" + key)
+		if palette == "ref" and view == "left" and body == 4:
+			# This sheet cut has a detached 12-pixel mark at x=255. Exclude it
+			# and the empty padding so the collar, head and shadow share a center.
+			var frame := AtlasTexture.new()
+			frame.atlas = texture
+			frame.region = Rect2(0, 0, 139, 175)
+			texture = frame
+		_textures[key] = texture
 	return _textures[key]
 
 
@@ -306,30 +314,42 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 		view = "back" if velocity > 0 else "front"
 		flip = false
 	elif mode == "chat":
-		view = "front" if sin(float(actor.beat)) > 0 else "back"
+		# Conversation gestures belong in front of the torso, never on its back.
+		view = "front"
 		flip = false
 	var palette := "ref" if referee else team_palette(ours, sim)
 	var tex := _body(palette, view, int(actor["body"]))
 	var width := h * tex.get_width() / maxf(tex.get_height(), 1.0)
 	field.draw_circle(ground + Vector2(0, h * 0.4), h * 0.32, Color(0, 0, 0, 0.2))
-	field.draw_set_transform(center, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
-	field.draw_texture_rect(tex, Rect2(-width * 0.5, -h * 0.5, width, h), false)
-	field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var head_at := center + Vector2(0, -h * 0.4 - face_h * 0.38)
 	if mode == "groan":
 		head_at.y += h * 0.1
+	var hands := _hand_positions(mode, center, head_at, h, t, running)
+	if view == "back":
+		# A walker facing away swings at the sides, with the torso occluding
+		# the inner part of each hand rather than hands pasted onto the back.
+		for i in hands.size():
+			hands[i].x = center.x + (-1.0 if i == 0 else 1.0) * width * 0.48
+		_draw_hands(field, actor["head"], hands, face_h)
+	field.draw_set_transform(center, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+	field.draw_texture_rect(tex, Rect2(-width * 0.5, -h * 0.5, width, h), false)
+	field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var head_view := HeadArtDB.view_for(view, flip)
 	var art := _head(actor["head"], head_view)
 	var box: Rect2 = art[1]
 	field.draw_texture_rect(art[0], Rect2(head_at + box.position * face_h, box.size * face_h), false)
-	var hands := _hand_positions(mode, center, head_at, h, t, running)
-	var hand: Texture2D = HANDS[actor["head"]]
-	for at: Vector2 in hands:
-		var d := face_h * 0.43
-		field.draw_texture_rect(hand, Rect2(at - Vector2.ONE * d * 0.5, Vector2.ONE * d), false)
+	if view != "back":
+		_draw_hands(field, actor["head"], hands, face_h)
 	if mode == "drink":
 		var bottle_size := Vector2(h * 0.18, h * 0.41)
 		field.draw_texture_rect(BOTTLE, Rect2(head_at + Vector2(h * 0.15, -h * 0.02), bottle_size), false)
+
+
+func _draw_hands(field, head_id: String, hands: Array, face_h: float) -> void:
+	var hand: Texture2D = HANDS[head_id]
+	var d := face_h * 0.43
+	for at: Vector2 in hands:
+		field.draw_texture_rect(hand, Rect2(at - Vector2.ONE * d * 0.5, Vector2.ONE * d), false)
 
 
 func _hand_positions(mode: String, center: Vector2, head: Vector2, h: float, t: float, running: bool) -> Array:
