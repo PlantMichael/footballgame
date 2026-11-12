@@ -13,8 +13,8 @@ extends Control
 ## The MatchSim itself lives here; the field view only renders it.
 
 const SUB_STEP := 1.0 / 120.0
-## Tall enough for the chalkboard: a header line, the priority-target row,
-## and a row of 124px route cards underneath them.
+## Base chalkboard height for the header and route/player-option columns.
+## Content can grow the floating panel beyond this minimum.
 const BAR_TALL := 224
 const BAR_SHORT := 74
 ## Seconds the floating result card waits after a play before moving on to
