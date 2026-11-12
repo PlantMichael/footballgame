@@ -35,6 +35,7 @@ func _ready() -> void:
 		var start: Vector2 = moving.pos
 		crowd.advance(sim, 1.0)
 		_check(moving.pos != start and moving.pos.distance_to(moving.home) < 0.5, "ambient pacing moves within a bounded personal space")
+	_walking_lanes(crowd, sim)
 	for actor in crowd.people + crowd.officials:
 		var pos: Vector2 = actor.pos
 		_check(pos.y < 0.0 or pos.y > MatchSim.FIELD_W, "ambient actors stay outside the playing field")
@@ -137,6 +138,44 @@ func _fourth_down_spot(crowd: SidelineCrowd, sim: MatchSim, yards: float) -> voi
 	crowd.advance(sim, 1.0)
 	for official in crowd.officials:
 		_check(is_equal_approx(official.pos.x, dead_spot.x), "official holds the same spot after fourth-down advance (%s yd)" % yards)
+
+func _walking_lanes(crowd: SidelineCrowd, sim: MatchSim) -> void:
+	var walkers: Array = crowd.people.filter(func(actor): return actor.activity == "walk")
+	_check(walkers.filter(func(actor): return actor.offense).size() >= 4
+		and walkers.filter(func(actor): return not actor.offense).size() >= 4,
+		"both sidelines have several genuine walkers")
+	if walkers.is_empty():
+		return
+	var observed := {}
+	var minimum: float = walkers[0].pos.x
+	var maximum := minimum
+	for i in 160:
+		var before: Array = walkers.map(func(actor): return actor.pos)
+		crowd.advance(sim, 0.25)
+		for j in walkers.size():
+			var actor: Dictionary = walkers[j]
+			_check(actor.pos.distance_to(before[j]) <= 0.326, "walkers move at walking speed without teleporting")
+			_check(absf(actor.pos.y - actor.home.y) < 0.001, "walking lane stays separate from the field and officials")
+			for prop in crowd.props:
+				var footprint: Vector2 = SidelineCrowd.PROP_SIZES[prop.kind]
+				_check(not Rect2(prop.pos - footprint * 0.5, footprint).grow(0.65).has_point(actor.pos), "walking route clears sideline furniture")
+		minimum = minf(minimum, walkers[0].pos.x)
+		maximum = maxf(maximum, walkers[0].pos.x)
+		observed[signf(float(walkers[0].velocity))] = true
+	_check(maximum - minimum > 8.0, "walkers cover a visible stretch rather than shuffling in place")
+	_check(observed.has(-1.0) and observed.has(0.0) and observed.has(1.0), "walkers turn around and pause at both ends")
+	sim.phase = MatchSim.Phase.DEAD
+	sim.result = {"kind":"touchdown", "td":true, "yards":25.0}
+	crowd.advance(sim, 0.01)
+	crowd.advance(sim, 0.5)
+	var stopped: Array = walkers.map(func(actor): return actor.pos)
+	crowd.advance(sim, 0.3)
+	_check(walkers.map(func(actor): return actor.pos) == stopped, "walkers stop in place for a game reaction")
+	sim.phase = MatchSim.Phase.PRESNAP
+	sim.result = {}
+	crowd.advance(sim, 0.25)
+	for j in walkers.size():
+		_check(walkers[j].pos.distance_to(stopped[j]) <= 0.326, "walking resumes from the stopped position")
 
 func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
 	sim.phase = MatchSim.Phase.PRESNAP

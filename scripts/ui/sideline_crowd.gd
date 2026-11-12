@@ -17,6 +17,9 @@ const PROP_ART := {
 	"cone": preload("res://assets/sidelines/props/cone.svg"),
 }
 const BOTTLE := preload("res://assets/sidelines/props/bottle.svg")
+const CLIPBOARD := preload("res://assets/sidelines/props/clipboard.svg")
+const WALKERS_PER_SIDE := 6
+const WALK_DEPTH := 4.3
 ## Footprints in downfield/lateral yards, including room around furniture.
 const PROP_SIZES := {"bench": Vector2(4.8, 1.5), "cooler_station": Vector2(2.0, 2.0),
 	"bottle_crate": Vector2(1.25, 1.4), "kit_bag": Vector2(1.1, 1.6),
@@ -76,21 +79,34 @@ func reset(sim: MatchSim) -> void:
 				_add_person(Vector2(x + (-1.1 if seat == 0 else 1.1), _side_y(8.0, side)), side, "rest", layout)
 		for i in 10:
 			_add_prop("cone", 13.0 + i * 10.0, 2.9, side)
+		# Reserve a walking lane between the cones and the standing groups.
+		# Disjoint ten-yard stretches keep walkers from passing through each other.
+		for i in WALKERS_PER_SIDE:
+			var from := Vector2(12.0 + i * 16.0, _side_y(WALK_DEPTH, side))
+			_add_person(from, side, "walk", layout)
+			var walker: Dictionary = people.back()
+			walker["walk_from"] = from
+			walker["walk_to"] = from + Vector2(10.0, 0.0)
+			walker["walk_speed"] = layout.randf_range(0.9, 1.3)
+			walker["walk_pause"] = layout.randf_range(1.5, 3.0)
+			walker["walk_clock"] = layout.randf_range(0.0, 25.0)
+			walker["velocity"] = 0.0
+			walker["stride"] = 0.0
 		# Small groups, uneven gaps and individual spacing replace parade rows.
 		var anchors: Array[Vector2] = []
 		for i in 16:
-			anchors.append(Vector2(14.0 + i * 6.0 + layout.randf_range(-1.5, 1.5), layout.randf_range(4.2, 8.8)))
-		var placed := 10
+			anchors.append(Vector2(14.0 + i * 6.0 + layout.randf_range(-1.5, 1.5), layout.randf_range(6.2, 8.8)))
+		var placed := 10 + WALKERS_PER_SIDE
 		for attempt in 12000:
 			if placed >= PEOPLE_PER_SIDE:
 				break
 			var anchor := anchors[attempt % anchors.size()]
 			var x := clampf(anchor.x + layout.randf_range(-5.5, 5.5), 11.5, 108.5)
-			var depth := clampf(anchor.y + layout.randf_range(-2.0, 2.0), 3.9, 9.8)
+			var depth := clampf(anchor.y + layout.randf_range(-2.0, 2.0), 6.0, 9.8)
 			var at := Vector2(x, _side_y(depth, side))
 			if not _free_home(at):
 				continue
-			var activity: String = ["watch", "chat", "drink", "pace", "watch"][placed % 5]
+			var activity: String = ["idle", "chat", "drink", "clipboard", "watch", "pace", "idle"][placed % 7]
 			_add_person(at, side, activity, layout)
 			placed += 1
 	for side in 2:
@@ -131,11 +147,6 @@ func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
 	if _last_sim == null or _last_sim.get_ref() != sim:
 		reset(sim)
 	clock += delta
-	for actor in people:
-		# A small personal pacing space keeps walkers clear of props and refs.
-		var home: Vector2 = actor.home
-		actor.pos = home + Vector2(sin(clock * 0.65 + float(actor.beat)) * 0.38,
-			sin(clock * 0.43 + float(actor.beat)) * 0.18) if actor.activity == "pace" else home
 	reaction_left = maxf(0.0, reaction_left - delta)
 	if reaction_left == 0.0:
 		offense_mode = "watch" if sim.phase == MatchSim.Phase.LIVE else "idle"
@@ -168,6 +179,13 @@ func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
 	if not final_pose.is_empty():
 		offense_mode = "cheer" if final_pose.get(true, "") == "jump" else "groan" if final_pose.get(true, "") == "lie" else "idle"
 		defense_mode = "cheer" if final_pose.get(false, "") == "jump" else "groan" if final_pose.get(false, "") == "lie" else "idle"
+	for actor in people:
+		if actor.activity == "walk":
+			_advance_walker(actor, delta if _mode_for(actor) == "walk" and final_pose.is_empty() else 0.0)
+		else:
+			var home: Vector2 = actor.home
+			actor.pos = home + Vector2(sin(clock * 0.65 + float(actor.beat)) * 0.38,
+				sin(clock * 0.43 + float(actor.beat)) * 0.18) if actor.activity == "pace" else home
 	var ball_x := sim.ball_pos.x if sim.phase == MatchSim.Phase.LIVE else sim.los
 	if sim.phase in [MatchSim.Phase.DEAD, MatchSim.Phase.DRIVE_OVER]:
 		# advance() applies ordinary fourth-down yardage before DRIVE_OVER.
@@ -188,6 +206,30 @@ func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
 		ref["pos"] = Vector2(next, at.y)
 	_last_time = sim.time
 	_last_phase = sim.phase
+
+
+func _advance_walker(actor: Dictionary, delta: float) -> void:
+	actor.walk_clock += delta
+	var length: float = actor.walk_from.distance_to(actor.walk_to)
+	var travel: float = length / actor.walk_speed
+	var half_cycle: float = travel + actor.walk_pause
+	var phase := fposmod(float(actor.walk_clock), half_cycle * 2.0)
+	var returning := phase >= half_cycle
+	var leg_time := phase - half_cycle if returning else phase
+	var fraction := minf(leg_time / travel, 1.0)
+	actor.pos = actor.walk_from.lerp(actor.walk_to, 1.0 - fraction if returning else fraction)
+	actor.velocity = (-actor.walk_speed if returning else actor.walk_speed) if delta > 0.0 and leg_time < travel else 0.0
+	var distance := (floorf(float(actor.walk_clock) / (half_cycle * 2.0)) * 2.0 + (1.0 if returning else 0.0) + fraction) * length
+	actor.stride = distance * 3.0
+
+
+func _mode_for(actor: Dictionary) -> String:
+	var mode := ref_signal if actor["ref"] else offense_mode if actor["offense"] else defense_mode
+	if not actor["ref"] and (mode in ["idle", "watch"] or (reaction_left > 0.0 and clock - _react_at < float(actor.delay))):
+		mode = actor.activity
+		if mode in ["chat", "drink"] and fmod(clock + float(actor.beat) * 2.0, 8.0) > 3.2:
+			mode = "watch"
+	return mode
 
 
 func _react(ours: String, theirs: String, signal_name: String, seconds: float = REACTION_SECONDS) -> void:
@@ -279,14 +321,8 @@ func _head(set_id: String, view: String) -> Array:
 func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> void:
 	var referee: bool = actor["ref"]
 	var ours: bool = actor["offense"]
-	var mode := ref_signal if referee else offense_mode if ours else defense_mode
+	var mode := _mode_for(actor)
 	var activity: String = actor.get("activity", "watch")
-	if not referee:
-		if mode in ["idle", "watch"] or (reaction_left > 0.0 and clock - _react_at < float(actor.delay)):
-			mode = activity
-			# Drinking and conversations come in short, offset bursts.
-			if activity in ["chat", "drink"] and fmod(clock + float(actor.beat) * 2.0, 8.0) > 3.2:
-				mode = "watch"
 	var t := clock * 7.5 + float(actor["beat"])
 	var scale: float = field.get("_scale")
 	var h := scale * (1.5 if referee else 1.35)
@@ -297,23 +333,26 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var face_h := scale * 0.72
 	var stride := float(actor.get("stride", 0.0))
 	var running := referee and absf(float(actor["velocity"])) > 0.2
+	if activity == "walk" and mode == "walk":
+		running = absf(float(actor.velocity)) > 0.01
 	var pacing := not referee and activity == "pace" and mode == "pace"
 	if pacing:
 		stride = clock * 3.0 + float(actor.beat)
 		running = true
 	var hop := absf(sin(t)) * h * 0.2 if mode == "cheer" else 0.0
 	var bob := absf(sin(stride)) * h * 0.07 if running else sin(clock * 2.0 + float(actor["beat"])) * h * 0.018
-	var center := ground + Vector2(sin(stride) * h * 0.03 if running else 0.0, -hop - bob)
+	var sway := sin(clock * 0.8 + float(actor.beat)) * h * 0.045 if mode == "idle" else 0.0
+	var center := ground + Vector2(sin(stride) * h * 0.03 if running else sway, -hop - bob)
 	var view := "left"
 	var flip := ours
 	if mode in ["cheer", "clap", "groan", "touchdown", "incomplete", "no_good", "first_down", "turnover", "stop"]:
 		view = "front"
 		flip = false
 	elif running:
-		var velocity := float(actor.velocity) if referee else cos(clock * 0.65 + float(actor.beat))
+		var velocity := float(actor.velocity) if referee or activity == "walk" else cos(clock * 0.65 + float(actor.beat))
 		view = "back" if velocity > 0 else "front"
 		flip = false
-	elif mode == "chat":
+	elif mode in ["chat", "clipboard", "idle"]:
 		# Conversation gestures belong in front of the torso, never on its back.
 		view = "front"
 		flip = false
@@ -324,7 +363,13 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var head_at := center + Vector2(0, -h * 0.4 - face_h * 0.38)
 	if mode == "groan":
 		head_at.y += h * 0.1
-	var hands := _hand_positions(mode, center, head_at, h, t, running)
+	elif mode == "clipboard":
+		head_at += Vector2(h * 0.04, h * (0.10 if fmod(clock + float(actor.beat), 6.0) < 5.2 else 0.0))
+	elif mode == "chat":
+		head_at.y += sin(t * 0.42) * h * 0.035
+	elif mode == "idle":
+		head_at.x += sin(clock * 0.65 + float(actor.beat)) * h * 0.05
+	var hands := _hand_positions(mode, center, head_at, h, stride if running else t, running)
 	if view == "back":
 		# A walker facing away swings at the sides, with the torso occluding
 		# the inner part of each hand rather than hands pasted onto the back.
@@ -338,8 +383,14 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var art := _head(actor["head"], head_view)
 	var box: Rect2 = art[1]
 	field.draw_texture_rect(art[0], Rect2(head_at + box.position * face_h, box.size * face_h), false)
+	if mode == "clipboard":
+		field.draw_set_transform(center + Vector2(0, h * 0.04), sin(t * 0.14) * 0.035, Vector2.ONE)
+		field.draw_texture_rect(CLIPBOARD, Rect2(-h * 0.27, -h * 0.33, h * 0.54, h * 0.70), false)
+		field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if view != "back":
 		_draw_hands(field, actor["head"], hands, face_h)
+	if mode == "clipboard":
+		field.draw_line(hands[1] + Vector2(-h * 0.03, h * 0.04), hands[1] + Vector2(h * 0.1, -h * 0.19), Color("c7a871"), maxf(1.0, h * 0.035), true)
 	if mode == "drink":
 		var bottle_size := Vector2(h * 0.18, h * 0.41)
 		field.draw_texture_rect(BOTTLE, Rect2(head_at + Vector2(h * 0.15, -h * 0.02), bottle_size), false)
@@ -370,7 +421,11 @@ func _hand_positions(mode: String, center: Vector2, head: Vector2, h: float, t: 
 		"tense":
 			return [center + Vector2(-h * 0.38, -h * 0.25), center + Vector2(h * 0.38, -h * 0.25)]
 		"chat":
-			return [center + Vector2(-h * 0.4, -h * (0.16 + sin(t * 0.5) * 0.14)), center + Vector2(h * 0.35, h * 0.18)]
+			return [center + Vector2(-h * (0.42 + sin(t * 0.35) * 0.08), -h * (0.1 + sin(t * 0.5) * 0.19)), center + Vector2(h * 0.38, h * (0.12 + sin(t * 0.4) * 0.10))]
+		"idle":
+			return [center + Vector2(-h * 0.46, h * 0.28), center + Vector2(h * 0.46, h * 0.28)]
+		"clipboard":
+			return [center + Vector2(-h * 0.27, h * 0.19), center + Vector2(h * (0.11 + sin(t * 0.65) * 0.06), h * (0.02 + sin(t * 0.8) * 0.05))]
 		"drink":
 			return [head + Vector2(h * 0.24, h * 0.28), center + Vector2(-h * 0.35, h * 0.18)]
 		"rest":

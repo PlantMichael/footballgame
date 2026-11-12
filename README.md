@@ -52,7 +52,10 @@ About 200 civilian teammates gather in scattered groups along the sidelines,
 wearing the same blue, red or green palette as that side's players. Bench seats,
 orange water coolers, bottle crates, towel bins, equipment bags and cones fill
 the team areas, with a clear lane next to the boundary for officials. Between
-plays, teammates chat, drink, rest on benches and pace in small personal spaces.
+plays, teammates shift their weight and glance around, nod and gesture while
+talking, drink, rest on benches, or study and write on clipboards. Six people on
+each side walk ten-yard stretches in a clear lane, pause and turn around. They
+stop in place for big-play reactions, then continue along their routes.
 They watch catches and big gains,
 clap, celebrate scores and first downs, and react to turnovers, sacks and missed
 plays. Two striped officials jog along the sidelines with the ball and signal
