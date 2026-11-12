@@ -43,9 +43,10 @@ var _last_time: float = 0.0
 var _result_seen: bool = false
 var _catch_seen: bool = false
 var _gain_seen: bool = false
-var _react_at: float = 0.0
 var _textures: Dictionary = {}
 var _heads: Dictionary = {}
+var _animation_rng := RandomNumberGenerator.new()
+var _final_reaction: bool = false
 
 
 func reset(sim: MatchSim) -> void:
@@ -60,10 +61,11 @@ func reset(sim: MatchSim) -> void:
 	_result_seen = false
 	_catch_seen = false
 	_gain_seen = false
-	_react_at = 0.0
 	_last_phase = -1
 	_last_time = sim.time
 	_last_sim = weakref(sim)
+	_animation_rng.seed = 84992
+	_final_reaction = false
 	# Private, fixed layout RNG: no effect on match or global randomness.
 	var layout := RandomNumberGenerator.new()
 	layout.seed = 48291
@@ -140,7 +142,8 @@ func _add_person(at: Vector2, side: int, activity: String, layout: RandomNumberG
 	people.append({"pos": at, "home": at, "offense": side == 0,
 		"body": BODIES[index % BODIES.size()], "head": str(1 + index % 2),
 		"beat": layout.randf_range(0.0, TAU), "delay": layout.randf_range(0.0, 0.45),
-		"activity": activity, "ref": false})
+		"activity": activity, "ref": false, "reaction_mode": "",
+		"react_from": 0.0, "react_until": 0.0, "settle": 0.5})
 
 
 func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
@@ -176,7 +179,8 @@ func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
 			and sim.phase in [MatchSim.Phase.DEAD, MatchSim.Phase.DRIVE_OVER]:
 		_result_seen = true
 		_result_reaction(sim)
-	if not final_pose.is_empty():
+	_final_reaction = not final_pose.is_empty()
+	if _final_reaction:
 		offense_mode = "cheer" if final_pose.get(true, "") == "jump" else "groan" if final_pose.get(true, "") == "lie" else "idle"
 		defense_mode = "cheer" if final_pose.get(false, "") == "jump" else "groan" if final_pose.get(false, "") == "lie" else "idle"
 	for actor in people:
@@ -224,12 +228,29 @@ func _advance_walker(actor: Dictionary, delta: float) -> void:
 
 
 func _mode_for(actor: Dictionary) -> String:
-	var mode := ref_signal if actor["ref"] else offense_mode if actor["offense"] else defense_mode
-	if not actor["ref"] and (mode in ["idle", "watch"] or (reaction_left > 0.0 and clock - _react_at < float(actor.delay))):
-		mode = actor.activity
-		if mode in ["chat", "drink"] and fmod(clock + float(actor.beat) * 2.0, 8.0) > 3.2:
-			mode = "watch"
+	if actor["ref"]:
+		return ref_signal
+	if _reaction_weight(actor) > 0.0:
+		return (offense_mode if actor.offense else defense_mode) if _final_reaction else String(actor.reaction_mode)
+	return _ambient_mode(actor)
+
+
+func _ambient_mode(actor: Dictionary) -> String:
+	var mode: String = actor.activity
+	if mode in ["chat", "drink"] and fmod(clock + float(actor.beat) * 2.0, 8.0) > 3.2:
+		mode = "watch"
 	return mode
+
+
+func _reaction_weight(actor: Dictionary) -> float:
+	if actor["ref"]:
+		return 1.0
+	if _final_reaction:
+		return 1.0 if (offense_mode if actor.offense else defense_mode) in ["cheer", "groan"] else 0.0
+	if actor.reaction_mode == "" or clock < float(actor.react_from):
+		return 0.0
+	return smoothstep(float(actor.react_from), float(actor.react_from) + 0.2, clock) \
+		* (1.0 - smoothstep(float(actor.react_until), float(actor.react_until) + float(actor.settle), clock))
 
 
 func _react(ours: String, theirs: String, signal_name: String, seconds: float = REACTION_SECONDS) -> void:
@@ -237,7 +258,12 @@ func _react(ours: String, theirs: String, signal_name: String, seconds: float = 
 	defense_mode = theirs
 	ref_signal = signal_name
 	reaction_left = seconds
-	_react_at = clock
+	for actor in people:
+		actor.reaction_mode = ours if actor.offense else theirs
+		actor.react_from = clock + float(actor.delay) * 0.4 + _animation_rng.randf_range(0.0, 0.3)
+		actor.react_until = maxf(float(actor.react_from) + 0.3,
+			clock + seconds * _animation_rng.randf_range(0.8, 1.25) + _animation_rng.randf_range(0.0, 0.65))
+		actor.settle = _animation_rng.randf_range(0.35, 0.75)
 
 
 func _result_reaction(sim: MatchSim) -> void:
@@ -322,6 +348,9 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var referee: bool = actor["ref"]
 	var ours: bool = actor["offense"]
 	var mode := _mode_for(actor)
+	var weight := _reaction_weight(actor)
+	var settling := not referee and weight > 0.0 and weight < 1.0
+	var ambient := _ambient_mode(actor) if not referee else mode
 	var activity: String = actor.get("activity", "watch")
 	var t := clock * 7.5 + float(actor["beat"])
 	var scale: float = field.get("_scale")
@@ -339,9 +368,11 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	if pacing:
 		stride = clock * 3.0 + float(actor.beat)
 		running = true
-	var hop := absf(sin(t)) * h * 0.2 if mode == "cheer" else 0.0
+	var hop := absf(sin(t)) * h * 0.2 * weight if mode == "cheer" else 0.0
 	var bob := absf(sin(stride)) * h * 0.07 if running else sin(clock * 2.0 + float(actor["beat"])) * h * 0.018
 	var sway := sin(clock * 0.8 + float(actor.beat)) * h * 0.045 if mode == "idle" else 0.0
+	if settling and ambient == "idle":
+		sway = sin(clock * 0.8 + float(actor.beat)) * h * 0.045 * (1.0 - weight)
 	var center := ground + Vector2(sin(stride) * h * 0.03 if running else sway, -hop - bob)
 	var view := "left"
 	var flip := ours
@@ -361,46 +392,81 @@ func _draw_actor(field, sim: MatchSim, actor: Dictionary, ground: Vector2) -> vo
 	var width := h * tex.get_width() / maxf(tex.get_height(), 1.0)
 	field.draw_circle(ground + Vector2(0, h * 0.4), h * 0.32, Color(0, 0, 0, 0.2))
 	var head_at := center + Vector2(0, -h * 0.4 - face_h * 0.38)
-	if mode == "groan":
-		head_at.y += h * 0.1
-	elif mode == "clipboard":
-		head_at += Vector2(h * 0.04, h * (0.10 if fmod(clock + float(actor.beat), 6.0) < 5.2 else 0.0))
-	elif mode == "chat":
-		head_at.y += sin(t * 0.42) * h * 0.035
-	elif mode == "idle":
-		head_at.x += sin(clock * 0.65 + float(actor.beat)) * h * 0.05
+	var head_offset := _head_offset(mode, actor, h, t)
+	if settling:
+		head_offset = _head_offset(ambient, actor, h, t).lerp(head_offset, weight)
+	head_at += head_offset
 	var hands := _hand_positions(mode, center, head_at, h, stride if running else t, running)
-	if view == "back":
+	var hand_alpha := 1.0
+	var ambient_view := "front" if ambient in ["idle", "chat", "clipboard"] else "left"
+	var ambient_flip := ours if ambient_view == "left" else false
+	if ambient == "pace":
+		ambient_view = "back" if cos(clock * 0.65 + float(actor.beat)) > 0.0 else "front"
+		ambient_flip = false
+	if settling:
+		var resting := _hand_positions(ambient, center, head_at, h, t, ambient == "pace")
+		if resting.is_empty():
+			resting = [center + Vector2(-h * 0.46, h * 0.28), center + Vector2(h * 0.46, h * 0.28)]
+			hand_alpha = weight
+		for i in hands.size():
+			if ambient_view == "back":
+				var back_tex := _body(palette, ambient_view, int(actor.body))
+				resting[i].x = center.x + (-1.0 if i == 0 else 1.0) * h * back_tex.get_width() / back_tex.get_height() * 0.48
+			hands[i] = resting[i].lerp(hands[i], weight)
+	var hands_behind := view == "back" or (settling and ambient_view == "back" and weight < 0.5)
+	if hands_behind:
 		# A walker facing away swings at the sides, with the torso occluding
 		# the inner part of each hand rather than hands pasted onto the back.
-		for i in hands.size():
-			hands[i].x = center.x + (-1.0 if i == 0 else 1.0) * width * 0.48
-		_draw_hands(field, actor["head"], hands, face_h)
-	field.draw_set_transform(center, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
-	field.draw_texture_rect(tex, Rect2(-width * 0.5, -h * 0.5, width, h), false)
-	field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	var head_view := HeadArtDB.view_for(view, flip)
-	var art := _head(actor["head"], head_view)
-	var box: Rect2 = art[1]
-	field.draw_texture_rect(art[0], Rect2(head_at + box.position * face_h, box.size * face_h), false)
-	if mode == "clipboard":
+		if not settling:
+			for i in hands.size():
+				hands[i].x = center.x + (-1.0 if i == 0 else 1.0) * width * 0.48
+		_draw_hands(field, actor["head"], hands, face_h, hand_alpha)
+	if settling:
+		# Keep the underlying body opaque while the gesture/facing settles.
+		_draw_body_head(field, actor, palette, ambient_view, ambient_flip, center, head_at, h, face_h, 1.0)
+	_draw_body_head(field, actor, palette, view, flip, center, head_at, h, face_h, weight if settling else 1.0)
+	var prop_mode := ambient if settling else mode
+	var prop_alpha := 1.0 - weight if settling else 1.0
+	var prop_color := Color(1, 1, 1, prop_alpha)
+	if prop_mode == "clipboard":
 		field.draw_set_transform(center + Vector2(0, h * 0.04), sin(t * 0.14) * 0.035, Vector2.ONE)
-		field.draw_texture_rect(CLIPBOARD, Rect2(-h * 0.27, -h * 0.33, h * 0.54, h * 0.70), false)
+		field.draw_texture_rect(CLIPBOARD, Rect2(-h * 0.27, -h * 0.33, h * 0.54, h * 0.70), false, prop_color)
 		field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	if view != "back":
-		_draw_hands(field, actor["head"], hands, face_h)
-	if mode == "clipboard":
-		field.draw_line(hands[1] + Vector2(-h * 0.03, h * 0.04), hands[1] + Vector2(h * 0.1, -h * 0.19), Color("c7a871"), maxf(1.0, h * 0.035), true)
-	if mode == "drink":
+	if not hands_behind:
+		_draw_hands(field, actor["head"], hands, face_h, hand_alpha)
+	if prop_mode == "clipboard":
+		field.draw_line(hands[1] + Vector2(-h * 0.03, h * 0.04), hands[1] + Vector2(h * 0.1, -h * 0.19), Color(0.78, 0.66, 0.44, prop_alpha), maxf(1.0, h * 0.035), true)
+	if prop_mode == "drink":
 		var bottle_size := Vector2(h * 0.18, h * 0.41)
-		field.draw_texture_rect(BOTTLE, Rect2(head_at + Vector2(h * 0.15, -h * 0.02), bottle_size), false)
+		field.draw_texture_rect(BOTTLE, Rect2(head_at + Vector2(h * 0.15, -h * 0.02), bottle_size), false, prop_color)
 
 
-func _draw_hands(field, head_id: String, hands: Array, face_h: float) -> void:
+func _head_offset(mode: String, actor: Dictionary, h: float, t: float) -> Vector2:
+	match mode:
+		"groan": return Vector2(0, h * 0.1)
+		"clipboard": return Vector2(h * 0.04, h * (0.10 if fmod(clock + float(actor.beat), 6.0) < 5.2 else 0.0))
+		"chat": return Vector2(0, sin(t * 0.42) * h * 0.035)
+		"idle": return Vector2(sin(clock * 0.65 + float(actor.beat)) * h * 0.05, 0)
+	return Vector2.ZERO
+
+
+func _draw_body_head(field, actor: Dictionary, palette: String, view: String, flip: bool, center: Vector2, head: Vector2, h: float, face_h: float, alpha: float) -> void:
+	var tex := _body(palette, view, int(actor.body))
+	var width := h * tex.get_width() / tex.get_height()
+	var color := Color(1, 1, 1, alpha)
+	field.draw_set_transform(center, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+	field.draw_texture_rect(tex, Rect2(-width * 0.5, -h * 0.5, width, h), false, color)
+	field.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var art := _head(actor.head, HeadArtDB.view_for(view, flip))
+	var box: Rect2 = art[1]
+	field.draw_texture_rect(art[0], Rect2(head + box.position * face_h, box.size * face_h), false, color)
+
+
+func _draw_hands(field, head_id: String, hands: Array, face_h: float, alpha: float = 1.0) -> void:
 	var hand: Texture2D = HANDS[head_id]
 	var d := face_h * 0.43
 	for at: Vector2 in hands:
-		field.draw_texture_rect(hand, Rect2(at - Vector2.ONE * d * 0.5, Vector2.ONE * d), false)
+		field.draw_texture_rect(hand, Rect2(at - Vector2.ONE * d * 0.5, Vector2.ONE * d), false, Color(1, 1, 1, alpha))
 
 
 func _hand_positions(mode: String, center: Vector2, head: Vector2, h: float, t: float, running: bool) -> Array:

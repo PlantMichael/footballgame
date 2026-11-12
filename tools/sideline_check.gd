@@ -36,6 +36,7 @@ func _ready() -> void:
 		crowd.advance(sim, 1.0)
 		_check(moving.pos != start and moving.pos.distance_to(moving.home) < 0.5, "ambient pacing moves within a bounded personal space")
 	_walking_lanes(crowd, sim)
+	_staggered_reactions(crowd, sim)
 	for actor in crowd.people + crowd.officials:
 		var pos: Vector2 = actor.pos
 		_check(pos.y < 0.0 or pos.y > MatchSim.FIELD_W, "ambient actors stay outside the playing field")
@@ -88,7 +89,7 @@ func _ready() -> void:
 	_result(crowd, sim, {"kind":"field_goal", "kick":true, "fg_good":true, "yards":0.0}, "cheer", "groan", "touchdown")
 	_result(crowd, sim, {"kind":"missed_fg", "kick":true, "fg_good":false, "yards":0.0}, "groan", "cheer", "no_good")
 	crowd.advance(sim, 3.0)
-	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "reactions settle after the result")
+	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "shared event and official signal settle after the result")
 	sim.phase = MatchSim.Phase.DRIVE_OVER
 	crowd.advance(sim, 0.016)
 	_check(crowd.offense_mode == "idle", "drive transition does not replay the same result")
@@ -185,11 +186,56 @@ func _walking_lanes(crowd: SidelineCrowd, sim: MatchSim) -> void:
 	for distance in traveled:
 		_check(distance > 3.0, "each walker continues traveling after the reaction and any endpoint pause")
 
+func _staggered_reactions(crowd: SidelineCrowd, sim: MatchSim) -> void:
+	var sim_rng_before := sim.rng.state
+	var run_rng_before := GameState.rng.state
+	var first_finishes: Array = []
+	for wave in 2:
+		sim.phase = MatchSim.Phase.PRESNAP
+		sim.result = {}
+		crowd.advance(sim, 0.016)
+		sim.phase = MatchSim.Phase.DEAD
+		sim.result = {"kind":"touchdown", "td":true, "yards":25.0}
+		crowd.advance(sim, 0.016)
+		crowd.advance(sim, 0.8)
+		_check(crowd.people.all(func(actor): return crowd.call("_reaction_weight", actor) > 0.0), "the crowd joins the score reaction")
+		# Starting the next play must not force everybody back to ambient at once.
+		sim.phase = MatchSim.Phase.PRESNAP
+		sim.result = {}
+		crowd.advance(sim, 0.016)
+		_check(crowd.people.all(func(actor): return crowd.call("_reaction_weight", actor) > 0.0), "personal reactions survive the shared next-play reset")
+		var finishes := {}
+		var mixed := false
+		var eased := false
+		for step in 110:
+			crowd.advance(sim, 0.05)
+			var active := 0
+			for i in crowd.people.size():
+				var weight: float = crowd.call("_reaction_weight", crowd.people[i])
+				if weight > 0.0:
+					active += 1
+					eased = eased or weight < 1.0
+				elif not finishes.has(i):
+					finishes[i] = step
+			mixed = mixed or (active > 0 and active < crowd.people.size())
+		_check(mixed and eased, "some NPCs settle smoothly while others keep reacting")
+		_check(finishes.size() == crowd.people.size(), "all personal reactions eventually return to ambient")
+		if finishes.size() != crowd.people.size():
+			continue
+		var times := range(crowd.people.size()).map(func(i): return finishes[i])
+		_check(times.max() - times.min() > 10, "reaction endings are spread across the crowd rather than one frame")
+		if wave == 0:
+			first_finishes = times
+		else:
+			_check(times != first_finishes, "each new event varies who settles first")
+	_check(sim.rng.state == sim_rng_before and GameState.rng.state == run_rng_before,
+		"random reaction timing preserves simulation and run RNG")
+
 func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
 	sim.phase = MatchSim.Phase.PRESNAP
 	sim.result = {}
 	crowd.advance(sim, 0.016)
-	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "next play clears old gestures")
+	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "next play clears the shared event and official signal")
 	sim.phase = MatchSim.Phase.DEAD
 	sim.result = result
 	crowd.advance(sim, 0.016)

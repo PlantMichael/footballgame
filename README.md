@@ -55,7 +55,10 @@ the team areas, with a clear lane next to the boundary for officials. Between
 plays, teammates shift their weight and glance around, nod and gesture while
 talking, drink, rest on benches, or study and write on clipboards. Six people on
 each side walk ten-yard stretches in a clear lane, pause and turn around. They
-stop in place for big-play reactions, then continue along their routes.
+stop in place for big-play reactions, then continue along their routes. Each
+NPC has a different reaction hold and settling time, varied again for each
+event. Hands lower and poses blend back into everyday activity individually,
+including when the next play starts.
 They watch catches and big gains,
 clap, celebrate scores and first downs, and react to turnovers, sacks and missed
 plays. Two striped officials jog along the sidelines with the ball and signal
