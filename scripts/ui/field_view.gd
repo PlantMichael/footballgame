@@ -1181,16 +1181,13 @@ func _begin_stroke(sp: SimPlayer) -> void:
 	_stroke_len = 0.0
 
 
-## RouteBook.BUDGET_YARDS, scaled up for a player with "boundless" (route
-## budget doubled) - the only ability that touches how much chalk the
-## coach gets, so this is the one place it needs to be threaded through
-## rather than changing the global constant.
+## Use the simulation's allowance for personal multipliers and team donations.
 func _route_budget() -> float:
 	if _stroke_player == null:
 		return RouteBook.BUDGET_YARDS
 	if _stroke_player == sim.kicker_sp:
 		return sim.kick_range()   # a kicker's chalk is his leg
-	return RouteBook.BUDGET_YARDS * AbilityDB.route_budget_mult(_stroke_player.ability())
+	return sim.route_budget(_stroke_player)
 
 
 func _extend_stroke(point: Vector2) -> void:
@@ -1716,6 +1713,11 @@ func _draw_prop(tex: Texture2D, at: Vector2, h: float, rot: float = 0.0,
 ## Banana peels, kegs, and the slot machine - everything that sits on the
 ## turf underneath the players.
 func _draw_ground_props() -> void:
+	for patch in sim.speed_patches:
+		var center := to_px(patch["pos"])
+		var radius := 2.5 * _scale
+		draw_circle(center, radius, Color(UIKit.ACCENT, 0.2))
+		draw_arc(center, radius, 0.0, TAU, 32, UIKit.ACCENT, 2.0, true)
 	var peel_h := PEEL_W * _scale * TEX_PEEL.get_height() / maxf(TEX_PEEL.get_width(), 1.0)
 	for peel in sim.banana_peels:
 		_draw_prop(TEX_PEEL, peel, peel_h)

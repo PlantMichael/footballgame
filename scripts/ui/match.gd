@@ -841,8 +841,9 @@ func _chalk_card(f: SimPlayer) -> Control:
 	v.add_child(name_line)
 
 	var thumb := RouteThumb.new()
-	thumb.route = GameState.route_for(slot) if drawn \
-		else RouteBook.route_for_spot(auto_id, _flex_spot(slot))
+	var effective_route := RouteBook.truncate(GameState.route_for(slot) if drawn \
+		else RouteBook.route_for_spot(auto_id, _flex_spot(slot)), sim.route_budget(f))
+	thumb.route = effective_route
 	thumb.drawn = drawn
 	thumb.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -851,10 +852,10 @@ func _chalk_card(f: SimPlayer) -> Control:
 	var foot: String
 	if drawn:
 		foot = "%d / %d yd" % [
-			int(round(RouteBook.route_length(GameState.route_for(slot)))),
-			int(RouteBook.BUDGET_YARDS)]
+			int(round(RouteBook.route_length(effective_route))),
+			int(sim.route_budget(f))]
 	else:
-		foot = "auto: %s" % RouteBook.STOCK_LABELS.get(auto_id, "?")
+		foot = "auto: %s | %d yd" % [RouteBook.STOCK_LABELS.get(auto_id, "?"), int(sim.route_budget(f))]
 	var f_label := UIKit.label(foot, 10, UIKit.MUTED)
 	f_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(f_label)

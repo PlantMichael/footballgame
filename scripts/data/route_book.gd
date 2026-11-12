@@ -9,8 +9,8 @@ extends RefCounted
 ## waypoints RELATIVE TO THE PLAYER'S ALIGNMENT, where x is downfield yards
 ## and y is lateral yards (negative = the offense's left).
 
-## Every flex gets the same chalk allowance, so route design is about shape
-## and spacing rather than about who on the roster can afford to run deep.
+## Base chalk allowance. MatchSim.route_budget applies personal multipliers
+## and Chalk Donation for the active lineup.
 const BUDGET_YARDS := 30.0
 
 ## Points closer together than this are dropped while drawing; the whole

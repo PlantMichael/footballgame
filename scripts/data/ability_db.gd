@@ -199,6 +199,30 @@ extends RefCounted
 ## contact is "carry", "block", or "cover".
 
 const ABILITIES := {
+	"right_of_way": {"name": "Right of Way", "desc": "Once per play, crossing within 2 yards of another moving receiver gives him 35% extra speed for 1.5 seconds.", "synergy": {"cross_speed": true}},
+	"lost_in_traffic": {"name": "Lost in Traffic", "desc": "Once per play, crossing within 2 yards of another moving receiver makes his man defenders hesitate for 0.6 seconds.", "synergy": {"cross_hesitate": true}},
+	"window_shopper": {"name": "Window Shopper", "desc": "35% less throw scatter toward receivers boosted by a teammate's ability in the last 2 seconds.", "synergy": {"boosted_aim": true}},
+	"escort_service": {"name": "Escort Service", "desc": "When a teammate catches within 10 yards, abandons his route to block the nearest pursuer.", "synergy": {"escort": true}},
+	"do_not_disturb": {"name": "Do Not Disturb", "desc": "Each uninterrupted second holding the same block gives the QB +1 Intelligence, up to +3 per play.", "synergy": {"block_int": true}},
+	"worth_the_wait": {"name": "Worth the Wait", "desc": "After holding the ball in the pocket for 3 seconds, his pass grants its target +3 Dexterity at the catch attempt.", "synergy": {"patient_pass": true}},
+	"second_gear": {"name": "Second Gear", "desc": "If not targeted in the first 3 seconds, gains 35% extra speed for 1.5 seconds. Once per play.", "synergy": {"late_burst": true}},
+	"take_your_time": {"name": "Take Your Time", "desc": "If the QB holds the ball in the pocket for 4 seconds, the offensive line recovers extra fatigue after the play.", "synergy": {"line_recovery": true}},
+	"special_delivery": {"name": "Special Delivery", "desc": "Teammates catching his passes within 5 yards of the line of scrimmage gain +2 Strength for the play.", "synergy": {"short_strength": true}},
+	"rolling_start": {"name": "Rolling Start", "desc": "A positive Strength gain from a teammate gives him 35% extra speed for 1.5 seconds. Once per play.", "synergy": {"strength_burst": true}},
+	"outside_assistance": {"name": "Outside Assistance", "desc": "When a teammate catches behind him, turns to block the nearest defender between them.", "synergy": {"downfield_escort": true}},
+	"fresh_pavement": {"name": "Fresh Pavement", "desc": "His first held block creates a 2.5-yard speed patch for 3 seconds. Teammates inside move 25% faster; speed bursts take priority.", "synergy": {"pavement": true}},
+	"everybody_eats": {"name": "Everybody Eats", "desc": "+1 Dexterity per different teammate who has caught a pass this drive, up to +4.", "synergy": {"diverse_dex": true}},
+	"opening_act": {"name": "Opening Act", "desc": "His first catch each drive gives the other flex receivers +1 Dexterity for the rest of the drive.", "synergy": {"opening_act": true}},
+	"after_you": {"name": "After You", "desc": "+3 Dexterity on catch attempts if a different teammate caught the previous completed pass this drive.", "synergy": {"alternate_catch": true}},
+	"save_me_a_seat": {"name": "Save Me a Seat", "desc": "+1 Strength per different teammate who has caught a pass this drive, up to +4.", "synergy": {"diverse_strength": true}},
+	"fresh_legs": {"name": "Fresh Legs", "desc": "His first snap after entering from the bench gives +3 Agility for that play. Once per drive; starting the game does not count.", "synergy": {"rotation_agility": true}},
+	"shift_change": {"name": "Shift Change", "desc": "His first snap after entering from the bench restores fatigue to adjacent linemen. Once per drive.", "synergy": {"rotation_recovery": true}},
+	"next_man_up": {"name": "Next Man Up", "desc": "Each teammate gets +2 Intelligence on his first actual snap of each drive.", "synergy": {"debut_int": true}},
+	"rest_stop": {"name": "Rest Stop", "desc": "Finishing a play with the ball gives benched teammates extra fatigue recovery.", "synergy": {"bench_recovery": true}},
+	"chalk_donation": {"name": "Chalk Donation", "desc": "Gives up 10 yards of his route budget. Each other flex player gets 5 extra yards of chalk while he is in the lineup.", "synergy": {"donates_chalk": true}},
+	"pass_it_on": {"name": "Pass It On", "desc": "His first direct temporary stat gain each play is echoed to the nearest active teammate. Copies and echoes cannot echo again.", "synergy": {"echo": true}},
+	"decoy_discount": {"name": "Decoy Discount", "desc": "His man defenders keep following him during passes to teammates. If 2 are still following at the catch, that teammate earns double bucks for the play.", "synergy": {"decoy": true}},
+	"trust_the_process": {"name": "Trust the Process", "desc": "Flex players left on automatic routes gain +2 Intelligence and recover from coverage jams twice as fast.", "synergy": {"auto_support": true}},
 	"corps_of_three": {
 		"name": "Corps of Three",
 		"desc": "+3 Agility if there are 2 other wide receivers on the field.",
@@ -656,6 +680,12 @@ const ABILITIES := {
 static func ability_name(id: String) -> String:
 	var a: Dictionary = ABILITIES.get(id, {})
 	return a.get("name", "-")
+
+
+## Optional event traits for cooperative abilities, dispatched by the sim's
+## existing snap/movement/catch/award owners. Never key behavior on a name.
+static func synergy_traits(id: String) -> Dictionary:
+	return _dispatch(id, "synergy", [], {})
 
 
 static func ability_desc(id: String) -> String:

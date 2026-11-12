@@ -170,6 +170,18 @@ const STAT_KEYS := PlayerData.STAT_KEYS
 ## were handed this snap, so the chalkboard can name it instead of just
 ## saying "auto". Empty on a scripted play.
 var auto_route_ids: Dictionary = {}
+## Identity-keyed history survives SimPlayer rebuilds during substitutions.
+var _drive_catchers: Dictionary = {}
+var _drive_last_receiver: PlayerData = null
+var _drive_opening_acts: Dictionary = {}
+var _drive_snapped: Dictionary = {}
+var _drive_rotation_used: Dictionary = {}
+var _last_snap_lineup: Dictionary = {}
+var _bench_energy: Dictionary = {}
+var _has_synergies: bool = false
+var _pocket_hold: float = 0.0
+var _patient_throw: bool = false
+var speed_patches: Array = []
 var time: float = 0.0
 var carrier: SimPlayer = null
 var thrown_to: SimPlayer = null
@@ -292,6 +304,16 @@ var rng := RandomNumberGenerator.new()
 var _roster_defense: Array = []      # Array[PlayerData] for the opposing 11
 
 
+## Blockers and their man defenders can point at each other after a catch
+## or handoff. The match owns these assignments; break them when it dies.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		for sp in offense + defense:
+			sp.mark = null
+			sp.clone_of = null
+			sp.synergy.clear()
+
+
 # ============================================================================
 # Setup
 # ============================================================================
@@ -312,10 +334,15 @@ func setup(starters: Array, defense_data: Array, quality: float, opp_name: Strin
 	play_log.clear()
 	_build_offense(starters)
 	_build_defense()
+	_bench_energy.clear()
+	_last_snap_lineup.clear()
+	for sp in offense:
+		_last_snap_lineup[sp.data] = true
 
 
 func _build_offense(starters: Array) -> void:
 	offense.clear()
+	_has_synergies = false
 	for i in GameState.SLOT_ORDER.size():
 		var slot: String = GameState.SLOT_ORDER[i]
 		var pd: PlayerData = starters[i]
@@ -325,6 +352,7 @@ func _build_offense(starters: Array) -> void:
 		sp.slot = slot
 		sp.label = str(pd.number)
 		offense.append(sp)
+		_has_synergies = _has_synergies or not AbilityDB.synergy_traits(pd.ability_id).is_empty()
 
 
 func _build_defense() -> void:
@@ -507,6 +535,13 @@ func start_match() -> void:
 
 func begin_drive() -> void:
 	_take_kicker_off()
+	_drive_catchers.clear()
+	_drive_last_receiver = null
+	_drive_opening_acts.clear()
+	_drive_snapped.clear()
+	_drive_rotation_used.clear()
+	for pd in _bench_energy:
+		_bench_energy[pd] = minf(1.0, float(_bench_energy[pd]) + 0.55)
 	drive_num += 1
 	los = 25.0 + OWN_GOAL + rng.randf_range(-5.0, 5.0)
 	los = clampf(los, 20.0, 45.0)
@@ -617,6 +652,7 @@ func set_drawn_call(routes_by_slot: Dictionary, instant: bool = true, walk: bool
 			var pick: String = ids[rng.randi_range(0, ids.size() - 1)]
 			auto_route_ids[slot] = pick
 			route = RouteBook.route_for_spot(pick, spot)
+		route = RouteBook.truncate(route, route_budget(flexes[i]))
 		routes.append(route)
 		slot_pos.append(RouteBook.role_name_for_spot(spot))
 		var depth := 0.0
@@ -664,6 +700,9 @@ func set_play(id: String, instant: bool = true) -> void:
 ## Shared reset + alignment for both call paths. `play` must already be set.
 func _begin_call(instant: bool, walk: bool = false) -> void:
 	time = 0.0
+	_pocket_hold = 0.0
+	_patient_throw = false
+	speed_patches.clear()
 	kick_play = false
 	tackler = null
 	interceptor = null
@@ -1002,6 +1041,9 @@ func _align_offense() -> void:
 		sp.start_delay = 0.0
 		sp.pending_stat_gains.clear()
 		sp.pending_events.clear()
+		sp.synergy.clear()
+		sp.burst_left = 0.0
+		sp.pavement_left = 0.0
 		_apply_modifiers(sp, ctx)
 
 	_out_of_position_penalty(offense_slot("QB"), "QB")
@@ -1077,7 +1119,7 @@ func _apply_alignment_buffs() -> void:
 	flexes.sort_custom(func(a: SimPlayer, b: SimPlayer) -> bool: return a.target_pos.y > b.target_pos.y)
 	for i in mini(count, flexes.size()):
 		var f: SimPlayer = flexes[i]
-		f.eff[stat] = clampi(f.stat(stat) + amount, 1, 15)
+		_gain_stat(f, stat, amount, false, source)
 
 
 ## "Veteran Mentor"-style abilities (AbilityDB.tier_buff): +amount to every
@@ -1094,7 +1136,7 @@ func _apply_tier_buffs() -> void:
 			if other == sp or not qualities.has(other.data.quality):
 				continue
 			for stat in STAT_KEYS:
-				other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
+				_gain_stat(other, stat, amount, false, sp)
 
 
 ## Some abilities (e.g. a Center's "give all TEs +2 Int") buff every
@@ -1112,7 +1154,7 @@ func _apply_team_buffs() -> void:
 		for other in offense:
 			if other == sp or not _effective_positions(other.data).has(target_pos):
 				continue
-			other.eff[stat] = clampi(other.stat(stat) + amount, 1, 15)
+			_gain_stat(other, stat, amount, false, sp)
 
 
 ## "Strength in Numbers" (AbilityDB.stacks_flex_positions): with its holder
@@ -1120,9 +1162,11 @@ func _apply_team_buffs() -> void:
 ## stats, N being that count. A multi-position flex uses his biggest group.
 func _apply_flex_stacks() -> void:
 	var stats: Array = []
+	var source: SimPlayer = null
 	for sp in offense:
 		stats = AbilityDB.stacks_flex_positions(sp.ability())
 		if not stats.is_empty():
+			source = sp
 			break
 	if stats.is_empty():
 		return
@@ -1138,7 +1182,7 @@ func _apply_flex_stacks() -> void:
 		if n < 2:
 			continue
 		for stat in stats:
-			f.eff[stat] = clampi(f.stat(stat) + n, 1, 15)
+			_gain_stat(f, stat, n, false, source)
 
 
 func _align_defense() -> void:
@@ -1642,6 +1686,7 @@ func snap() -> void:
 	phase = Phase.LIVE
 	time = 0.0
 	_snap_gains()
+	_snap_synergies()
 	_apply_oddities_at_snap()
 
 
@@ -1748,6 +1793,7 @@ func _split_player(sp: SimPlayer, delay: float) -> void:
 		sp.eff[key] = maxi(keep, 1)
 		split[key] = maxi(total - keep, 1)
 	twin.eff = split
+	twin.synergy = sp.synergy.duplicate()
 	offense.append(twin)
 	_grant_event(sp, "MITOSIS!")
 	log_line("%s splits in half!" % sp.data.pname)
@@ -1917,7 +1963,7 @@ func _step_props(delta: float) -> void:
 			# or a "copycat" would collect it ten times over.
 			for o in offense:
 				for stat in STAT_KEYS:
-					_gain_stat(o, stat, JACKPOT_BONUS, false)
+					_gain_stat(o, stat, JACKPOT_BONUS, false, owner)
 			_award(10, "JACKPOT! %s's slot machine pays out!" % owner.data.pname, owner)
 		else:
 			log_line("%s's slot machine comes up empty." % owner.data.pname)
@@ -1998,11 +2044,16 @@ func step(delta: float) -> void:
 	if phase != Phase.LIVE:
 		return
 	_step_timed_gains(delta)
+	var pocket_qb := offense_slot("QB")
+	if pocket_qb != null and pocket_qb.has_ball and not qb_scrambling:
+		_pocket_hold = time
 	_step_offense(delta)
 	_step_defense(delta)
 	_step_props(delta)
 	_step_ball(delta)
 	_step_contacts(delta)
+	if phase == Phase.LIVE:
+		_step_synergies(delta)
 	_clamp_inbounds()
 	# After contacts: a block's push-back must not stretch a chain either.
 	_enforce_chains()
@@ -2289,7 +2340,7 @@ func _do_handoff(qb: SimPlayer, rb: SimPlayer) -> void:
 		_gain_stat(rb, stat, int(handoff_bonus[stat]))
 	var given := AbilityDB.handoff_give_bonus(qb.ability())
 	for stat in given:
-		_gain_stat(rb, stat, int(given[stat]))
+		_gain_stat(rb, stat, int(given[stat]), true, qb)
 	_trigger_pursuit()
 	_apply_misdirection(rb)
 	_block_for_handoff(rb)
@@ -2326,6 +2377,7 @@ func _set_carrier(sp: SimPlayer) -> void:
 ## earthquake. Called right after _set_carrier from both of _resolve_catch's
 ## success branches (the real catch and a "guardian_angel"-style save).
 func _on_receive(sp: SimPlayer) -> void:
+	_receive_synergies(sp)
 	if AbilityDB.max_agility_on_catch(sp.ability()):
 		var delta := 15 - sp.stat("agility")
 		if delta > 0:
@@ -2351,16 +2403,33 @@ func _trigger_earthquake(sp: SimPlayer) -> void:
 ## pops it up. A gain (not a loss) is also mirrored onto any "copycat"
 ## teammate, unless `copyable` is false (a team-wide gain like the jackpot,
 ## which he already gets directly). A copied gain is never re-copied.
-func _gain_stat(sp: SimPlayer, stat: String, amount: int, copyable: bool = true) -> void:
+func _gain_stat(sp: SimPlayer, stat: String, amount: int, copyable: bool = true,
+		source: SimPlayer = null, forwarded: bool = false) -> void:
 	if amount < 0 and sp.is_offense and _team_blocks_stat_loss():
 		return
-	sp.eff[stat] = clampi(sp.stat(stat) + amount, 1, 15)
-	_grant_stat_gain(sp, stat, amount)
-	if not copyable or amount <= 0 or not sp.is_offense:
+	var before := sp.stat(stat)
+	sp.eff[stat] = clampi(before + amount, 1, 15)
+	var actual := sp.stat(stat) - before
+	_grant_stat_gain(sp, stat, actual)
+	if actual <= 0 or not sp.is_offense:
+		return
+	if source != null and source.data != sp.data:
+		_mark_team_boost(sp)
+		if _synergy(sp, "strength_burst") and stat == "strength" and not sp.synergy.has("rolling_used"):
+			sp.synergy["rolling_used"] = true
+			_burst(sp, source)
+	if forwarded:
+		return
+	if _synergy(sp, "echo") and not sp.synergy.has("echo_used"):
+		sp.synergy["echo_used"] = true
+		var nearest := _nearest_teammate(sp)
+		if nearest != null:
+			_gain_stat(nearest, stat, actual, false, sp, true)
+	if not copyable:
 		return
 	for o in offense:
-		if o != sp and AbilityDB.copies_team_gains(o.ability()):
-			_gain_stat(o, stat, amount, false)
+		if o.data != sp.data and not o.melted and AbilityDB.copies_team_gains(o.ability()):
+			_gain_stat(o, stat, actual, false, sp, true)
 
 
 ## Queue one popup per point of `amount` (positive or negative) so the
@@ -2849,6 +2918,8 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 		acc += 0.7
 	acc *= lerpf(1.35, 1.0, clampf(qb.energy, 0.0, 1.0))
 	acc *= AbilityDB.aim_noise_mult(qb.ability())
+	if _synergy(qb, "boosted_aim") and float(target.synergy.get("boost_until", -1.0)) >= time:
+		acc *= 0.65
 	if AbilityDB.perfect_aim(qb.ability()):
 		acc = 0.0
 	aim += Vector2(rng.randfn(0.0, acc), rng.randfn(0.0, acc))
@@ -2863,6 +2934,8 @@ func _throw(qb: SimPlayer, target: SimPlayer) -> void:
 	carrier = null
 	thrown_to = target
 	_last_passer = qb
+	_patient_throw = _synergy(qb, "patient_pass") and time >= 3.0 and not qb_scrambling
+	target.synergy["targeted"] = true
 	_scout_play = {"kind": "pass", "target": target.data, "depth": aim.x - los, "y": aim.y, "hold": time}
 	# The passer_dex_bonus itself is applied in _resolve_catch, not here -
 	# it should land the moment the ball actually reaches the receiver, not
@@ -2948,6 +3021,9 @@ func _step_defense(delta: float) -> void:
 				d.role = SimPlayer.Role.PURSUE
 
 		# Coverage players who can reach the throw attack the catch point.
+		if _follows_decoy(d):
+			d.move_toward_point(d.mark.pos, delta)
+			continue
 		if ball_in_air and d.role != SimPlayer.Role.RUSH:
 			if d.pos.distance_to(ball_to) < 16.0:
 				d.move_toward_point(ball_to, delta, 1.0)
@@ -3167,7 +3243,11 @@ func _resolve_catch() -> void:
 	if qb != null:
 		var dex_bonus := AbilityDB.passer_dex_bonus(qb.ability(), rec.data.pos)
 		if dex_bonus != 0:
-			_gain_stat(rec, "dexterity", dex_bonus)
+			_gain_stat(rec, "dexterity", dex_bonus, true, qb)
+		if _patient_throw:
+			_gain_stat(rec, "dexterity", 3, true, qb)
+	if _synergy(rec, "alternate_catch") and _drive_last_receiver != null and _drive_last_receiver != rec.data:
+		_gain_stat(rec, "dexterity", 3)
 
 	# "Wasted Potential": no hands at all in the end zone - the catch roll
 	# below turns 0 Dexterity into a guaranteed drop. Set directly rather
@@ -3210,12 +3290,12 @@ func _resolve_catch() -> void:
 		rec.has_ball = true
 		catch_x = spot.x
 		catch_shakes.append(air_yards)
+		rec.pos = rec.pos.lerp(spot, 0.6)
 		_set_carrier(rec)
 		_on_receive(rec)
 		thrown_to = null
 		_pass_completed_this_play = true
 		_last_completion_target = rec
-		rec.pos = rec.pos.lerp(spot, 0.6)
 		var bucks := 5
 		var msg := "%s hauls it in." % rec.data.pname
 		if contested:
@@ -3385,6 +3465,8 @@ func _step_contacts(delta: float) -> void:
 		d.next_contact = CONTACT_INTERVAL
 		if _contact_roll(d, d.mark, "cover"):
 			d.mark.disrupted = 1.1 * AbilityDB.disrupted_mult(d.mark.ability())
+			if bool(d.mark.synergy.get("auto_supported", false)):
+				d.mark.disrupted *= 0.5
 
 	# Tackles.
 	if carrier == null:
@@ -3599,6 +3681,7 @@ func _trigger_explosion(sp: SimPlayer) -> void:
 func _end_play(res: Dictionary) -> void:
 	if phase != Phase.LIVE:
 		return
+	_end_synergies()
 	phase = Phase.DEAD
 	res["yards"] = float(res.get("yards", 0.0))
 	res["td"] = bool(res.get("td", false))
@@ -3615,7 +3698,7 @@ func _end_play(res: Dictionary) -> void:
 	# Whoever finished the play with the ball earned these - "golden_touch"
 	# doubles them for him. (No carrier on an incompletion or interception,
 	# and neither of those pays a play bonus anyway.)
-	var mult := AbilityDB.cash_mult(carrier.ability()) if carrier != null else 1.0
+	var mult := _earnings_mult(carrier) if carrier != null else 1.0
 	if res["td"]:
 		var td_bucks := int(round(100.0 * mult * td_bucks_mult))
 		res["bucks"] = int(res["bucks"]) + td_bucks
@@ -3644,7 +3727,7 @@ var _pending_events: Array = []
 ## (AbilityDB.cash_mult) can scale his own payouts.
 func _award(amount: int, text: String, actor: SimPlayer = null) -> void:
 	if actor != null:
-		amount = int(round(float(amount) * AbilityDB.cash_mult(actor.ability())))
+		amount = int(round(float(amount) * _earnings_mult(actor)))
 	_pending_bucks += amount
 	_pending_events.append("%s +%d" % [text, amount])
 	log_line(text)
@@ -4106,6 +4189,7 @@ func resync_offense(new_starters: Array) -> void:
 	var spots := {}   # slot -> [pos, target_pos], so a sub appears where his man stood
 	for sp in offense:
 		prev[sp.data] = sp.energy
+		_bench_energy[sp.data] = sp.energy
 		spots[sp.slot] = [sp.pos, sp.target_pos]
 	_build_offense(new_starters)
 	for sp in offense:
@@ -4118,3 +4202,233 @@ func resync_offense(new_starters: Array) -> void:
 	for sp in offense:
 		if prev.has(sp.data):
 			sp.energy = prev[sp.data]
+		else:
+			sp.energy = float(_bench_energy.get(sp.data, 1.0))
+
+
+# --- Cooperative player abilities -------------------------------------------
+
+func _synergy(sp: SimPlayer, key: String) -> bool:
+	return sp != null and not sp.melted and sp.clone_of == null \
+		and bool(AbilityDB.synergy_traits(sp.ability()).get(key, false))
+
+
+func route_budget(sp: SimPlayer) -> float:
+	var budget := RouteBook.BUDGET_YARDS * AbilityDB.route_budget_mult(sp.ability())
+	for other in flex_players():
+		if _synergy(other, "donates_chalk"):
+			budget += -10.0 if other.data == sp.data else 5.0
+	return maxf(0.0, budget)
+
+
+func _mark_team_boost(sp: SimPlayer) -> void:
+	sp.synergy["boost_until"] = time + 2.0
+
+
+func _nearest_teammate(sp: SimPlayer, receivers_only: bool = false) -> SimPlayer:
+	var best: SimPlayer = null
+	var distance := INF
+	for other in offense:
+		if other.data == sp.data or other.clone_of != null or other.melted or time < other.start_delay:
+			continue
+		if receivers_only and (not other.slot.begins_with("F") or other.role != SimPlayer.Role.ROUTE):
+			continue
+		var d := sp.pos.distance_to(other.pos)
+		if d < distance:
+			distance = d
+			best = other
+	return best
+
+
+func _burst(sp: SimPlayer, source: SimPlayer) -> void:
+	sp.burst_left = maxf(sp.burst_left, 1.5)
+	if source.data != sp.data:
+		_mark_team_boost(sp)
+	_grant_event(sp, "SPEED!")
+
+
+func _snap_synergies() -> void:
+	var debut_source: SimPlayer = null
+	var auto_source: SimPlayer = null
+	for sp in offense:
+		if _synergy(sp, "debut_int"):
+			debut_source = sp
+		if _synergy(sp, "auto_support"):
+			auto_source = sp
+	for sp in offense:
+		if sp.clone_of != null:
+			continue
+		if debut_source != null and not _drive_snapped.has(sp.data) and sp.data != debut_source.data:
+			_gain_stat(sp, "intelligence", 2, true, debut_source)
+		if auto_source != null and sp.slot.begins_with("F") and auto_route_ids.has(sp.slot):
+			_gain_stat(sp, "intelligence", 2, true, auto_source)
+			sp.synergy["auto_supported"] = true
+		for pd in _drive_opening_acts:
+			if pd != sp.data and sp.slot.begins_with("F"):
+				var before := sp.stat("dexterity")
+				_gain_stat(sp, "dexterity", 1, false)
+				if sp.stat("dexterity") > before:
+					_mark_team_boost(sp)
+		if _synergy(sp, "diverse_dex"):
+			_gain_stat(sp, "dexterity", _other_catchers(sp.data))
+		if _synergy(sp, "diverse_strength"):
+			_gain_stat(sp, "strength", _other_catchers(sp.data))
+		if not _last_snap_lineup.has(sp.data) and not _drive_rotation_used.has(sp.data):
+			if _synergy(sp, "rotation_agility"):
+				_gain_stat(sp, "agility", 3)
+				_drive_rotation_used[sp.data] = true
+			if _synergy(sp, "rotation_recovery"):
+				var line := ["T0", "T1", "C", "T2", "T3"]
+				var index := line.find(sp.slot)
+				for i in [index - 1, index + 1]:
+					if index >= 0 and i >= 0 and i < line.size():
+						var neighbor := offense_slot(line[i])
+						neighbor.energy = minf(1.0, neighbor.energy + 0.3)
+				_drive_rotation_used[sp.data] = true
+		_drive_snapped[sp.data] = true
+	_last_snap_lineup.clear()
+	for sp in offense:
+		if sp.clone_of == null:
+			_last_snap_lineup[sp.data] = true
+
+
+func _other_catchers(pd: PlayerData) -> int:
+	return mini(4, _drive_catchers.size() - (1 if _drive_catchers.has(pd) else 0))
+
+
+func _step_synergies(delta: float) -> void:
+	if not _has_synergies:
+		return
+	for sp in offense:
+		sp.burst_left = maxf(0.0, sp.burst_left - delta)
+		sp.pavement_left = 0.0
+	for i in range(speed_patches.size() - 1, -1, -1):
+		if time >= float(speed_patches[i]["until"]):
+			speed_patches.remove_at(i)
+	for sp in offense:
+		if sp.clone_of != null or sp.melted or time < sp.start_delay:
+			continue
+		for patch in speed_patches:
+			if sp.data != (patch["owner"] as SimPlayer).data and sp.pos.distance_to(patch["pos"]) <= 2.5:
+				sp.pavement_left = delta * 2.0
+				_mark_team_boost(sp)
+		if _synergy(sp, "late_burst") and time >= 3.0 and not sp.synergy.has("late_used") and not sp.synergy.has("targeted"):
+			sp.synergy["late_used"] = true
+			_burst(sp, sp)
+		if (_synergy(sp, "cross_speed") or _synergy(sp, "cross_hesitate")) \
+				and not sp.synergy.has("cross_used") and sp.role == SimPlayer.Role.ROUTE and sp.odometer >= 0.75:
+			var other := _nearest_teammate(sp, true)
+			if other != null and other.odometer >= 0.75 and sp.pos.distance_to(other.pos) <= 2.0:
+				sp.synergy["cross_used"] = true
+				if _synergy(sp, "cross_speed"):
+					_burst(other, sp)
+				else:
+					for d in defense:
+						if d.role == SimPlayer.Role.MAN and d.mark == sp and not d.turned:
+							d.stunned = maxf(d.stunned, 0.6)
+		if _synergy(sp, "block_int"):
+			if not sp.engaged or sp.mark == null or sp.synergy.get("block_target") != sp.mark:
+				sp.synergy["block_seconds"] = 0.0
+			sp.synergy["block_target"] = sp.mark
+			if sp.engaged and sp.mark != null:
+				var seconds := float(sp.synergy.get("block_seconds", 0.0)) + delta
+				var gained := int(sp.synergy.get("block_gains", 0))
+				while seconds >= 1.0 and gained < 3:
+					seconds -= 1.0
+					gained += 1
+					_gain_stat(offense_slot("QB"), "intelligence", 1, true, sp)
+				sp.synergy["block_seconds"] = seconds
+				sp.synergy["block_gains"] = gained
+		if _synergy(sp, "pavement") and sp.engaged and not sp.synergy.has("paved"):
+			sp.synergy["paved"] = true
+			speed_patches.append({"pos": sp.pos, "until": time + 3.0, "owner": sp})
+			_grant_event(sp, "FRESH PAVEMENT")
+		if _synergy(sp, "line_recovery") and _pocket_hold >= 4.0:
+			sp.synergy["recover_line"] = true
+
+
+func _follows_decoy(d: SimPlayer) -> bool:
+	return ball_in_air and thrown_to != null and d.mark != null and d.mark != thrown_to \
+		and _synergy(d.mark, "decoy") and d.role != SimPlayer.Role.RUSH \
+		and not d.turned and not d.lured and d.stunned <= 0.0
+
+
+func _receive_synergies(rec: SimPlayer) -> void:
+	# Both successful catches and Guardian Angel saves arrive before money.
+	for sp in offense:
+		if _synergy(sp, "decoy") and sp.data != rec.data and thrown_to != null and thrown_to.data != sp.data:
+			var followers := 0
+			for d in defense:
+				# _step_ball clears ball_in_air before resolving the catch.
+				if d.mark == sp and d.role != SimPlayer.Role.RUSH and not d.turned and not d.lured and d.stunned <= 0.0:
+					followers += 1
+			if followers >= 2:
+				rec.synergy["double_bucks"] = true
+	if _last_passer != null and _synergy(_last_passer, "short_strength") and catch_x - los <= 5.0:
+		_gain_stat(rec, "strength", 2, true, _last_passer)
+	var new_catcher := not _drive_catchers.has(rec.data)
+	_drive_catchers[rec.data] = true
+	_drive_last_receiver = rec.data
+	if _synergy(rec, "opening_act") and not _drive_opening_acts.has(rec.data):
+		_drive_opening_acts[rec.data] = true
+		for other in flex_players():
+			if other.data != rec.data and not other.melted:
+				_gain_stat(other, "dexterity", 1, false, rec)
+	if new_catcher:
+		for sp in offense:
+			if sp.data == rec.data or sp.melted:
+				continue
+			var other_count := _drive_catchers.size() - (1 if _drive_catchers.has(sp.data) else 0)
+			if other_count <= 4:
+				if _synergy(sp, "diverse_dex"):
+					_gain_stat(sp, "dexterity", 1, true, rec)
+				if _synergy(sp, "diverse_strength"):
+					_gain_stat(sp, "strength", 1, true, rec)
+	for sp in offense:
+		if sp.data == rec.data or sp.melted or sp.clone_of != null:
+			continue
+		var escort := _synergy(sp, "escort") and sp.pos.distance_to(rec.pos) <= 10.0
+		var outside := _synergy(sp, "downfield_escort") and rec.pos.x < sp.pos.x
+		if not escort and not outside:
+			continue
+		var nearest: SimPlayer = null
+		var distance := INF
+		for d in defense:
+			if d.turned or d.stunned > 0.0:
+				continue
+			if outside and (d.pos.x < rec.pos.x or d.pos.x > sp.pos.x):
+				continue
+			if outside and _dist_to_segment(d.pos, rec.pos, sp.pos) > 3.0:
+				continue
+			var dist := sp.pos.distance_to(d.pos)
+			if dist < distance:
+				nearest = d
+				distance = dist
+		if nearest != null:
+			sp.role = SimPlayer.Role.BLOCK
+			sp.mark = nearest
+
+
+func _earnings_mult(sp: SimPlayer) -> float:
+	return AbilityDB.cash_mult(sp.ability()) * (2.0 if bool(sp.synergy.get("double_bucks", false)) else 1.0)
+
+
+func _end_synergies() -> void:
+	var active := {}
+	var bench_bonus := 0.0
+	for sp in offense:
+		if sp.clone_of != null:
+			continue
+		active[sp.data] = true
+		if not kick_play and sp == carrier and _synergy(sp, "bench_recovery"):
+			bench_bonus = 0.25
+		if not kick_play and _synergy(sp, "line_recovery") and (sp.synergy.has("recover_line") or _pocket_hold >= 4.0):
+			for slot in ["T0", "T1", "C", "T2", "T3"]:
+				var lineman := offense_slot(slot)
+				lineman.energy = minf(1.0, lineman.energy + 0.2)
+	for pd in _bench_energy:
+		if not active.has(pd):
+			_bench_energy[pd] = minf(1.0, float(_bench_energy[pd]) + 0.3 + bench_bonus)
+	for sp in offense:
+		if sp.clone_of == null:
+			_bench_energy[sp.data] = sp.energy

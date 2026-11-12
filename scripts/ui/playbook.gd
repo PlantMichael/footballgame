@@ -38,7 +38,7 @@ func _build() -> void:
 
 	root.add_child(UIKit.header("Route Book",
 		"Reference only. You chalk your own routes up during the match - "
-		+ "each receiver gets %d yards of chalk." % int(RouteBook.BUDGET_YARDS)))
+		+ "each receiver starts with %d yards of chalk before ability bonuses." % int(RouteBook.BUDGET_YARDS)))
 	root.add_child(UIKit.rule())
 
 	var body := HBoxContainer.new()

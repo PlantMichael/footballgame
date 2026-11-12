@@ -2,7 +2,7 @@
 
 A 2D football roguelike in Godot 4.7. You coach the offense of one team across a
 branching run map that ends in one of six bowls. Every match is 4-5 drives; you set the lineup, hand out items,
-and then **draw the routes** — each of your five flex players gets 30 yards of chalk,
+and then **draw the routes** — each of your five flex players starts with 30 yards of chalk (abilities can change it),
 and you drag his route straight onto the field before the snap. The play then
 simulates in real time and the QB throws to whoever actually gets open. Football
 bucks earned on the field buy players and items at Shop stops on the map. You get 3 losses across the whole run before the season is over; a loss that
@@ -23,6 +23,39 @@ toolbar. The pause menu freezes gameplay and countdowns. Choose **Resume** or
 press Esc again to continue. **Main Menu** and the desktop-only **Quit Game**
 ask for confirmation because runs are not saved; only bowl completion marks
 survive a restart. Esc from that confirmation returns to the pause menu.
+
+## Team synergies
+
+The shop now includes 24 cooperative players, also available in the Player Book
+and Dev Mode. Each still has exactly one ability; combinations work through normal
+routes, catches, blocks and substitutions rather than requiring named partners.
+
+- **Crossing routes:** Lane Merge, Cris Crosswell, Wade Window and Moe Tow.
+- **Patient pockets:** Stu Wallworth, Lance Layover, Miles Eventually and Chip Hammock.
+- **Short passes and running lanes:** Skip Dinkley, Duke Dumptruck, Perry Perimeter
+  and Artie Asphalt. Artie's pavement appears as a gold circle on the turf.
+- **Spread the targets:** Gus Everybody, Al Firstman, Reggie Seconds and Benny Bookmark.
+- **Rotate the bench:** Freshman Freddie, Lou Relief, Conrad Clipboard and Brock Breather.
+- **Unusual support:** Chalk Norris, Phil Echo, Stan Doubletake and Otto Pilot.
+
+Cards describe the trigger, duration and cap. Speed bursts last 1.5 seconds and
+give 35% extra speed; pavement lasts 3 seconds and gives 25%, with bursts taking
+priority. Drive bonuses and once-per-drive rewards follow player identity across
+substitutions and reset next drive. Presnap edits do not consume first-snap rewards.
+Benched players retain fatigue, recover normally between plays, and receive extra
+recovery when Brock finishes with the ball. Unused players enter fresh.
+
+Chalk Donation changes the drawing limit, route previews and effective simulated
+routes together: Chalk gets 20 yards, ordinary teammates 35, and Boundless gets
+65. Changing the lineup clips the effective route without deleting saved chalk.
+Echo and Copycat forward actual gains after the stat cap; forwarded bonuses cannot
+start another copy/echo chain. Stan's man followers stay on him during a pass to
+someone else; two active followers double that teammate's earnings for the play,
+including catch, tackle-break, first-down and touchdown awards.
+
+Run `godot --headless --path . res://tools/synergy_check.tscn` for focused ability,
+combination and lifecycle checks. These are correctness checks; economy and
+difficulty still need player balance testing.
 
 ## Dev mode
 
@@ -93,7 +126,7 @@ a description, and football bucks earned.
 ### Drawing routes
 
 `RouteBook` (`scripts/data/route_book.gd`) owns the whole chalk system: the flat
-**30 yard** budget every flex gets, the formation spots (personnel-aware — backs
+base **30 yard** budget (modified by Boundless and Chalk Donation), the formation spots (personnel-aware — backs
 and tight ends claim their spots before receivers, so a three-WR set spreads out
 and a two-TE set tightens up), the stock routes, and the geometry helpers.
 
@@ -432,7 +465,7 @@ defense wins comfortably, an even matchup wins roughly 40%.
   settle on what an undrawn man will do. The pick comes off `MatchSim.rng` rather
   than `Array.pick_random`, which reads Godot's own global random state and would
   break the seeded determinism the tuning harnesses rely on.
-- **The budget is flat, not stat-scaled.** Every flex gets the same 30 yards, so
+- **The base budget is flat, not stat-scaled.** Every flex starts with 30 yards before ability modifiers, so
   route design is about shape and spacing rather than about which of your
   receivers can afford to run deep. Stats still decide whether he wins the rep.
 

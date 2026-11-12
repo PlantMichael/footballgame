@@ -542,7 +542,7 @@ func has_route(slot: String) -> bool:
 
 
 ## `route` is waypoints relative to the alignment spot, already truncated to
-## RouteBook.BUDGET_YARDS by whoever drew it. An empty route clears the slot
+## MatchSim.route_budget by whoever drew it. An empty route clears the slot
 ## back to "auto".
 func set_route(slot: String, route: Array) -> void:
 	if route.is_empty():

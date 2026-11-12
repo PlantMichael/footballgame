@@ -138,6 +138,12 @@ var pending_stat_gains: Array[String] = []
 ## idea as pending_stat_gains but for one-off flavor text with no stat key.
 var pending_events: Array[String] = []
 
+## Play-local synergy triggers and timers. Drive history lives on MatchSim,
+## keyed by PlayerData so substitutions cannot reset it.
+var synergy: Dictionary = {}
+var burst_left: float = 0.0
+var pavement_left: float = 0.0
+
 ## --- Purely visual state, advanced by the renderer -------------------------
 ## Distance-based walk cycle phase, so the bob matches actual movement.
 var stride: float = 0.0
@@ -173,6 +179,10 @@ func speed() -> float:
 	if slowed > 0.0:
 		mult *= 0.5
 	mult *= terrain_mult
+	if burst_left > 0.0:
+		mult *= 1.35
+	elif pavement_left > 0.0:
+		mult *= 1.25
 	if data != null and data.aura_id == AuraDB.SPEEDFREAK:
 		mult *= 1.0 + clampf(aura_timer * AuraDB.SPEEDFREAK_RAMP, 0.0, AuraDB.SPEEDFREAK_MAX_MULT)
 	return max_speed() * mult
