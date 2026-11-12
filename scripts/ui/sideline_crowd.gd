@@ -98,7 +98,12 @@ func advance(sim: MatchSim, delta: float, final_pose: Dictionary = {}) -> void:
 		defense_mode = "cheer" if final_pose.get(false, "") == "jump" else "groan" if final_pose.get(false, "") == "lie" else "idle"
 	var ball_x := sim.ball_pos.x if sim.phase == MatchSim.Phase.LIVE else sim.los
 	if sim.phase in [MatchSim.Phase.DEAD, MatchSim.Phase.DRIVE_OVER]:
-		ball_x = clampf(sim.los + float(sim.result.get("yards", 0.0)), 4.0, 116.0)
+		# advance() applies ordinary fourth-down yardage before DRIVE_OVER.
+		# Scores, kicks and explicit turnovers leave los at the original spot.
+		var spot_applied: bool = sim.phase == MatchSim.Phase.DRIVE_OVER \
+			and not bool(sim.result.get("td", false)) and not bool(sim.result.get("kick", false)) \
+			and not bool(sim.result.get("turnover", false)) and sim.result.get("kind", "") != "safety"
+		ball_x = clampf(sim.los + (0.0 if spot_applied else float(sim.result.get("yards", 0.0))), 4.0, 116.0)
 	var motion_delta := maxf(delta, maxf(0.0, sim.time - _last_time)) if sim.phase == MatchSim.Phase.LIVE else delta
 	for i in officials.size():
 		var ref := officials[i]

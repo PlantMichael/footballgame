@@ -63,6 +63,8 @@ func _ready() -> void:
 	_result(crowd, sim, {"kind":"complete", "yards":sim.to_go}, "cheer", "groan", "first_down")
 	_result(crowd, sim, {"kind":"field_goal", "kick":true, "fg_good":true, "yards":0.0}, "cheer", "groan", "touchdown")
 	_result(crowd, sim, {"kind":"missed_fg", "kick":true, "fg_good":false, "yards":0.0}, "groan", "cheer", "no_good")
+	_fourth_down_spot(crowd, sim, 8.0)
+	_fourth_down_spot(crowd, sim, -3.0)
 	crowd.advance(sim, 3.0)
 	_check(crowd.offense_mode == "idle" and crowd.ref_signal.is_empty(), "reactions settle after the result")
 	sim.phase = MatchSim.Phase.DRIVE_OVER
@@ -89,6 +91,25 @@ func _ready() -> void:
 	screen.queue_free()
 	print("SIDELINE CHECK: %s" % ("ALL CHECKS PASSED" if failures == 0 else "%d FAILURES" % failures))
 	get_tree().quit(1 if failures else 0)
+
+func _fourth_down_spot(crowd: SidelineCrowd, sim: MatchSim, yards: float) -> void:
+	sim.phase = MatchSim.Phase.PRESNAP
+	crowd.advance(sim, 0.016)
+	sim.los = 40.0
+	sim.to_go = 10.0
+	sim.down = 4
+	sim.phase = MatchSim.Phase.LIVE
+	sim.carrier.pos.x = sim.los + yards
+	sim.ball_pos = sim.carrier.pos
+	sim.call("_end_play", {"kind":"run", "yards":yards, "text":"Fourth-down spot fixture."})
+	crowd.advance(sim, 10.0)
+	var dead_spot: Vector2 = crowd.officials[0].pos
+	_check(is_equal_approx(dead_spot.x, 40.0 + yards), "official reaches the dead-ball spot")
+	var outcome := sim.advance()
+	_check(outcome.drive_over and sim.phase == MatchSim.Phase.DRIVE_OVER, "real advance ends a failed fourth down")
+	crowd.advance(sim, 1.0)
+	for official in crowd.officials:
+		_check(is_equal_approx(official.pos.x, dead_spot.x), "official holds the same spot after fourth-down advance (%s yd)" % yards)
 
 func _result(crowd: SidelineCrowd, sim: MatchSim, result: Dictionary, ours: String, theirs: String, signal_name: String) -> void:
 	sim.phase = MatchSim.Phase.PRESNAP
