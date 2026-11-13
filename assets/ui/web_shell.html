@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$GODOT_PROJECT_NAME</title>
+<style>
+@font-face{font-family:Oswald;src:url(loader-font.ttf);font-display:swap}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0d1512;color:#dce8e2;font-family:Oswald,Impact,sans-serif}
+#canvas{display:block;outline:none}#loading{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:#0d1512;padding:24px}
+.locker{width:min(400px,100%);text-align:center}h1{font-size:clamp(40px,10vw,60px);line-height:1.2;letter-spacing:5px;color:#f2c14e;margin:0 0 16px}.tagline{font-size:16px;letter-spacing:4px;margin:0}
+.athlete{height:196px;position:relative;display:grid;place-items:center}.athlete::after{content:"";position:absolute;width:76px;height:12px;border-radius:50%;background:#0006;bottom:20px;animation:shadow 1.14s infinite ease-in-out}
+#player{width:144px;height:144px;object-fit:contain;position:relative;z-index:1;animation:celebrate 1.14s infinite ease-in-out}
+.portrait{width:100%;height:100%}.hand{position:absolute;width:10%;height:10%;top:60%;animation:raise-hands 1.14s infinite ease-in-out}.left{left:5.5%}.right{right:5.5%}
+progress{display:block;width:100%;height:32px;border:1px solid #2c4a40;border-radius:3px;background:#152420;color:#35553a;overflow:hidden;appearance:none}progress[hidden]{display:none}
+progress::-webkit-progress-bar{background:#152420}progress::-webkit-progress-value{background:#35553a url(loader-turf.svg) left center/400px 32px}progress::-moz-progress-bar{background:#35553a url(loader-turf.svg) left center/400px 32px}
+progress:not([value]){background:#152420 url(loader-turf.svg) left center/400px 32px;animation:warmup 1.5s infinite linear}
+progress:not([value])::-webkit-progress-bar{background:#152420 url(loader-turf.svg) left center/400px 32px;animation:warmup 1.5s infinite linear}
+#status{font-size:18px;line-height:1.5;min-height:54px;margin:16px 0 0;overflow-wrap:anywhere}button{font:inherit;font-size:20px;margin-top:16px;padding:12px 24px;border:2px solid #f2c14e;background:#f2c14e;color:#0d1512;border-radius:4px;cursor:pointer}button:focus-visible{outline:3px solid #dce8e2;outline-offset:5px}button[hidden]{display:none}
+@keyframes celebrate{0%,50%,100%{transform:translateY(8px) rotate(-3deg)}25%,75%{transform:translateY(-10px) rotate(3deg)}}@keyframes shadow{0%,50%,100%{transform:scaleX(1)}25%,75%{transform:scaleX(.75)}}@keyframes warmup{to{background-position:400px center}}
+@keyframes raise-hands{0%,100%{transform:translateY(0)}50%{transform:translateY(-52px)}}
+@media(prefers-reduced-motion:reduce){#player,.hand,.athlete::after,progress:not([value]),progress:not([value])::-webkit-progress-bar{animation:none}}
+@media(max-height:480px){.athlete{height:140px}#player{width:110px;height:110px}.athlete::after{bottom:8px}h1{font-size:40px;margin-bottom:8px}}
+</style>
+$GODOT_HEAD_INCLUDE
+</head>
+<body>
+<canvas id="canvas" aria-label="Gridiron football game">Your browser does not support canvas.</canvas>
+<div id="loading">
+ <main class="locker" aria-label="Loading Gridiron">
+  <h1>GRIDIRON</h1><p class="tagline">TAKE THE FIELD</p>
+  <div class="athlete" aria-hidden="true"><div id="player"><img class="portrait" id="portrait" src="loader-player-1.png" alt=""><img class="hand left" src="loader-hand-light.png" alt=""><img class="hand right" src="loader-hand-light.png" alt=""></div></div>
+  <progress id="progress" aria-label="Downloading game"></progress>
+  <p id="status" role="status" aria-live="polite">Warming up</p>
+  <button id="retry" hidden>TRY AGAIN</button>
+  <noscript>Enable JavaScript to play Gridiron.</noscript>
+ </main>
+</div>
+<script>
+const overlay = document.getElementById('loading');
+const progress = document.getElementById('progress');
+const statusText = document.getElementById('status');
+const retry = document.getElementById('retry');
+const look = 1 + Math.floor(Math.random() * 3);
+document.getElementById('portrait').src = 'loader-player-' + look + '.png';
+document.querySelectorAll('.hand').forEach(hand => hand.src = 'loader-hand-' + (look === 2 ? 'dark' : 'light') + '.png');
+retry.onclick = () => location.reload();
+window.gridironReady = () => overlay.remove();
+window.gridironFailure = (error) => {
+ console.error(error);
+ progress.hidden = true;
+ statusText.textContent = "Couldn't load Gridiron. Check your connection and try again.";
+ retry.hidden = false;
+ retry.focus();
+};
+</script>
+<script src="$GODOT_URL" onerror="gridironFailure('Engine download failed')"></script>
+<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+if (typeof Engine !== 'undefined') {
+ const missing = Engine.getMissingFeatures({threads: GODOT_THREADS_ENABLED});
+ if (missing.length) {
+  gridironFailure(missing.join(', '));
+  statusText.textContent = 'This browser is missing required features: ' + missing.join(', ') + '. Try an up-to-date browser.';
+ } else {
+  const engine = new Engine(GODOT_CONFIG);
+  engine.startGame({onProgress(current, total) {
+   if (total > 0) {
+    progress.max = total;
+    progress.value = current;
+    statusText.textContent = current >= total ? 'Getting the field ready' : 'Downloading game · ' + Math.floor(current / total * 100) + '%';
+   } else {
+    progress.removeAttribute('value');
+    statusText.textContent = 'Getting the field ready';
+   }
+  }}).then(() => {
+   // The runtime removes this overlay after its first prepared scene frame.
+   statusText.textContent = 'Getting the field ready';
+  }).catch(gridironFailure);
+ }
+}
+</script>
+</body>
+</html>

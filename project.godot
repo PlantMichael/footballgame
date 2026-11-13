@@ -14,8 +14,16 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="Gridiron Run"
-run/main_scene="res://scenes/main_menu.tscn"
+config/name="Gridiron"
+; Keep the original save namespace on every platform, including Web.
+config/use_custom_user_dir=true
+config/custom_user_dir_name="godot/app_userdata/Gridiron Run"
+config/custom_user_dir_name.windows="Godot/app_userdata/Gridiron Run"
+config/custom_user_dir_name.macos="Godot/app_userdata/Gridiron Run"
+run/main_scene="res://scenes/boot.tscn"
+boot_splash/image="res://assets/ui/boot_splash.png"
+boot_splash/bg_color=Color(0.051, 0.082, 0.071, 1)
+boot_splash/fullsize=false
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
@@ -24,6 +32,7 @@ config/icon="res://icon.svg"
 GameState="*res://scripts/core/game_state.gd"
 MetaState="*res://scripts/core/meta_state.gd"
 PauseMenu="*res://scripts/ui/pause_menu.gd"
+LoadingScreen="*res://scripts/ui/loading_screen.gd"
 
 [display]
 

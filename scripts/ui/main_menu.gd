@@ -27,7 +27,7 @@ func _ready() -> void:
 	v.add_child(ball)
 
 	# Varsity lettering: gold, a thick dark outline, and a drop shadow.
-	var t := UIKit.label("GRIDIRON RUN", 96, UIKit.ACCENT)
+	var t := UIKit.label("GRIDIRON", 96, UIKit.ACCENT)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.add_theme_font_override("font", _spaced(6))
 	t.add_theme_constant_override("outline_size", 14)
@@ -40,6 +40,9 @@ func _ready() -> void:
 
 
 	v.add_child(UIKit.vsep(36))
+	if LoadingScreen.active:
+		LoadingScreen.update_progress(1.0, "Ready")
+		LoadingScreen.finish_after_frame()
 
 	var play := _menu_item("PLAY")
 	play.pressed.connect(_on_new_run)
@@ -128,4 +131,4 @@ func _on_new_run() -> void:
 ## entirely - straight into the field for tuning and ability testing.
 func _on_dev_mode() -> void:
 	GameState.start_dev_mode()
-	get_tree().change_scene_to_file("res://scenes/match.tscn")
+	LoadingScreen.go_to("res://scenes/match.tscn")

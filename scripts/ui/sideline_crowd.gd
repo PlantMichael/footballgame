@@ -119,6 +119,20 @@ func reset(sim: MatchSim) -> void:
 			"ref": true, "stride": 0.0, "velocity": 0.0})
 
 
+## Resolve every view used by an actor, including later turns and reactions,
+## through the same caches as drawing. The field calls this before reveal.
+func warm_resources(sim: MatchSim) -> bool:
+	for actor in people + officials:
+		var palette := "ref" if actor.ref else team_palette(actor.offense, sim)
+		for view in ["front", "back", "left"]:
+			if _body(palette, view, int(actor.body)) == null:
+				return false
+		for view in ["front", "back", "left", "right"]:
+			if _head(actor.head, view)[0] == null:
+				return false
+	return true
+
+
 func _side_y(depth: float, side: int) -> float:
 	return -depth if side == 0 else MatchSim.FIELD_W + depth
 

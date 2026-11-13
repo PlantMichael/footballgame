@@ -24,6 +24,8 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if LoadingScreen.active:
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		if visible:
 			if _confirm.visible:
@@ -38,7 +40,7 @@ func _input(event: InputEvent) -> void:
 
 func open() -> void:
 	var scene := get_tree().current_scene
-	if visible or scene == null or scene.scene_file_path == MAIN_MENU:
+	if LoadingScreen.active or visible or scene == null or scene.scene_file_path == MAIN_MENU:
 		return
 	_previous_focus = get_viewport().gui_get_focus_owner()
 	opening.emit()

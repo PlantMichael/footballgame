@@ -203,7 +203,7 @@ func _match_detail(node: Dictionary) -> void:
 	var at := _sel
 	kick.pressed.connect(func():
 		GameState.select_match(at.x, at.y)
-		get_tree().change_scene_to_file("res://scenes/match.tscn"))
+		LoadingScreen.go_to("res://scenes/match.tscn"))
 	_detail.add_child(kick)
 
 

@@ -51,7 +51,7 @@ func _fail(msg: String) -> void:
 func _play_full_match() -> void:
 	var scene: Node = load("res://scenes/match.tscn").instantiate()
 	add_child(scene)
-	await get_tree().process_frame
+	await scene.ready_to_play
 
 	var sim: MatchSim = scene.get("sim")
 	if sim == null:

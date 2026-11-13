@@ -10,12 +10,19 @@ func _ready() -> void:
 	var screen: Node = load("res://scenes/match.tscn").instantiate()
 	screen.process_mode = Node.PROCESS_MODE_PAUSABLE
 	add_child(screen)
-	await get_tree().process_frame
+	await screen.ready_to_play
 	screen.set_process(false)
 	var sim: MatchSim = screen.sim
 	var field = screen.field
 	var crowd: SidelineCrowd = field.sidelines
 	field.set_process(false)
+	_check(crowd.people.size() >= 180 and crowd.officials.size() == 2 and crowd.props.size() >= 50,
+		"crowd, refs and props are ready before the match is revealed")
+	var body_count := crowd._textures.size()
+	var head_count := crowd._heads.size()
+	_check(body_count > 0 and head_count > 0, "sideline sprites are warmed before reveal")
+	_check(crowd.warm_resources(sim) and crowd._textures.size() == body_count and crowd._heads.size() == head_count,
+		"turns and reactions need no additional sideline sprite loads")
 	crowd.advance(sim, 0.016)
 	_check(crowd.people.size() >= 180 and crowd.officials.size() == 2, "denser sidelines and two officials")
 	_check(crowd.props.size() >= 50, "bench and equipment stations populate both sidelines")

@@ -89,6 +89,9 @@ var _end_countdown_label: Label
 var _match_ended: bool = false
 var _end_countdown: float = 0.0
 var _leaving: bool = false
+var loading: bool = true
+var _loading_generation: int
+signal ready_to_play
 
 
 ## The scouting report's color - shared with field_view's crosshair on the
@@ -103,11 +106,34 @@ class SnapButton extends Button:
 
 
 func _ready() -> void:
+	_loading_generation = LoadingScreen.begin("Preparing the field")
+	visible = false
 	UIKit.background(self)
 	_start_match()
 	_build_layout()
+	field.set_process(false)
 	PauseMenu.opening.connect(field.cancel_pointer_gestures)
 	_refresh_bar()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not await field.prepare_visuals(LoadingScreen.update_progress):
+		LoadingScreen.fail("Couldn't prepare the sidelines. Try returning to the menu.")
+		return
+	# Draw the complete scene underneath the opaque loading layer first, so
+	# texture upload and first draw happen before the player sees the field.
+	visible = true
+	LoadingScreen.update_progress(1.0, "Ready for kickoff")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	loading = false
+	field.set_process(true)
+	LoadingScreen.finish(_loading_generation)
+	ready_to_play.emit()
+
+
+func _exit_tree() -> void:
+	if loading:
+		LoadingScreen.finish(_loading_generation)
 
 
 func _input(event: InputEvent) -> void:
@@ -128,7 +154,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _can_snap() -> bool:
-	return sim != null and sim.phase == MatchSim.Phase.PRESNAP and not get_tree().paused \
+	return not loading and sim != null and sim.phase == MatchSim.Phase.PRESNAP and not get_tree().paused \
 		and pending_upgrades.is_empty() and not _match_ended and not _leaving
 
 
@@ -485,6 +511,8 @@ func _build_end_panel() -> void:
 # ============================================================================
 
 func _process(delta: float) -> void:
+	if loading:
+		return
 	_update_top_bar()
 	_update_log()
 	_update_scout_panel()

@@ -92,6 +92,8 @@ func _screen(id: String) -> void:
 	get_tree().change_scene_to_file("res://scenes/%s.tscn" % id)
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if id == "match" and get_tree().current_scene.loading:
+		await get_tree().current_scene.ready_to_play
 
 
 func _escape() -> void:

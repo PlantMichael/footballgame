@@ -446,6 +446,29 @@ func _facing_view(sp: SimPlayer) -> Array:
 	return [view, flip]
 
 
+## Prepare through the draw caches, without advancing the visual/game clock.
+## Missing player side art legitimately uses the existing capsule fallback.
+func prepare_visuals(progress: Callable) -> bool:
+	sidelines.reset(sim)
+	progress.call(0.45, "Filling the sidelines")
+	await get_tree().process_frame
+	if not sidelines.warm_resources(sim):
+		return false
+	var players: Array = sim.offense + sim.defense
+	for i in players.size():
+		var sp: SimPlayer = players[i]
+		for view in ["front", "back", "left"]:
+			_body_tex(sp, view)
+			_rig(sp, view)
+		var head_set := sp.data.head_id if sp.data.head_id != "" else "1"
+		for view in ["front", "back", "left", "right"]:
+			_head_art(sp, head_set, view)
+		progress.call(0.55 + 0.4 * float(i + 1) / players.size(), "Getting the teams ready")
+		if i % 4 == 3:
+			await get_tree().process_frame
+	return true
+
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	resized.connect(queue_redraw)

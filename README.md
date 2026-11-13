@@ -1,4 +1,4 @@
-# Gridiron Run
+# Gridiron
 
 A 2D football roguelike in Godot 4.7. You coach the offense of one team across a
 branching run map that ends in one of six bowls. Every match is 4-5 drives; you set the lineup, hand out items,
@@ -15,6 +15,24 @@ Open the folder in Godot 4.7 and press play, or:
 ```
 godot --path . 
 ```
+
+## Loading and existing progress
+
+Gridiron opens with a turf loading bar and a randomly selected player celebrating
+above it. Matches prepare both teams, the sideline crowd, officials and equipment
+before revealing the field. Controls become available after preparation finishes.
+The browser loader uses download progress when the size is known and an
+indeterminate turf animation otherwise; a failed download offers **Try Again**.
+
+Completion marks keep using the original `Gridiron Run` save directory. That
+legacy folder name is intentional: changing the displayed title must not move or
+reset `progress.json`. The save format and QB/bowl IDs are unchanged. Browser
+progress remains tied to the same site address; renaming the repository does not
+require changing the public site address. In-progress runs are still not saved.
+
+Run `godot --headless --path . res://tools/startup_check.tscn` for loading,
+keyboard isolation, repeated entry and failure recovery. Its missing-scene errors
+are deliberate fixtures; it must finish with `STARTUP CHECK: ALL CHECKS PASSED`.
 
 ## Pausing
 
@@ -541,6 +559,22 @@ godot --headless --export-release "Web" web_build/index.html
 ```
 
 (needs the Web export templates for the matching Godot version installed).
+The custom loader shell is `assets/ui/web_shell.html`. Keep the `loader-*`
+files alongside the exported HTML. If player or rig art changes, regenerate the
+three browser portraits and native splash with
+`godot --path . --windowed res://tools/export_loader_art.tscn`.
+
+When matching `index.js` and `index.wasm` already exist, a data-only refresh is:
+
+```
+godot --headless --export-pack "Web" web_build/index.pck
+node tools/build_web_shell.mjs
+```
+
+This reuses the existing engine binaries; it does not upgrade Godot. The Node
+step renders the custom shell, refreshes file-size metadata and copies its font,
+turf and hand art. Check the resulting build locally before publishing.
+
 The export preset lives in `export_presets.cfg` with threading disabled, so
 the build doesn't need the `Cross-Origin-Opener-Policy`/
 `Cross-Origin-Embedder-Policy` headers a threaded export would require.

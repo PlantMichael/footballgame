@@ -97,6 +97,8 @@ func _match() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	screen = get_tree().current_scene
+	if screen.loading:
+		await screen.ready_to_play
 	# Freeze only the simulation driver; real input/control/field owners stay active.
 	screen.set_process(false)
 
