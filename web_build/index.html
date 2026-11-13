@@ -12,8 +12,8 @@
 .athlete{height:196px;position:relative;display:grid;place-items:center}.athlete::after{content:"";position:absolute;width:76px;height:12px;border-radius:50%;background:#0006;bottom:20px;animation:shadow 1.14s infinite ease-in-out}
 #player{width:144px;height:144px;object-fit:contain;position:relative;z-index:1;animation:celebrate 1.14s infinite ease-in-out}
 .portrait{width:100%;height:100%}.hand{position:absolute;width:10%;height:10%;top:60%;animation:raise-hands 1.14s infinite ease-in-out}.left{left:5.5%}.right{right:5.5%}
-progress{display:block;width:100%;height:32px;border:1px solid #2c4a40;border-radius:3px;background:#152420;color:#35553a;overflow:hidden;appearance:none}progress[hidden]{display:none}
-progress::-webkit-progress-bar{background:#152420}progress::-webkit-progress-value{background:#35553a url(loader-turf.svg) left center/400px 32px}progress::-moz-progress-bar{background:#35553a url(loader-turf.svg) left center/400px 32px}
+progress{display:block;width:100%;height:32px;border:1px solid #2c4a40;border-radius:3px;background:#152420;color:#527853;overflow:hidden;appearance:none}progress[hidden]{display:none}
+progress::-webkit-progress-bar{background:#152420}progress::-webkit-progress-value{background:#527853 url(loader-turf.svg) left center/400px 32px}progress::-moz-progress-bar{background:#527853 url(loader-turf.svg) left center/400px 32px}
 progress:not([value]){background:#152420 url(loader-turf.svg) left center/400px 32px;animation:warmup 1.5s infinite linear}
 progress:not([value])::-webkit-progress-bar{background:#152420 url(loader-turf.svg) left center/400px 32px;animation:warmup 1.5s infinite linear}
 #status{font-size:18px;line-height:1.5;min-height:54px;margin:16px 0 0;overflow-wrap:anywhere}button{font:inherit;font-size:20px;margin-top:16px;padding:12px 24px;border:2px solid #f2c14e;background:#f2c14e;color:#0d1512;border-radius:4px;cursor:pointer}button:focus-visible{outline:3px solid #dce8e2;outline-offset:5px}button[hidden]{display:none}
@@ -56,7 +56,7 @@ window.gridironFailure = (error) => {
 </script>
 <script src="index.js" onerror="gridironFailure('Engine download failed')"></script>
 <script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":21342916,"index.wasm":37902138},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":21342900,"index.wasm":37902138},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 if (typeof Engine !== 'undefined') {
  const missing = Engine.getMissingFeatures({threads: GODOT_THREADS_ENABLED});
