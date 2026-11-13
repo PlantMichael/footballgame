@@ -463,7 +463,7 @@ func prepare_visuals(progress: Callable) -> bool:
 		var head_set := sp.data.head_id if sp.data.head_id != "" else "1"
 		for view in ["front", "back", "left", "right"]:
 			_head_art(sp, head_set, view)
-		progress.call(0.55 + 0.4 * float(i + 1) / players.size(), "Getting the teams ready")
+		progress.call(0.55 + 0.4 * float(i + 1) / players.size(), "")
 		if i % 4 == 3:
 			await get_tree().process_frame
 	return true

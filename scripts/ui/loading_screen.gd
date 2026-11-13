@@ -38,9 +38,6 @@ func _ready() -> void:
 	var title := UIKit.label("GRIDIRON", 60, UIKit.ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(title)
-	var tagline := UIKit.label("T A K E   T H E   F I E L D", 16, UIKit.TEXT)
-	tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(tagline)
 	_player_host = Control.new()
 	_player_host.custom_minimum_size = Vector2(0, 180)
 	column.add_child(_player_host)
