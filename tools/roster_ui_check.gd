@@ -151,6 +151,21 @@ func _ritual() -> void:
 			return
 		offer.pressed.emit()
 		await _settle()
+	# Reopen an offering: Down from the last picker row must not reach the
+	# underlying Back-to-map action through the shaded page.
+	for b in screen.find_children("*", "Button", true, false):
+		if b.tooltip_text == "Choose offering 1":
+			b.pressed.emit()
+			break
+	await _settle()
+	var close := _button_text("  Close  ")
+	var picker := close.get_parent().get_parent().get_parent()
+	_button_text("  In this square  ").grab_focus()
+	await _key(KEY_DOWN, true)
+	await _key(KEY_DOWN, false)
+	_check(picker.is_ancestor_of(get_viewport().gui_get_focus_owner()), "arrow focus stays inside ritual picker")
+	close.pressed.emit()
+	await _settle()
 	var count := GameState.roster.size()
 	await _press_text("Review sacrifice • 2 players")
 	_check(GameState.roster.size() == count and _dialog().dialog_text.contains("Stickum Gloves"), "review lists returned gear before any loss")

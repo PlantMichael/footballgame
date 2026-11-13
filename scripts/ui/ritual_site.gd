@@ -264,8 +264,14 @@ func _build_picker() -> void:
 		if not button.disabled:
 			focus_buttons.append(button)
 	for i in focus_buttons.size():
-		focus_buttons[i].focus_next = focus_buttons[(i + 1) % focus_buttons.size()].get_path()
-		focus_buttons[i].focus_previous = focus_buttons[(i - 1 + focus_buttons.size()) % focus_buttons.size()].get_path()
+		var next := focus_buttons[(i + 1) % focus_buttons.size()].get_path()
+		var previous := focus_buttons[(i - 1 + focus_buttons.size()) % focus_buttons.size()].get_path()
+		focus_buttons[i].focus_next = next
+		focus_buttons[i].focus_previous = previous
+		focus_buttons[i].focus_neighbor_top = previous
+		focus_buttons[i].focus_neighbor_bottom = next
+		focus_buttons[i].focus_neighbor_left = focus_buttons[i].get_path()
+		focus_buttons[i].focus_neighbor_right = focus_buttons[i].get_path()
 	close.grab_focus()
 
 
