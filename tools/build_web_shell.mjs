@@ -20,6 +20,7 @@ const shell = fs.readFileSync(path.join(root, 'assets/ui/web_shell.html'), 'utf8
  });
 fs.writeFileSync(path.join(build, 'index.html'), shell);
 fs.copyFileSync(path.join(root, 'assets/fonts/Oswald.ttf'), path.join(build, 'loader-font.ttf'));
+fs.copyFileSync(path.join(root, 'assets/fonts/OFL-Oswald.txt'), path.join(build, 'OFL-Oswald.txt'));
 fs.copyFileSync(path.join(root, 'assets/ui/loading_turf.svg'), path.join(build, 'loader-turf.svg'));
 fs.copyFileSync(path.join(root, 'assets/ui/boot_splash.png'), path.join(build, 'index.png'));
 for (const skin of ['light', 'dark']) fs.copyFileSync(path.join(root, `assets/hands/hand_${skin}.png`), path.join(build, `loader-hand-${skin}.png`));

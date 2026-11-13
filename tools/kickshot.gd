@@ -21,6 +21,7 @@ func _ready() -> void:
 
 	var inst: Node = load("res://scenes/match.tscn").instantiate()
 	add_child(inst)
+	await inst.ready_to_play
 	await _wait(0.3)
 	var sim: MatchSim = inst.get("sim")
 	await _shot("0_playcall")

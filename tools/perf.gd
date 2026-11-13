@@ -12,6 +12,7 @@ func _ready() -> void:
 	GameState.new_run(20260817)
 	var inst: Node = load("res://scenes/match.tscn").instantiate()
 	add_child(inst)
+	await inst.ready_to_play
 	for i in 30:
 		await get_tree().process_frame
 	var sim: MatchSim = inst.get("sim")

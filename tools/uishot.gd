@@ -65,6 +65,7 @@ func _shoot_shop_items() -> void:
 func _shoot_match() -> void:
 	var inst: Node = load("res://scenes/match.tscn").instantiate()
 	add_child(inst)
+	await inst.ready_to_play
 	for i in 6:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw

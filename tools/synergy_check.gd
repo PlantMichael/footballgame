@@ -488,8 +488,7 @@ func _substitution_ui() -> void:
 	GameState.set_route("F1", [Vector2(35, 0)])
 	var scene: Control = load("res://scenes/match.tscn").instantiate()
 	add_child(scene)
-	await get_tree().process_frame
-	await get_tree().process_frame
+	await scene.ready_to_play
 	_check(_bar_has(scene, "30 / 30 yd"), "ordinary lineup shows the clipped 30-yard route")
 	_check(_click_sub(scene, "Chalk Norris"), "Chalk is selectable through the real substitute button")
 	await get_tree().process_frame

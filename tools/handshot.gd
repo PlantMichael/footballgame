@@ -17,6 +17,7 @@ func _ready() -> void:
 	print("shots -> %s" % ProjectSettings.globalize_path(OUT_DIR))
 	inst = load("res://scenes/match.tscn").instantiate()
 	add_child(inst)
+	await inst.ready_to_play
 	for i in 10:
 		await get_tree().process_frame
 	sim = inst.get("sim")
