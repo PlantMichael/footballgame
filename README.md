@@ -1,5 +1,8 @@
 # Gridiron
 
+See [the development roadmap](ROADMAP.md) for completed milestones and the next
+planned changes.
+
 A 2D football roguelike in Godot 4.7. You coach the offense of one team across a
 branching run map that ends in one of six bowls. Every match is 4-5 drives; you set the lineup, hand out items,
 and then **draw the routes** — each of your five flex players starts with 30 yards of chalk (abilities can change it),
