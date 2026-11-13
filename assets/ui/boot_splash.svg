@@ -2,7 +2,16 @@
 <rect width="640" height="360" fill="#0d1512"/>
 <path d="M275 85 Q320 45 365 85 Q320 125 275 85" fill="#c86b32" stroke="#e8f0ea" stroke-width="3"/>
 <path d="M302 85h36m-28-7v14m10-14v14m10-14v14" stroke="#e8f0ea" stroke-width="3"/>
-<text x="320" y="195" text-anchor="middle" fill="#f2c14e" font-family="sans-serif" font-weight="900" font-size="64" letter-spacing="7">GRIDIRON</text>
+<!-- Outlined lettering: Godot's SVG importer does not render SVG text. -->
+<g transform="translate(151 143)" fill="none" stroke="#f2c14e" stroke-width="7" stroke-linejoin="round">
+<path d="M30 0H0V52H30V26H18"/>
+<path transform="translate(44)" d="M0 52V0H28V24H0M14 24L32 52"/>
+<path transform="translate(88)" d="M0 0H30M15 0V52M0 52H30"/>
+<path transform="translate(132)" d="M0 52V0H19L30 11V41L19 52Z"/>
+<path transform="translate(176)" d="M0 0H30M15 0V52M0 52H30"/>
+<path transform="translate(220)" d="M0 52V0H28V24H0M14 24L32 52"/>
+<path transform="translate(264)" d="M6 0H24L30 6V46L24 52H6L0 46V6Z"/>
+<path transform="translate(308)" d="M0 52V0L30 52V0"/>
+</g>
 <path d="M125 240h390" stroke="#2c4a40" stroke-width="2"/>
-<text x="320" y="280" text-anchor="middle" fill="#dce8e2" font-family="sans-serif" font-size="14" letter-spacing="5">TAKE THE FIELD</text>
 </svg>
