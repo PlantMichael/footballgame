@@ -1,14 +1,14 @@
 extends Control
 
 ## Spend football bucks between rounds: draft picks and items. One row of
-## cards at a time - players by default, items behind the "Items ->" toggle
-## in the bottom-right corner. Players are trading cards (TradingCard), gear
+## cards at a time, with visible Players/Gear tabs. Players are trading cards (TradingCard), gear
 ## is a paper equipment tag (PlayCard), all tossed on the turf.
 
 var notice: String = ""
 ## Whether `notice` is bad news (a thrown flag) or a confirmation.
 var notice_bad: bool = false
 var _view: String = "players"   # "players" or "items"
+var _rebuilding := false
 
 const PLAYER_TILTS := [-1.2, 0.8, -0.5, 1.1, -0.9, 0.6]
 const ITEM_TILTS := [-1.4, 0.9, -0.6, 1.3]
@@ -21,12 +21,21 @@ func _ready() -> void:
 
 
 func _rebuild() -> void:
+	if _rebuilding:
+		return
+	_rebuilding = true
 	for c in get_children():
 		if c is ColorRect:
 			continue
+		if c is Control:
+			c.hide()
 		c.queue_free()
 	await get_tree().process_frame
 	_build()
+	_rebuilding = false
+	var tab := find_child("Shop_" + _view, true, false) as Button
+	if tab != null:
+		tab.grab_focus()
 
 
 func _build() -> void:
@@ -53,6 +62,23 @@ func _build() -> void:
 	head.add_child(refresh)
 	head.move_child(refresh, head.get_child_count() - 2)
 	root.add_child(head)
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 10)
+	for tab in ["players", "items"]:
+		var title_text := "Players" if tab == "players" else "Gear"
+		var button := UIKit.primary_button(title_text, 17) if _view == tab else UIKit.button(title_text, 17)
+		button.toggle_mode = true
+		button.button_pressed = _view == tab
+		button.name = "Shop_" + tab
+		if _view == tab:
+			button.add_theme_stylebox_override("pressed", UIKit.stylebox(UIKit.ACCENT, 6))
+			button.add_theme_color_override("font_pressed_color", UIKit.BG)
+		button.pressed.connect(func():
+			_view = tab
+			notice = ""
+			_rebuild())
+		tabs.add_child(button)
+	root.add_child(tabs)
 
 	var notice_row := CenterContainer.new()
 	notice_row.custom_minimum_size = Vector2(0, 26)
@@ -65,11 +91,13 @@ func _build() -> void:
 	row.add_theme_constant_override("separation", 16)
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var space := VBoxContainer.new()
-	space.alignment = BoxContainer.ALIGNMENT_CENTER
-	space.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	space.add_child(row)
-	root.add_child(space)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.follow_focus = true
+	scroll.add_child(row)
+	root.add_child(scroll)
 
 	var cards := _player_cards() if _view == "players" else _item_cards()
 	var tilts: Array = PLAYER_TILTS if _view == "players" else ITEM_TILTS
@@ -95,13 +123,9 @@ func _build() -> void:
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bottom.add_child(sp)
 
-	var toggle := UIKit.primary_button("  Players ->  " if _view == "items" else "  Gear ->  ", 17)
-	toggle.custom_minimum_size = Vector2(0, 42)
-	toggle.pressed.connect(func():
-		_view = "items" if _view == "players" else "players"
-		notice = ""
-		_rebuild())
-	bottom.add_child(toggle)
+	var lineup := UIKit.primary_button("Manage lineup & equip gear", 17)
+	lineup.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lineup.tscn"))
+	bottom.add_child(lineup)
 
 
 ## One trading card per player in this stop's stock, each with its sign
@@ -113,9 +137,14 @@ func _player_cards() -> Array:
 		var p: PlayerData = stock[i]
 		var cost := Generator.player_price(p)
 		var sold := GameState.is_sold("player", str(i))
+		var footer := VBoxContainer.new()
+		var placement := UIKit.label("Starts at K immediately" if p.is_kicker() and GameState.kicker() == null else "Joins bench • Start from Lineup", 14, UIKit.INK)
+		placement.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		footer.add_child(placement)
 		var buy := _buy_button("SIGNED" if sold else "Sign  $%d" % cost, sold or GameState.bucks < cost)
 		buy.pressed.connect(func(): _buy_player(i, p, cost))
-		var card := TradingCard.new(p, ShopPlayerDB.quality_name(p.quality), UIKit.quality_color(p.quality), buy)
+		footer.add_child(buy)
+		var card := TradingCard.new(p, ShopPlayerDB.quality_name(p.quality), UIKit.quality_color(p.quality), footer)
 		card.custom_minimum_size = Vector2(200, 0)
 		if sold:
 			card.modulate = Color(1, 1, 1, 0.55)
@@ -148,6 +177,9 @@ func _item_cards() -> Array:
 		var d := UIKit.label(ItemDB.item_desc(id), 15, UIKit.INK_MUTED)
 		d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		v.add_child(d)
+		var destination := UIKit.label("Goes to bag. Equip on any player from Lineup; replaces the same gear category.", 14, UIKit.INK_MUTED)
+		destination.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(destination)
 
 		var fill := Control.new()
 		fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -167,7 +199,7 @@ func _buy_button(text: String, disabled: bool) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.disabled = disabled
-	b.focus_mode = Control.FOCUS_NONE
+	b.focus_mode = Control.FOCUS_ALL
 	b.custom_minimum_size = Vector2(0, 36)
 	b.add_theme_font_size_override("font_size", 16)
 	var dark := Color("3a2a05")
@@ -178,42 +210,36 @@ func _buy_button(text: String, disabled: bool) -> Button:
 		"pressed": UIKit.ACCENT.darkened(0.15), "disabled": Color("d8d2c0")}
 	for state in looks:
 		b.add_theme_stylebox_override(state, UIKit.stylebox(looks[state], 0, 2, Color(UIKit.INK, 0.8)))
+	var focus := UIKit.stylebox(Color.TRANSPARENT, 0, 3, UIKit.INK_BLUE)
+	focus.draw_center = false
+	b.add_theme_stylebox_override("focus", focus)
 	return b
 
 
 func _bag_summary() -> Control:
-	var center := CenterContainer.new()
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 14)
-	center.add_child(h)
-	h.add_child(UIKit.outlined(UIKit.label("IN THE BAG:", 15, UIKit.ACCENT), 5))
-	if GameState.inventory.is_empty():
-		h.add_child(UIKit.outlined(UIKit.label("nothing unequipped", 15, UIKit.TEXT), 5))
-	else:
-		var counts := {}
-		for item_id in GameState.inventory:
-			counts[item_id] = int(counts.get(item_id, 0)) + 1
-		for item_id in counts:
-			h.add_child(UIKit.outlined(UIKit.label("%s x%d" % [ItemDB.item_name(item_id), counts[item_id]],
-				15, UIKit.TEXT), 5))
-	return center
+	return UIKit.outlined(UIKit.label("IN THE BAG: %d unequipped items • Open Lineup to see effects and equip." % GameState.inventory.size(), 16, UIKit.TEXT), 5)
 
 
 func _buy_player(index: int, p: PlayerData, cost: int) -> void:
+	if _rebuilding or GameState.is_sold("player", str(index)):
+		return
 	if not GameState.spend_bucks(cost):
 		notice = "Not enough football bucks."
 		notice_bad = true
 		_rebuild()
 		return
-	GameState.add_player(p.duplicate_player())
+	var signed := p.duplicate_player()
+	GameState.add_player(signed)
 	GameState.mark_sold("player", str(index))
 	GameState.bought_shop_players[p.pname] = true
-	notice = "%s signed. Set him in the lineup." % p.pname
+	notice = "%s signed — %s" % [p.pname, "starting at K, ready to kick." if GameState.kicker() == signed else "on the bench. Choose Start in Lineup."]
 	notice_bad = false
 	_rebuild()
 
 
 func _buy_item(index: int, id: String, cost: int) -> void:
+	if _rebuilding or GameState.is_sold("item", str(index)):
+		return
 	if not GameState.spend_bucks(cost):
 		notice = "Not enough football bucks."
 		notice_bad = true

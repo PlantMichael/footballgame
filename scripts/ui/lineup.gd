@@ -1,25 +1,13 @@
 extends Control
 
-## Lineup and equipment, chalked up on a chalkboard like a real formation:
-## the five linemen across the top on the line of scrimmage, the quarterback
-## in the middle with the flexes either side of him, and the optional kicker
-## off to the side.
-## Clicking a player selects him - he grows, his three item slots appear
-## beside him, and the strip along the bottom fills with everyone on the
-## roster who could take his spot. Click one of those to swap him in; click an
-## item slot to equip something from the bag or take its item off.
-
+## The formation selects a position; only named actions change the roster.
 var selected_slot: String = "QB"
+var _view: String = "players"
+var _notice: String = "Select a position, then choose Start, Swap or Equip."
+var _rebuilding := false
 
-## Formation rows, left to right as the field looks from behind the offense.
 const LINE_ROW := ["T0", "T1", "C", "T2", "T3"]
-const BACK_ROW_LEFT := ["F0", "F1"]
-const BACK_ROW_RIGHT := ["F2", "F3", "F4"]
-
-const CIRCLE := 84
-const CIRCLE_SELECTED := 112
-const ITEM_CIRCLE := 34
-const BENCH_PORTRAIT := 72
+const BACK_ROW := ["F0", "F1", "QB", "F2", "F3", "F4"]
 
 
 func _ready() -> void:
@@ -27,13 +15,23 @@ func _ready() -> void:
 	_build()
 
 
-func _rebuild() -> void:
+func _rebuild(focus_name: String = "") -> void:
+	if _rebuilding:
+		return
+	_rebuilding = true
 	for c in get_children():
 		if c is ColorRect:
 			continue
+		if c is Control:
+			c.hide()
 		c.queue_free()
 	await get_tree().process_frame
 	_build()
+	_rebuilding = false
+	if focus_name != "":
+		var target := find_child(focus_name, true, false) as Control
+		if target != null:
+			target.grab_focus()
 
 
 func _build() -> void:
@@ -42,370 +40,315 @@ func _build() -> void:
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 24)
 	add_child(margin)
-
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 12)
 	margin.add_child(root)
-
-	root.add_child(UIKit.header("Lineup", "Click a player to see his items and who can replace him"))
+	root.add_child(UIKit.header("Lineup", "Your formation on the left. Your next decision on the right."))
+	root.add_child(UIKit.outlined(_text(_notice, 16, UIKit.TEXT)))
+	var body := HBoxContainer.new()
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 16)
+	root.add_child(body)
 
 	var board := UIKit.chalkboard()
-	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(board)
-	var board_row := HBoxContainer.new()
-	board_row.add_theme_constant_override("separation", 18)
-	board.add_child(board_row)
-
+	board.custom_minimum_size.x = 566
+	body.add_child(board)
 	var field := VBoxContainer.new()
-	field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	field.alignment = BoxContainer.ALIGNMENT_CENTER
-	field.add_theme_constant_override("separation", 10)
-	board_row.add_child(field)
+	field.add_theme_constant_override("separation", 8)
+	board.add_child(field)
+	field.add_child(UIKit.chalk_label("Starting offense", 22))
+	field.add_child(_text("Select a position to manage its starter.", 15, UIKit.CHALK))
+	for slots in [LINE_ROW, BACK_ROW]:
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 5)
+		for slot in slots:
+			row.add_child(_slot_widget(slot))
+		field.add_child(row)
+		if slots == LINE_ROW:
+			field.add_child(UIKit.rule())
+	field.add_child(UIKit.rule())
+	var special := HBoxContainer.new()
+	special.add_theme_constant_override("separation", 16)
+	special.add_child(_slot_widget(GameState.KICKER_SLOT))
+	var note := VBoxContainer.new()
+	note.alignment = BoxContainer.ALIGNMENT_CENTER
+	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	note.add_child(UIKit.chalk_label("Special teams", 18))
+	note.add_child(_text("Kicker is optional. Without one, you cannot call a kick.", 15, UIKit.CHALK))
+	special.add_child(note)
+	field.add_child(special)
+	var space := Control.new()
+	space.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	field.add_child(space)
+	field.add_child(_text("FLEX: RB / WR / TE    •    LT / LG / RG / RT: Tackles", 14, UIKit.CHALK))
+	field.add_child(_action("Auto-fill best lineup", func():
+		GameState.auto_fill_lineup()
+		_notice = "Best available players assigned by overall rating."
+		_rebuild("Select_" + selected_slot)))
 
-	var line := _row()
-	for slot in LINE_ROW:
-		line.add_child(_slot_widget(slot))
-	field.add_child(line)
-	field.add_child(_scrimmage_line())
-
-	var backs := _row()
-	for slot in BACK_ROW_LEFT:
-		backs.add_child(_slot_widget(slot))
-	backs.add_child(_gap(40))
-	backs.add_child(_slot_widget("QB"))
-	backs.add_child(_gap(40))
-	for slot in BACK_ROW_RIGHT:
-		backs.add_child(_slot_widget(slot))
-	field.add_child(backs)
-	field.add_child(_selected_info())
-
-	# The kicker stands off to the side - optional, he only comes on to kick.
-	board_row.add_child(_chalk_divider())
-	var kick_col := VBoxContainer.new()
-	kick_col.alignment = BoxContainer.ALIGNMENT_CENTER
-	kick_col.add_theme_constant_override("separation", 6)
-	kick_col.custom_minimum_size = Vector2(150, 0)
-	kick_col.add_child(UIKit.chalk_label("Special teams", 16, 0.7))
-	kick_col.add_child(_slot_widget(GameState.KICKER_SLOT))
-	board_row.add_child(kick_col)
-
-	root.add_child(_bench_strip())
+	var inspector := UIKit.panel()
+	inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(inspector)
+	var details := VBoxContainer.new()
+	details.add_theme_constant_override("separation", 10)
+	inspector.add_child(details)
+	details.add_child(UIKit.marker_label("%s • Starter" % _slot_label(selected_slot), 24, UIKit.ACCENT))
+	var starter := GameState.player_at(selected_slot)
+	if starter == null:
+		details.add_child(_text("Empty position. Choose an eligible player below.", 17))
+	else:
+		details.add_child(_player_summary(starter))
+	details.add_child(UIKit.rule())
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 8)
+	for tab in ["players", "equipment"]:
+		var label_text := "Replacements" if tab == "players" else "Equipment • %d in bag" % GameState.inventory.size()
+		var button := _action(label_text, func():
+			_view = tab
+			_rebuild("Tab_" + tab), _view == tab)
+		button.name = "Tab_" + tab
+		button.toggle_mode = true
+		button.button_pressed = _view == tab
+		if _view == tab:
+			button.add_theme_stylebox_override("pressed", UIKit.stylebox(UIKit.ACCENT, 6))
+		tabs.add_child(button)
+	details.add_child(tabs)
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 10)
+	if _view == "players":
+		_build_replacements(list, starter)
+	else:
+		_build_equipment(list, starter)
+	var scroll := UIKit.scroll(list)
+	scroll.follow_focus = true
+	details.add_child(scroll)
 
 	var bottom := HBoxContainer.new()
-	bottom.add_theme_constant_override("separation", 10)
 	root.add_child(bottom)
-
-	var auto := UIKit.button("Auto-fill best lineup")
-	auto.pressed.connect(func():
-		GameState.auto_fill_lineup()
-		_rebuild())
-	bottom.add_child(auto)
-
-	var bag := UIKit.outlined(UIKit.label("%d item%s in the bag" % [GameState.inventory.size(),
-		"" if GameState.inventory.size() == 1 else "s"], 15, UIKit.TEXT), 5)
-	bag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bottom.add_child(bag)
-
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom.add_child(sp)
-
-	# Dev mode has no run map to go back to - it came here from the scrimmage.
-	var back := UIKit.primary_button("Back to scrimmage" if GameState.dev_mode else "Back to hub", 17)
-	back.custom_minimum_size = Vector2(200, 42)
-	var dest := "res://scenes/match.tscn" if GameState.dev_mode else "res://scenes/hub.tscn"
-	back.pressed.connect(func(): get_tree().change_scene_to_file(dest))
-	bottom.add_child(back)
-
-
-## The line of scrimmage chalked across the board, dashed.
-func _scrimmage_line() -> Control:
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(0, 8)
-	c.draw.connect(func():
-		var x := 10.0
-		while x < c.size.x - 10.0:
-			c.draw_line(Vector2(x, 4), Vector2(minf(x + 14.0, c.size.x - 10.0), 4), Color(UIKit.CHALK, 0.5), 2.0)
-			x += 24.0)
-	return c
-
-
-## A chalk stroke down the board between the formation and the kicker.
-func _chalk_divider() -> Control:
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(4, 0)
-	c.draw.connect(func():
-		c.draw_line(Vector2(2, 12), Vector2(2, c.size.y - 12), Color(UIKit.CHALK, 0.25), 2.0))
-	return c
-
-
-func _row() -> HBoxContainer:
-	var h := HBoxContainer.new()
-	h.alignment = BoxContainer.ALIGNMENT_CENTER
-	h.add_theme_constant_override("separation", 22)
-	return h
-
-
-func _gap(w: int) -> Control:
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(w, 0)
-	return c
+	var bag := _text("%d players on roster   •   %d items in bag" % [GameState.roster.size(), GameState.inventory.size()], 16)
+	bag.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom.add_child(UIKit.outlined(bag))
+	bottom.add_child(_action("Back to scrimmage" if GameState.dev_mode else "Back to hub", func():
+		if GameState.dev_mode:
+			LoadingScreen.go_to("res://scenes/match.tscn")
+		else:
+			get_tree().change_scene_to_file("res://scenes/hub.tscn"), true))
 
 
 func _slot_label(slot: String) -> String:
-	if slot.begins_with("T"):
-		return GameState.slot_label(slot)
 	if slot.begins_with("F"):
-		return "FLEX"
-	return slot
+		return "FLEX %d" % (int(slot.substr(1)) + 1)
+	return GameState.slot_label(slot)
 
 
-# ============================================================================
-# Formation slots
-# ============================================================================
-
-## One starter: his circle with position and name under it, plus - if he's
-## the selected one - his three item slots stacked to his left.
 func _slot_widget(slot: String) -> Control:
-	var selected := slot == selected_slot
-	var h := HBoxContainer.new()
-	h.alignment = BoxContainer.ALIGNMENT_CENTER
-	h.add_theme_constant_override("separation", 10)
-
 	var p := GameState.player_at(slot)
-	if selected and p != null:
-		var items := VBoxContainer.new()
-		items.alignment = BoxContainer.ALIGNMENT_CENTER
-		items.add_theme_constant_override("separation", 8)
-		for i in PlayerData.ITEM_SLOTS:
-			items.add_child(_item_circle(p, i))
-		h.add_child(items)
-
 	var col := VBoxContainer.new()
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 4)
-	col.add_child(_player_circle(slot, p, CIRCLE_SELECTED if selected else CIRCLE, selected))
-
-	var tag := UIKit.chalk_label(_slot_label(slot), 14, 0.95 if selected else 0.6)
-	if selected:
-		tag.add_theme_color_override("font_color", UIKit.ACCENT)
-	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(tag)
-	var optional := slot == GameState.KICKER_SLOT
-	var name_text := "- empty -" if p == null else "#%d %s" % [p.number, p.pname]
-	if p == null and optional:
-		name_text = "- none (optional) -"
-	var name_label := UIKit.label(name_text, 14,
-		(Color(UIKit.CHALK, 0.55) if optional else Color("ff8a7a")) if p == null else UIKit.CHALK)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(name_label)
-	h.add_child(col)
-	return h
-
-
-## A round button with the player's portrait inside it.
-func _player_circle(slot: String, p: PlayerData, size: int, selected: bool) -> Control:
+	col.custom_minimum_size.x = 80
+	col.add_theme_constant_override("separation", 3)
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(size, size)
-	# Otherwise it stretches to the width of the name under it - an oval.
+	b.name = "Select_" + slot
+	b.custom_minimum_size = Vector2(62, 62)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	b.focus_mode = Control.FOCUS_NONE
-	# A chalked-in circle on the board - gold when he's the one selected.
-	var ring := UIKit.ACCENT if selected else Color(UIKit.CHALK, 0.75)
-	var width := 4 if selected else 2
+	b.tooltip_text = "Manage " + _slot_label(slot) + (": " + p.pname if p != null else ": empty")
+	b.accessibility_name = b.tooltip_text
+	b.toggle_mode = true
+	b.button_pressed = slot == selected_slot
 	for state in ["normal", "hover", "pressed"]:
-		var col := UIKit.CHALKBOARD.lightened(0.12 if state == "hover" else 0.05)
-		b.add_theme_stylebox_override(state, UIKit.stylebox(col, size / 2, width, ring))
+		b.add_theme_stylebox_override(state, UIKit.stylebox(UIKit.CHALKBOARD.lightened(0.08), 31,
+			3 if slot == selected_slot else 1, UIKit.ACCENT if slot == selected_slot else UIKit.CHALK))
+	b.add_theme_stylebox_override("focus", _focus_style())
+	if p != null:
+		var portrait := UIKit.player_portrait(p, 54)
+		portrait.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		portrait.position = Vector2(4, 4)
+		b.add_child(portrait)
+	else:
+		b.text = "+"
 	b.pressed.connect(func():
 		selected_slot = slot
-		_rebuild())
-
-	if p != null:
-		var portrait := UIKit.player_portrait(p, size - 8)
-		if portrait != null:
-			# The portrait brings its own rounded-square frame; inside the
-			# circle it just needs to be see-through and not eat the click.
-			portrait.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			portrait.position = Vector2(4, 4)
-			b.add_child(portrait)
-		if GameState.slot_kind(slot) != p.natural_slot_kind():
-			b.tooltip_text = "%s playing out of position" % p.pos_name()
-	return b
-
-
-## One of the selected player's item slots - helmet, gloves or cleats. Click
-## it for a menu of that kind of item in the bag (and, if it's filled, the
-## option to take it off).
-func _item_circle(p: PlayerData, slot_index: int) -> Control:
-	var item_id: String = p.items[slot_index]
-	var category: String = ItemDB.CATEGORIES[slot_index]
-	var category_name := ItemDB.category_name(category)
-	var b := Button.new()
-	b.custom_minimum_size = Vector2(ITEM_CIRCLE, ITEM_CIRCLE)
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", 12)
-	var ring := UIKit.ACCENT if item_id != "" else Color(UIKit.CHALK, 0.5)
-	for state in ["normal", "hover", "pressed"]:
-		var col := UIKit.CHALKBOARD.lightened(0.12 if state == "hover" else 0.05)
-		b.add_theme_stylebox_override(state, UIKit.stylebox(col, ITEM_CIRCLE / 2, 2, ring))
-	if item_id == "":
-		# Empty: the category's initial, dimmed.
-		b.text = category_name.substr(0, 1)
-		b.add_theme_color_override("font_color", Color(UIKit.CHALK, 0.6))
-		b.tooltip_text = "%s: empty" % category_name
-	else:
-		b.text = _item_initials(item_id)
-		b.add_theme_color_override("font_color", UIKit.ACCENT)
-		b.tooltip_text = "%s: %s\n%s" % [category_name, ItemDB.item_name(item_id), ItemDB.item_desc(item_id)]
-
-	var menu := PopupMenu.new()
-	b.add_child(menu)
-	var choices: Array = []   # parallel to the menu entries: "" = unequip
-	if item_id != "":
-		menu.add_item("Take off %s" % ItemDB.item_name(item_id))
-		choices.append("")
-		menu.add_separator()
-		choices.append(null)
-	var seen := {}
-	for bag_id in GameState.inventory:
-		if seen.has(bag_id) or ItemDB.item_category(bag_id) != category:
-			continue
-		seen[bag_id] = true
-		var count: int = GameState.inventory.count(bag_id)
-		menu.add_item("%s%s" % [ItemDB.item_name(bag_id), (" x%d" % count) if count > 1 else ""])
-		choices.append(bag_id)
-	if choices.is_empty():
-		menu.add_item("No %s in the bag" % category_name.to_lower())
-		menu.set_item_disabled(0, true)
-		choices.append(null)
-
-	var idx := GameState.lineup.get(selected_slot, -1) as int
-	menu.index_pressed.connect(func(i: int):
-		var choice = choices[i]
-		if choice == null:
-			return
-		if choice == "":
-			GameState.unequip_item(idx, slot_index)
-		else:
-			GameState.equip_item(choice, idx)
-		_rebuild())
-	b.pressed.connect(func():
-		menu.position = Vector2i(b.get_screen_position() + Vector2(b.size.x + 6, 0))
-		menu.popup())
-	return b
+		_notice = "Managing %s. Select an explicit action below." % _slot_label(slot)
+		_rebuild("Select_" + slot))
+	col.add_child(b)
+	var tag := UIKit.label(_slot_label(slot), 15, UIKit.ACCENT if slot == selected_slot else UIKit.CHALK)
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(tag)
+	var player_name := _text(p.pname if p != null else "Empty", 13, UIKit.CHALK)
+	player_name.custom_minimum_size = Vector2(80, 38)
+	player_name.max_lines_visible = 2
+	player_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	player_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(player_name)
+	return col
 
 
-## Two-letter badge for an item inside its little circle ("Stickum Gloves"
-## -> "SG").
-func _item_initials(item_id: String) -> String:
-	var out := ""
-	for word in ItemDB.item_name(item_id).split(" ", false):
-		out += word.substr(0, 1).to_upper()
-		if out.length() >= 2:
-			break
-	return out
-
-
-# ============================================================================
-# Selected player + replacements
-# ============================================================================
-
-## One line under the formation: the selected player's stats and ability.
-func _selected_info() -> Control:
-	var p := GameState.player_at(selected_slot)
-	var h := HBoxContainer.new()
-	h.alignment = BoxContainer.ALIGNMENT_CENTER
-	h.add_theme_constant_override("separation", 14)
-	if p == null:
-		if selected_slot == GameState.KICKER_SLOT:
-			h.add_child(UIKit.label("No kicker - you can't kick without one. Sign one from the shop.", 14, UIKit.MUTED))
-		else:
-			h.add_child(UIKit.label("Nobody at %s - pick someone below." % _slot_label(selected_slot), 14, UIKit.BAD))
-		return h
-	h.add_child(UIKit.marker_label("%s  %s" % [p.pname, p.pos_name()], 17, UIKit.ACCENT))
-	h.add_child(UIKit.stat_row(p, 13))
-	h.add_child(UIKit.label("OVR %d" % p.overall(), 14, UIKit.stat_color(p.overall())))
-	var ab := UIKit.label(AbilityDB.ability_desc(p.ability_id), 13, Color(UIKit.CHALK, 0.8))
-	ab.custom_minimum_size = Vector2(360, 0)
-	ab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	h.add_child(ab)
-	return h
-
-
-## Everyone on the roster who could play the selected spot, bench first.
-## Clicking one puts him there (a starter just swaps spots).
-func _bench_strip() -> Control:
-	var p := UIKit.panel()
-	p.custom_minimum_size = Vector2(0, 150)
+func _player_summary(p: PlayerData) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	row.add_child(UIKit.player_portrait(p, 76))
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 4)
-	p.add_child(v)
-	v.add_child(UIKit.label("REPLACEMENTS FOR %s" % _slot_label(selected_slot), 14, UIKit.ACCENT))
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(_text("#%d  %s  •  %s  •  OVR %d" % [p.number, p.pname, p.pos_name(), p.overall()], 20))
+	var stats := UIKit.stat_row(p, 15)
+	for l in stats.get_children():
+		l.add_theme_color_override("font_color", UIKit.TEXT)
+	v.add_child(stats)
+	v.add_child(_text(AbilityDB.ability_desc(p.ability_id), 15))
+	row.add_child(v)
+	return row
 
+
+func _starting_slot(idx: int) -> String:
+	for slot in GameState.lineup:
+		if int(GameState.lineup[slot]) == idx:
+			return slot
+	return ""
+
+
+func _build_replacements(list: VBoxContainer, starter: PlayerData) -> void:
+	list.add_child(_text("Base stats compared with the starter; equipment stays with each player.", 14))
 	var current := int(GameState.lineup.get(selected_slot, -1))
-	var candidates: Array = []
+	var candidates: Array[int] = []
 	for idx in GameState.roster.size():
 		if idx != current and GameState.fits_slot(idx, selected_slot):
 			candidates.append(idx)
-	candidates.sort_custom(func(a, b):
-		var sa := GameState.is_starting(a)
-		var sb := GameState.is_starting(b)
-		if sa != sb:
-			return not sa
-		return (GameState.roster[a] as PlayerData).overall() > (GameState.roster[b] as PlayerData).overall())
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
+	candidates.sort_custom(func(a: int, b: int):
+		if GameState.is_starting(a) != GameState.is_starting(b):
+			return not GameState.is_starting(a)
+		return GameState.roster[a].overall() > GameState.roster[b].overall())
 	if candidates.is_empty():
-		row.add_child(UIKit.label("Nobody else on the roster can play %s." % _slot_label(selected_slot), 13, UIKit.MUTED))
+		list.add_child(_text("No eligible replacements. Sign a %s in the shop." % ("RB, WR or TE" if GameState.slot_kind(selected_slot) == "FLEX" else GameState.slot_kind(selected_slot)), 17))
 	for idx in candidates:
-		row.add_child(_bench_card(idx))
-	var scroll := ScrollContainer.new()
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(row)
-	v.add_child(scroll)
-	return p
+		var p: PlayerData = GameState.roster[idx]
+		var origin := _starting_slot(idx)
+		var card := UIKit.panel(UIKit.PANEL_HI)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 6)
+		card.add_child(v)
+		v.add_child(_text("%s  •  %s  •  OVR %d  •  %s" % [p.pname, p.pos_name(), p.overall(),
+			"Bench" if origin == "" else "Starting at " + _slot_label(origin)], 18, UIKit.ACCENT))
+		var stats := HBoxContainer.new()
+		stats.add_theme_constant_override("separation", 18)
+		for key in p.shown_stats(UIKit.STAT_KEYS):
+			var delta := p.stat(key) - starter.stat(key) if starter != null else 0
+			stats.add_child(UIKit.label("%s %d%s" % [UIKit.STAT_LABELS[key], p.stat(key),
+				" (%+d)" % delta if starter != null else ""], 15,
+				UIKit.GOOD if delta > 0 else (UIKit.TEXT if delta == 0 else Color("ffaaa1"))))
+		v.add_child(stats)
+		v.add_child(_text(AbilityDB.ability_desc(p.ability_id), 15))
+		var consequence := ""
+		if origin != "":
+			consequence = "%s moves to %s." % [starter.pname, _slot_label(origin)] if starter != null else "%s becomes empty." % _slot_label(origin)
+		elif starter != null:
+			consequence = "%s goes to the bench." % starter.pname
+			if starter.quality == 0 and p.quality != 0:
+				consequence = "Placeholder rookie %s is released; his gear returns to the bag." % starter.pname
+		if consequence != "":
+			v.add_child(_text(consequence, 14))
+		var actions := HBoxContainer.new()
+		actions.add_theme_constant_override("separation", 10)
+		var start := _action(("Swap" if origin != "" else "Start") + " at " + _slot_label(selected_slot), func():
+			if _rebuilding:
+				return
+			if GameState.set_slot(selected_slot, idx):
+				_notice = "%s now starts at %s. %s" % [p.pname, _slot_label(selected_slot), consequence]
+				_rebuild("Select_" + selected_slot), true)
+		start.name = "Start_" + str(idx)
+		actions.add_child(start)
+		if origin == "":
+			var release := _action("Release " + p.pname, func(): _ask_release(p))
+			release.name = "Release_" + str(idx)
+			actions.add_child(release)
+		v.add_child(actions)
+		list.add_child(card)
 
 
-func _bench_card(idx: int) -> Control:
-	var pd: PlayerData = GameState.roster[idx]
-	var starting := GameState.is_starting(idx)
-	var col := VBoxContainer.new()
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 2)
+func _build_equipment(list: VBoxContainer, p: PlayerData) -> void:
+	if p == null:
+		list.add_child(_text("Start a player here before equipping gear.", 17))
+		return
+	list.add_child(_text("One item per category. Replaced gear returns to the bag.", 14))
+	var idx := int(GameState.lineup[selected_slot])
+	for category_index in PlayerData.ITEM_SLOTS:
+		var category: String = ItemDB.CATEGORIES[category_index]
+		var equipped: String = p.items[category_index]
+		var card := UIKit.panel(UIKit.PANEL_HI)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 6)
+		card.add_child(v)
+		v.add_child(_text(ItemDB.category_name(category).to_upper(), 18, UIKit.ACCENT))
+		v.add_child(_text("Equipped: " + (ItemDB.item_name(equipped) if equipped != "" else "None"), 17))
+		if equipped != "":
+			v.add_child(_text(ItemDB.item_desc(equipped), 15))
+			var remove := _action("Unequip " + ItemDB.item_name(equipped), func():
+				if _rebuilding:
+					return
+				GameState.unequip_item(idx, category_index)
+				_notice = ItemDB.item_name(equipped) + " returned to the bag."
+				_rebuild("Tab_equipment"))
+			remove.name = "Unequip_" + str(category_index)
+			v.add_child(remove)
+		var seen := {}
+		for bag_id in GameState.inventory:
+			if seen.has(bag_id) or ItemDB.item_category(bag_id) != category:
+				continue
+			seen[bag_id] = true
+			v.add_child(UIKit.rule())
+			v.add_child(_text("In bag: %s ×%d" % [ItemDB.item_name(bag_id), GameState.inventory.count(bag_id)], 16))
+			v.add_child(_text(ItemDB.item_desc(bag_id), 15))
+			var equip := _action("Equip " + ItemDB.item_name(bag_id), func():
+				if _rebuilding:
+					return
+				GameState.equip_item(bag_id, idx)
+				_notice = "%s equipped on %s.%s" % [ItemDB.item_name(bag_id), p.pname,
+					" Previous gear returned to the bag." if equipped != "" else ""]
+				_rebuild("Tab_equipment"), true)
+			equip.name = "Equip_" + bag_id
+			v.add_child(equip)
+		if seen.is_empty():
+			v.add_child(_text("No spare %s in the bag." % ItemDB.category_name(category).to_lower(), 15))
+		list.add_child(card)
 
-	var b := Button.new()
-	b.custom_minimum_size = Vector2(BENCH_PORTRAIT, BENCH_PORTRAIT)
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	b.focus_mode = Control.FOCUS_NONE
-	b.flat = true
-	b.tooltip_text = "Put %s at %s%s" % [pd.pname, _slot_label(selected_slot),
-		" (swaps spots with him)" if starting else ""]
-	b.pressed.connect(func():
-		GameState.set_slot(selected_slot, idx)
-		_rebuild())
-	var portrait := UIKit.player_portrait(pd, BENCH_PORTRAIT)
-	if portrait != null:
-		portrait.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		b.add_child(portrait)
-	col.add_child(b)
 
-	var name_label := UIKit.label(pd.pname, 12)
-	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(name_label)
-	var sub := UIKit.label("%s  OVR %d%s" % [pd.pos_name(), pd.overall(), "  (starting)" if starting else ""],
-		11, UIKit.MUTED)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	col.add_child(sub)
-
-	if not starting:
-		var cut := UIKit.button("Release", 11)
-		cut.add_theme_color_override("font_color", UIKit.BAD)
-		cut.pressed.connect(func():
+func _ask_release(p: PlayerData) -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Release player?"
+	dialog.dialog_text = "%s leaves the roster permanently.\nAll equipped gear returns to the bag." % p.pname
+	dialog.ok_button_text = "Release player"
+	dialog.cancel_button_text = "Keep player"
+	add_child(dialog)
+	dialog.confirmed.connect(func():
+		var idx := GameState.roster.find(p)
+		if idx >= 0 and not GameState.is_starting(idx):
 			GameState.cut_player(idx)
-			_rebuild())
-		col.add_child(cut)
-	return col
+			_notice = "%s released. His equipped gear is in the bag." % p.pname
+			_rebuild("Select_" + selected_slot)
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered(Vector2i(500, 160))
+	dialog.get_cancel_button().grab_focus()
+
+
+func _text(value: String, size: int = 15, color: Color = UIKit.TEXT) -> Label:
+	var l := UIKit.label(value, size, color)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return l
+
+
+func _focus_style() -> StyleBoxFlat:
+	var sb := UIKit.stylebox(Color.TRANSPARENT, 6, 3, UIKit.ACCENT)
+	sb.draw_center = false
+	return sb
+
+
+func _action(value: String, callback: Callable, primary: bool = false) -> Button:
+	var b := UIKit.primary_button(value, 16) if primary else UIKit.button(value, 15)
+	b.custom_minimum_size.y = 38
+	if primary:
+		b.add_theme_color_override("font_pressed_color", UIKit.BG)
+	b.add_theme_stylebox_override("focus", _focus_style())
+	b.pressed.connect(callback)
+	return b

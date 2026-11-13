@@ -59,10 +59,16 @@ func _build() -> void:
 		return
 
 	root.add_child(UIKit.label("THE LABORATORY", 30, OddityPlayerDB.COLOR))
-	root.add_child(UIKit.label(
+	var explanation := UIKit.label(
 		"$%d buys one random Oddity. Every Oddity's stats are rolled the moment he walks out of the tank - %d points split at random across Strength, Agility, Dexterity and Intelligence." % [PRICE, OddityPlayerDB.BASE_POOL],
-		14, UIKit.MUTED))
-	root.add_child(UIKit.label("You have $%d." % GameState.bucks, 16, UIKit.ACCENT))
+		15, UIKit.TEXT)
+	explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(explanation)
+	root.add_child(UIKit.label("COST $%d   •   BALANCE $%d   •   AFTER PURCHASE %s" % [PRICE, GameState.bucks,
+		"$%d" % (GameState.bucks - PRICE) if GameState.bucks >= PRICE else "Not enough bucks"], 18, UIKit.ACCENT))
+	var destination := UIKit.label("One random player joins your bench. No players or gear are lost. Open Lineup to choose where he starts. One purchase at this stop.", 16)
+	destination.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(destination)
 	root.add_child(UIKit.rule())
 
 	root.add_child(UIKit.label("WHAT MIGHT COME OUT", 16, UIKit.ACCENT))
@@ -87,8 +93,8 @@ func _build() -> void:
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	footer.add_child(status)
 
-	var buy := UIKit.primary_button("  Pay $%d  " % PRICE, 16)
-	buy.disabled = GameState.bucks < PRICE
+	var buy := UIKit.primary_button("Recruit random Oddity • $%d" % PRICE, 16)
+	buy.disabled = GameState.bucks < PRICE or GameState.stop_used()
 	buy.pressed.connect(_buy)
 	footer.add_child(buy)
 
@@ -130,6 +136,8 @@ func _owned_names() -> Dictionary:
 
 
 func _buy() -> void:
+	if _revealed != null or GameState.stop_used():
+		return
 	if not GameState.spend_bucks(PRICE):
 		return
 	var oddity := OddityPlayerDB.random_oddity(GameState.rng, _owned_names())
@@ -150,6 +158,12 @@ func _build_reveal(root: VBoxContainer) -> void:
 	var holder := CenterContainer.new()
 	holder.add_child(card)
 	root.add_child(holder)
+	var destination := UIKit.label("%s joined your bench. $%d remaining. Choose Start in Lineup to use his ability on the field." % [_revealed.pname, GameState.bucks], 17)
+	destination.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(destination)
+	var lineup := UIKit.primary_button("Manage lineup", 17)
+	lineup.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lineup.tscn"))
+	root.add_child(lineup)
 
 	var sp := Control.new()
 	sp.size_flags_vertical = Control.SIZE_EXPAND_FILL

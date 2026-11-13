@@ -42,6 +42,28 @@ press Esc again to continue. **Main Menu** and the desktop-only **Quit Game**
 ask for confirmation because runs are not saved; only bowl completion marks
 survive a restart. Esc from that confirmation returns to the pause menu.
 
+## Managing your roster
+
+In **Lineup**, select a position on the formation board to inspect its starter.
+The **Replacements** tab compares eligible players' base stats and abilities.
+Choose **Start** for a bench player or **Swap** for someone already starting.
+The screen explains where the outgoing player goes, including the existing rule
+that replacing a placeholder rookie with a signed player releases the rookie.
+His equipment returns to the bag. Releasing a bench player asks for confirmation.
+
+The **Equipment** tab lists each category, its equipped item and effects, and
+spares in the bag. **Equip** replaces that category's item and returns the old
+one; **Unequip** puts it back in the bag.
+
+The shop's **Players** and **Gear** tabs show purchase destinations. Signings
+join the bench, except your first kicker, who starts immediately. Gear goes into
+the bag; use **Manage lineup & equip gear** to assign it. The lab shows its price
+and remaining balance before recruiting. The ritual lists selected players and
+returned gear, then asks you to confirm the named permanent losses.
+
+Run `godot --headless --path . res://tools/roster_ui_check.tscn` for real-screen
+selection, assignment, equipment, purchase and sacrifice checks.
+
 ## Field and sidelines
 
 A stadium scoreboard floats at the top left with amber score digits, team names,

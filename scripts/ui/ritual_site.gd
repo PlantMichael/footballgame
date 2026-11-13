@@ -86,7 +86,19 @@ func _build() -> void:
 	squares.add_theme_constant_override("separation", 22)
 	for i in _slots.size():
 		squares.add_child(_square(i))
-	root.add_child(_centered(squares))
+	var square_scroll := ScrollContainer.new()
+	square_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	square_scroll.custom_minimum_size.y = 240
+	square_scroll.follow_focus = true
+	squares.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	squares.alignment = BoxContainer.ALIGNMENT_CENTER
+	square_scroll.add_child(squares)
+	root.add_child(square_scroll)
+	var summary := UIKit.panel()
+	var summary_text := UIKit.label("SELECTED %d / %d\n%s" % [_slots.size() - _slots.count(-1), _sacrifice_count, _loss_summary()], 16)
+	summary_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary.add_child(summary_text)
+	root.add_child(summary)
 
 	var low_space := Control.new()
 	low_space.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -95,10 +107,10 @@ func _build() -> void:
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 14)
 	var filled := _slots.count(-1) == 0
-	var confirm := UIKit.primary_button("  Complete the Ritual  ", 18)
+	var confirm := UIKit.primary_button("Review sacrifice • %d players" % _sacrifice_count, 18)
 	confirm.custom_minimum_size = Vector2(0, 46)
 	confirm.disabled = not filled
-	confirm.pressed.connect(_sacrifice)
+	confirm.pressed.connect(_ask_sacrifice)
 	buttons.add_child(confirm)
 	var back := UIKit.button("  Back to the map (no sacrifice)  ", 15)
 	back.custom_minimum_size = Vector2(0, 46)
@@ -143,7 +155,11 @@ func _square(i: int) -> Control:
 	b.add_theme_stylebox_override("normal", normal)
 	b.add_theme_stylebox_override("hover", hover)
 	b.add_theme_stylebox_override("pressed", hover)
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	var focus := UIKit.stylebox(Color.TRANSPARENT, 12, 3, UIKit.ACCENT)
+	focus.draw_center = false
+	b.add_theme_stylebox_override("focus", focus)
+	b.tooltip_text = "Choose offering %d" % (i + 1)
+	b.accessibility_name = b.tooltip_text
 	b.pressed.connect(func():
 		_picking = i
 		_build())
@@ -239,8 +255,18 @@ func _build_picker() -> void:
 			continue
 		list.add_child(_pick_row(idx))
 	var scroll := UIKit.scroll(list)
+	scroll.follow_focus = true
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(scroll)
+	# Keep keyboard traversal inside the open picker, above the shaded page.
+	var focus_buttons: Array[Button] = [close]
+	for button in list.find_children("*", "Button", true, false):
+		if not button.disabled:
+			focus_buttons.append(button)
+	for i in focus_buttons.size():
+		focus_buttons[i].focus_next = focus_buttons[(i + 1) % focus_buttons.size()].get_path()
+		focus_buttons[i].focus_previous = focus_buttons[(i - 1 + focus_buttons.size()) % focus_buttons.size()].get_path()
+	close.grab_focus()
 
 
 ## Starters first, in formation order, so it's obvious who you'd be pulling
@@ -264,8 +290,15 @@ func _pick_row(idx: int) -> Control:
 	h.add_theme_constant_override("separation", 12)
 	row.add_child(h)
 
-	var card := UIKit.player_card(p, false)
+	var card := VBoxContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var name_label := UIKit.label(p.pname, 18)
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(name_label)
+	card.add_child(UIKit.label("%s • OVR %d" % [p.pos_name(), p.overall()], 15, UIKit.ACCENT))
+	var ability := UIKit.label(AbilityDB.ability_desc(p.ability_id), 14)
+	ability.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(ability)
 	h.add_child(card)
 	h.add_child(_status_column(idx, p))
 
@@ -337,8 +370,51 @@ func _slot_name(slot: String) -> String:
 	return slot
 
 
+func _loss_summary() -> String:
+	var names := PackedStringArray()
+	var gear := PackedStringArray()
+	for idx in _slots:
+		if idx < 0 or idx >= GameState.roster.size():
+			continue
+		var p: PlayerData = GameState.roster[idx]
+		var origin := _starting_slot(idx)
+		names.append("%s (%s)" % [p.pname, "Bench" if origin == "" else "Starter " + _slot_name(origin)])
+		for id in p.equipped_items():
+			gear.append(ItemDB.item_name(id))
+	if names.is_empty():
+		return "Choose players above. Nothing is lost until you review and confirm."
+	return "Permanently lose: %s\nGear returned to bag: %s\nGain: one random Cursed FLEX. Empty starting spots are refilled automatically." % [
+		", ".join(names), ", ".join(gear) if not gear.is_empty() else "None"]
+
+
+func _ask_sacrifice() -> void:
+	if _slots.count(-1) > 0 or _revealed != null or GameState.stop_used():
+		return
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Confirm permanent sacrifice"
+	dialog.dialog_text = _loss_summary()
+	dialog.ok_button_text = "Sacrifice %d players" % _sacrifice_count
+	dialog.cancel_button_text = "Keep players"
+	dialog.dialog_autowrap = true
+	add_child(dialog)
+	dialog.confirmed.connect(func():
+		_sacrifice()
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered(Vector2i(660, 260))
+	dialog.get_cancel_button().grab_focus()
+
+
 func _sacrifice() -> void:
-	if _slots.count(-1) > 0:
+	if _revealed != null or GameState.stop_used() or _slots.count(-1) > 0:
+		return
+	# Revalidate the complete selection at the destructive operation boundary.
+	var unique := {}
+	for idx in _slots:
+		if idx < 0 or idx >= GameState.roster.size() or unique.has(idx):
+			return
+		unique[idx] = true
+	if not GameState.can_field_lineup_without(_slots, {"FLEX": 1}):
 		return
 	var exclude := {}
 	var cursed_names := CursedPlayerDB.all_names()
@@ -385,6 +461,13 @@ func _build_reveal(root: VBoxContainer) -> void:
 	var holder := CenterContainer.new()
 	holder.add_child(card)
 	v.add_child(holder)
+	var placement := UIKit.label("%s joined your roster. Empty starting spots have been refilled; check Lineup to review his placement and equip the recovered gear." % _revealed.pname, 16)
+	placement.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	placement.custom_minimum_size.x = 440
+	v.add_child(placement)
+	var lineup := UIKit.primary_button("Manage lineup & recovered gear", 17)
+	lineup.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/lineup.tscn"))
+	v.add_child(lineup)
 	var back := UIKit.primary_button("  Back to the map  ", 18)
 	back.custom_minimum_size = Vector2(0, 44)
 	back.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/hub.tscn"))
